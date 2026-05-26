@@ -1,0 +1,15 @@
+{
+  "name": "Remix: Remix: Remix: Cifra SH",
+  "description": "Importe cifras de PDFs, organize seu caderno musical e exporte repertórios prontos para tocar.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "PWA",
+    "Chords Management",
+    "Repertoire Planning",
+    "Mission Collaboration",
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

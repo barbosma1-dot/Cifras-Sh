@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-blue: #0033cc;
+  --color-brand-orange: #ff6600;
+  
+  /* Redefining color palettes with hex to avoid oklch parsing errors in jspdf/html2canvas */
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+
+  --color-red-50: #fef2f2;
+  --color-red-100: #fee2e2;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+  --color-blue-900: #1e3a8a;
+
+  --color-green-500: #22c55e;
+  --color-green-600: #16a34a;
+
+  --color-orange-50: #fff7ed;
+  --color-orange-600: #ea580c;
+
+  --color-amber-400: #fbbf24;
+  
+  --color-emerald-500: #10b981;
+
+  --color-rose-500: #f43f5e;
+
+  --color-violet-600: #7c3aed;
+
+  --color-indigo-50: #eef2ff;
+  --color-indigo-900: #312e81;
+
+  --color-yellow-100: #fef9c3;
+  --color-yellow-700: #a16207;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans;
+  }
+}
+
+.chord-line {
+  @apply font-mono font-bold text-brand-blue;
+}
+
+.lyrics-line {
+  @apply font-sans;
+}
+
+.highlight-chorus {
+  @apply bg-brand-orange/10 border-l-4 border-brand-orange pl-3 py-1 my-2;
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
