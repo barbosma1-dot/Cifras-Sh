@@ -26,6 +26,16 @@ import AdminSettings from './AdminSettings';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
+const getRoleLabel = (role?: string) => {
+  if (!role) return 'Membro';
+  switch (role) {
+    case 'admin': return 'Administrador';
+    case 'coordinator': return 'Coordenador';
+    case 'editor': return 'Editor';
+    default: return 'Membro';
+  }
+};
+
 interface DashboardProps {
   user: any;
   profile: UserProfile | null;
@@ -257,7 +267,7 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
                   {profile?.display_name || profile?.displayName || 'Usuário'}
                 </p>
                 <p className="text-[7px] text-white/30 truncate font-bold uppercase tracking-widest leading-none mt-0.5">
-                  {(profile?.role === 'admin' && profile?.email === 'barbosma1@gmail.com') ? 'Membro' : (profile?.role || 'Membro')}
+                  {getRoleLabel(profile?.role)}
                 </p>
               </motion.div>
             )}
@@ -372,7 +382,7 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
                     {profile?.display_name || profile?.displayName || 'Usuário'}
                   </p>
                   <p className="text-[8px] text-slate-400 font-bold uppercase tracking-wider">
-                    {(profile?.role === 'admin' && profile?.email === 'barbosma1@gmail.com') ? 'Membro' : (profile?.role || 'Membro')}
+                    {getRoleLabel(profile?.role)}
                   </p>
                </div>
                <div className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden ring-2 ring-white shadow-sm border border-slate-100">

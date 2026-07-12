@@ -138,7 +138,9 @@ export default function App() {
       let profileData = data as UserProfile;
 
       // Auto-promote barbosma1 to admin and DEMOTE any unauthorized admins
-      if (profileData.email === 'barbosma1@gmail.com' && profileData.role !== 'admin') {
+      if (profileData.email === 'barbosma1@gmail.com') {
+        profileData.role = 'admin'; // Force role to admin on client-side for barbosma1
+        
         const { data: updated, error: uErr } = await supabase
           .from('user_profiles')
           .update({ role: 'admin' })
@@ -147,7 +149,7 @@ export default function App() {
           .single();
         
         if (!uErr && updated) {
-          profileData = updated as UserProfile;
+          profileData = { ...(updated as UserProfile), role: 'admin' };
         }
       } else if (profileData.email !== 'barbosma1@gmail.com' && profileData.role === 'admin') {
         // Demote anyone else who was previously an admin

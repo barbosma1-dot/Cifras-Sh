@@ -67,7 +67,8 @@ export default function ProfileView({ profile, setProfile }: ProfileViewProps) {
           ...updatedProfile,
           displayName: updatedProfile.display_name,
           photoURL: updatedProfile.photo_url,
-          missionId: updatedProfile.mission_id
+          missionId: updatedProfile.mission_id,
+          role: profile?.email === 'barbosma1@gmail.com' ? 'admin' : updatedProfile.role
         } as any);
       }
       
@@ -140,7 +141,9 @@ export default function ProfileView({ profile, setProfile }: ProfileViewProps) {
               </div>
               <div className="mb-4">
                 <h2 className="text-2xl font-bold">{profile?.displayName}</h2>
-                <p className="opacity-60 text-sm font-medium uppercase tracking-widest">{profile?.role}</p>
+                <p className="opacity-60 text-sm font-medium uppercase tracking-widest">
+                  {profile?.role === 'admin' ? 'Administrador' : (profile?.role === 'coordinator' ? 'Coordenador' : (profile?.role === 'editor' ? 'Editor' : 'Membro'))}
+                </p>
               </div>
             </div>
           </div>
