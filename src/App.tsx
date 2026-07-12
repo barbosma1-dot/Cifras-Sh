@@ -28,18 +28,69 @@ export default function App() {
       fetchPublicRepertoire(repertoireId);
     }
 
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) fetchProfile(session.user.id, session.user);
-      else setLoading(false);
-    });
+    const handleAuthAndSession = async () => {
+      // 1. Extract tokens from URL (query string or hash)
+      const searchParams = new URLSearchParams(window.location.search);
+      let accessToken = searchParams.get('access_token');
+      let refreshToken = searchParams.get('refresh_token');
+
+      const hash = window.location.hash;
+      if (hash) {
+        const hashParams = new URLSearchParams(hash.substring(1));
+        if (!accessToken) accessToken = hashParams.get('access_token');
+        if (!refreshToken) refreshToken = hashParams.get('refresh_token');
+      }
+
+      if (accessToken && refreshToken) {
+        try {
+          console.log('SSO: Tentando autenticar com tokens recebidos na URL...');
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken
+          });
+
+          if (error) {
+            console.error('SSO Error: Falha ao definir sessão do Supabase:', error.message);
+          } else if (data.session) {
+            console.log('SSO Success: Autenticado com sucesso para o usuário', data.session.user.email);
+            
+            // Clean URL parameters using history.replaceState
+            const url = new URL(window.location.href);
+            url.searchParams.delete('access_token');
+            url.searchParams.delete('refresh_token');
+            const currentHash = url.hash;
+            if (currentHash) {
+              const hashParams = new URLSearchParams(currentHash.substring(1));
+              hashParams.delete('access_token');
+              hashParams.delete('refresh_token');
+              const newHash = hashParams.toString();
+              url.hash = newHash ? `#${newHash}` : '';
+            }
+            window.history.replaceState({}, document.title, url.toString());
+          }
+        } catch (err) {
+          console.error('SSO Exception:', err);
+        }
+      }
+
+      // 2. Check active session (which could be the one we just set or a previously saved one)
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      setSession(currentSession);
+      if (currentSession) {
+        await fetchProfile(currentSession.user.id, currentSession.user);
+      } else {
+        setLoading(false);
+      }
+    };
+
+    handleAuthAndSession();
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) fetchProfile(session.user.id, session.user);
-      else {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+      setSession(currentSession);
+      if (currentSession) {
+        fetchProfile(currentSession.user.id, currentSession.user);
+      } else {
         setProfile(null);
         setLoading(false);
       }
