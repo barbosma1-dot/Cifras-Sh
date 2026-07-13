@@ -4,6 +4,7 @@ import path from "path";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -330,6 +331,114 @@ async function startServer() {
     } catch (error: any) {
       console.error("YouTube search error:", error.message);
       res.status(500).json({ error: "Failed to search YouTube" });
+    }
+  });
+
+  // API Route for Summary Report (Protected by Service Role Key)
+  app.get("/api/reports/summary", async (req, res) => {
+    const authHeader = req.headers["authorization"];
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!serviceRoleKey) {
+      return res.status(500).json({ error: "Server configuration error: SUPABASE_SERVICE_ROLE_KEY is not configured." });
+    }
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized: Missing Authorization header or incorrect format." });
+    }
+
+    const token = authHeader.substring(7);
+    if (token !== serviceRoleKey) {
+      return res.status(401).json({ error: "Unauthorized: Invalid service role key." });
+    }
+
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    if (!supabaseUrl) {
+      return res.status(500).json({ error: "Server configuration error: VITE_SUPABASE_URL is not configured." });
+    }
+
+    try {
+      const supabase = createClient(supabaseUrl, serviceRoleKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false
+        }
+      });
+
+      // Fetch total repertoires
+      const { count: totalRepertoires, error: repError } = await supabase
+        .from('repertoires')
+        .select('*', { count: 'exact', head: true });
+
+      if (repError) throw repError;
+
+      // Fetch total chords
+      const { count: totalChords, error: chordError } = await supabase
+        .from('chords')
+        .select('*', { count: 'exact', head: true });
+
+      if (chordError) throw chordError;
+
+      // Fetch missions
+      const { data: mData, error: mError } = await supabase
+        .from('missions')
+        .select('id, name');
+
+      if (mError) throw mError;
+
+      // Fetch user profiles to aggregate active users per mission
+      const { data: pData, error: pError } = await supabase
+        .from('user_profiles')
+        .select('id, mission_id');
+
+      if (pError) throw pError;
+
+      // Aggregate users per mission
+      const userCountsByMission: { [key: string]: { missionName: string; count: number } } = {};
+      if (mData) {
+        mData.forEach((m: any) => {
+          userCountsByMission[m.id] = {
+            missionName: m.name,
+            count: 0
+          };
+        });
+      }
+
+      let noMissionCount = 0;
+      if (pData) {
+        pData.forEach((p: any) => {
+          if (p.mission_id && userCountsByMission[p.mission_id]) {
+            userCountsByMission[p.mission_id].count += 1;
+          } else {
+            noMissionCount += 1;
+          }
+        });
+      }
+
+      const activeUsersByMissionList = Object.keys(userCountsByMission).map(id => ({
+        missionId: id,
+        missionName: userCountsByMission[id].missionName,
+        count: userCountsByMission[id].count
+      }));
+
+      if (noMissionCount > 0) {
+        activeUsersByMissionList.push({
+          missionId: "null",
+          missionName: "Sem Missão",
+          count: noMissionCount
+        });
+      }
+
+      res.status(200).json({
+        totalRepertoires: totalRepertoires || 0,
+        totalChords: totalChords || 0,
+        activeUsersByMission: activeUsersByMissionList,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (err: any) {
+      console.error("Error generating summary report:", err);
+      res.status(500).json({ error: "Internal Server Error", details: err.message });
     }
   });
 
