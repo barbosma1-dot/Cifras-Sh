@@ -606,7 +606,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                        <button 
                          onClick={() => !isGuest && openAddingMode(section)}
                          disabled={isGuest}
-                         className={`p-0.5 text-slate-300 hover:text-brand-blue rounded transition-all group-hover:opacity-100 ${isGuest ? 'hidden' : 'opacity-0'}`}
+                         className={`p-0.5 text-slate-300 hover:text-brand-blue rounded transition-all ${isGuest ? 'hidden' : 'opacity-100'}`}
                        >
                          <Plus className="w-2 h-2" />
                        </button>
@@ -625,7 +625,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                 <p className="font-bold text-slate-700 text-[10px] group-hover/item:text-brand-blue transition-colors truncate">{item.title}</p>
                                 <p className="text-[7px] text-slate-400 font-medium uppercase truncate leading-none">{item.artist}</p>
                              </div>
-                            <div className={`flex items-center gap-1.5 transition-opacity ${isGuest ? 'opacity-100' : 'opacity-0 group-hover/item:opacity-100'}`}>
+                            <div className="flex items-center gap-1.5 transition-opacity opacity-100">
                                <Eye className="w-3 h-3 text-slate-300" />
                                <span className="px-1 py-0.5 bg-slate-100 text-slate-500 rounded text-[7px] font-bold">
                                   {item.original_key}
