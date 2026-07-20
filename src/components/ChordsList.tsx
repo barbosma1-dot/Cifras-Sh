@@ -447,6 +447,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           onClose={() => setSelectedChord(null)} 
           allChords={filteredChords}
           onSwitchChord={(c) => setSelectedChord(c)}
+          onEdit={(c) => {
+            setSelectedChord(null);
+            setEditingChord(c);
+            setIsEditorOpen(true);
+          }}
         />
       )}
 
