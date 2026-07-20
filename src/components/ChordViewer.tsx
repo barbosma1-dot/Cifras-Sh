@@ -270,78 +270,84 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
       className="fixed inset-0 z-[60] bg-white flex flex-col"
     >
       {/* Header Controls */}
-      <div className="h-16 bg-brand-blue text-white flex items-center justify-between px-4 md:px-8 shrink-0">
-        <div className="flex items-center gap-4">
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg">
+      <div className="bg-brand-blue text-white shrink-0 px-3 md:px-8 pt-3 pb-2 md:py-4 flex flex-col gap-2">
+        {/* Linha 1: voltar + título/artista (altura livre, nunca é cortada) */}
+        <div className="flex items-center gap-3">
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg shrink-0">
             <ArrowLeft className="w-6 h-6" />
           </button>
-          <div className="min-w-0">
-            <h2 className="font-bold text-lg leading-tight truncate max-w-[200px] md:max-w-md">{chord.title}</h2>
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-xs text-white/60 truncate">{chord.artist}</p>
-              {chord.category?.split(',').map(cat => (
-                <span key={cat} className="text-[8px] font-black bg-white/20 text-white px-1.5 py-0.5 rounded uppercase tracking-wider whitespace-nowrap">
-                  {cat.trim()}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1 md:gap-2">
-          {onEdit && (
-            <button
-              onClick={() => onEdit(chord)}
-              className="p-2 rounded-lg transition-colors hover:bg-white/10"
-              title="Editar Cifra"
-            >
-              <Pencil className="w-6 h-6" />
-            </button>
-          )}
-          <button 
-             onClick={() => setShowChords(!showChords)}
-             className={`p-2 rounded-lg transition-all flex items-center gap-2 ${showChords ? 'bg-brand-orange text-white' : 'hover:bg-white/10 text-white'}`}
-             title={showChords ? "Ocultar Cifras" : "Exibir Cifras"}
-          >
-            {showChords ? <Music2 className="w-6 h-6" /> : <BookText className="w-6 h-6" />}
-          </button>
-          
-          <button 
-            onClick={() => setShowBookSelector(!showBookSelector)}
-            className={`p-2 rounded-lg transition-colors ${showBookSelector ? 'bg-white text-brand-blue' : 'hover:bg-white/10'}`}
-            title="Adicionar ao Caderno"
-          >
-            <PlusSquare className="w-6 h-6" />
-          </button>
-          {chord.youtube_url && (
-            <button 
-              onClick={() => setShowYoutube(!showYoutube)}
-              className={`p-2 rounded-lg transition-colors ${showYoutube ? 'bg-red-500 text-white' : 'hover:bg-white/10'}`}
-              title="YouTube"
-            >
-              <Youtube className="w-6 h-6" />
-            </button>
-          )}
-          {(chord.audio_url || chord.attachment_url || (Array.isArray(chord.attachments) && chord.attachments.length > 0)) && (
-            <button 
-              onClick={() => setShowMedia(!showMedia)}
-              className={`p-2 rounded-lg transition-colors ${showMedia ? 'bg-emerald-500 text-white' : 'hover:bg-white/10'}`}
-              title="Mídias e Anexos"
-            >
-              <Music className="w-6 h-6" />
-            </button>
-          )}
-          <div className="hidden md:flex gap-1 bg-white/10 p-1 rounded-xl">
-             <button onClick={() => setSemitones(s => s - 1)} className="px-3 py-1 hover:bg-white/10 rounded-lg text-sm font-bold">-</button>
-             <span className="px-2 py-1 text-xs font-mono bg-brand-orange rounded-lg min-w-[3rem] text-center">{semitones > 0 ? '+' : ''}{semitones} ST</span>
-             <button onClick={() => setSemitones(s => s + 1)} className="px-3 py-1 hover:bg-white/10 rounded-lg text-sm font-bold">+</button>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-bold text-lg leading-tight truncate">{chord.title}</h2>
+            <p className="text-xs text-white/60 truncate">{chord.artist}</p>
           </div>
           <button 
             onClick={() => setShowTools(!showTools)}
-            className={`p-2 rounded-lg transition-colors ${showTools ? 'bg-brand-orange text-white' : 'hover:bg-white/10'}`}
+            className={`p-2 rounded-lg transition-colors shrink-0 ${showTools ? 'bg-brand-orange text-white' : 'hover:bg-white/10'}`}
+            title="Ferramentas"
           >
             <Settings2 className="w-6 h-6" />
           </button>
+        </div>
+
+        {/* Linha 2: badges + ícones de ação. Rola horizontalmente se não couber, então nada é cortado */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1 flex-wrap min-w-0">
+            {chord.category?.split(',').map(cat => (
+              <span key={cat} className="text-[8px] font-black bg-white/20 text-white px-1.5 py-0.5 rounded uppercase tracking-wider whitespace-nowrap">
+                {cat.trim()}
+              </span>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0 max-w-full">
+            {onEdit && (
+              <button
+                onClick={() => onEdit(chord)}
+                className="p-2 rounded-lg transition-colors hover:bg-white/10 shrink-0"
+                title="Editar Cifra"
+              >
+                <Pencil className="w-6 h-6" />
+              </button>
+            )}
+            <button 
+               onClick={() => setShowChords(!showChords)}
+               className={`p-2 rounded-lg transition-all flex items-center gap-2 shrink-0 ${showChords ? 'bg-brand-orange text-white' : 'hover:bg-white/10 text-white'}`}
+               title={showChords ? "Ocultar Cifras" : "Exibir Cifras"}
+            >
+              {showChords ? <Music2 className="w-6 h-6" /> : <BookText className="w-6 h-6" />}
+            </button>
+            
+            <button 
+              onClick={() => setShowBookSelector(!showBookSelector)}
+              className={`p-2 rounded-lg transition-colors shrink-0 ${showBookSelector ? 'bg-white text-brand-blue' : 'hover:bg-white/10'}`}
+              title="Adicionar ao Caderno"
+            >
+              <PlusSquare className="w-6 h-6" />
+            </button>
+            {chord.youtube_url && (
+              <button 
+                onClick={() => setShowYoutube(!showYoutube)}
+                className={`p-2 rounded-lg transition-colors shrink-0 ${showYoutube ? 'bg-red-500 text-white' : 'hover:bg-white/10'}`}
+                title="YouTube"
+              >
+                <Youtube className="w-6 h-6" />
+              </button>
+            )}
+            {(chord.audio_url || chord.attachment_url || (Array.isArray(chord.attachments) && chord.attachments.length > 0)) && (
+              <button 
+                onClick={() => setShowMedia(!showMedia)}
+                className={`p-2 rounded-lg transition-colors shrink-0 ${showMedia ? 'bg-emerald-500 text-white' : 'hover:bg-white/10'}`}
+                title="Mídias e Anexos"
+              >
+                <Music className="w-6 h-6" />
+              </button>
+            )}
+            <div className="hidden md:flex gap-1 bg-white/10 p-1 rounded-xl shrink-0">
+               <button onClick={() => setSemitones(s => s - 1)} className="px-3 py-1 hover:bg-white/10 rounded-lg text-sm font-bold">-</button>
+               <span className="px-2 py-1 text-xs font-mono bg-brand-orange rounded-lg min-w-[3rem] text-center">{semitones > 0 ? '+' : ''}{semitones} ST</span>
+               <button onClick={() => setSemitones(s => s + 1)} className="px-3 py-1 hover:bg-white/10 rounded-lg text-sm font-bold">+</button>
+            </div>
+          </div>
         </div>
       </div>
 
