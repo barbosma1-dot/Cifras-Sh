@@ -22,7 +22,8 @@ import {
   Loader2,
   FileDown,
   Music,
-  FileText
+  FileText,
+  Pencil
 } from 'lucide-react';
 import { Chord, ChordBook } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -69,19 +70,23 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
   let insideChorus = false;
 
   lines.forEach((line, i) => {
-    // Texto da linha sem os acordes, usado só para detectar o marcador "Refrão"
+    // Texto da linha sem os acordes, usado só para detectar os marcadores
     const strippedLower = line.replace(/\[.*?\]/g, '').trim().toLowerCase();
-    // Uma linha como "Refrão:", "Refrão", "Coro" ou "Chorus" liga o modo negrito.
-    // Ele continua ativo linha a linha até encontrar uma linha em branco.
-    const isChorusLabel = /^(refrão|refrao|coro|chorus)\b/.test(strippedLower);
+    // "Refrão:", "Refrão", "Coro" ou "Chorus" ligam o modo negrito.
+    const isChorusStart = /^(refrão|refrao|coro|chorus)\b/.test(strippedLower);
+    // "Fim", "Fim Refrão" ou outro marcador de seção (Estrofe, Ponte, Intro...) desligam o negrito.
+    const isChorusEnd = /^(fim|end)\b/.test(strippedLower);
+    const isOtherSectionLabel = /^(estrofe|verso|intro|solo|ponte|final|instrumental|vocalize|inst|passagem|dedilhado|ritmo)\b\s*:?\s*$/.test(strippedLower);
+    // Duas linhas em branco seguidas também fecham o bloco (folga maior = nova seção)
+    const isDoubleBlank = strippedLower === '' && i > 0 && lines[i - 1].trim() === '';
 
-    if (isChorusLabel) {
+    if (isChorusStart) {
       insideChorus = true;
-    } else if (strippedLower === '') {
+    } else if (isChorusEnd || isOtherSectionLabel || isDoubleBlank) {
       insideChorus = false;
     }
 
-    const isChorus = insideChorus;
+    const isChorus = insideChorus && !isChorusEnd;
     const chorusClass = isChorus ? 'font-bold border-l-4 border-brand-orange pl-3 py-1 bg-orange-50/50' : '';
 
     // Check if line is ChordPro format: [G] Lyrics [C] text
@@ -133,7 +138,7 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
     if (isChordLine) {
       if (!showChords) { elements.push(null); return; }
       const transposed = transposeChord(line, semitones, useFlats, notation);
-      elements.push(<div key={i} className="chord-line font-bold text-brand-orange" style={{ height: '1.2em' }}>{transposed}</div>);
+      elements.push(<div key={i} className={`chord-line font-bold text-brand-orange ${isChorus ? 'pl-3 border-l-4 border-brand-orange bg-orange-50/50' : ''}`} style={{ height: '1.2em' }}>{transposed}</div>);
       return;
     }
 
@@ -152,9 +157,10 @@ interface ChordViewerProps {
   onClose: () => void;
   allChords?: Chord[];
   onSwitchChord?: (c: Chord) => void;
+  onEdit?: (chord: Chord) => void;
 }
 
-export default function ChordViewer({ chord, onClose, allChords, onSwitchChord }: ChordViewerProps) {
+export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, onEdit }: ChordViewerProps) {
   const [semitones, setSemitones] = useState(0);
   const [useFlats, setUseFlats] = useState(false);
   const [notationSystem, setNotationSystem] = useState<'english' | 'latin'>('english');
@@ -283,6 +289,15 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord }
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
+          {onEdit && (
+            <button
+              onClick={() => onEdit(chord)}
+              className="p-2 rounded-lg transition-colors hover:bg-white/10"
+              title="Editar Cifra"
+            >
+              <Pencil className="w-6 h-6" />
+            </button>
+          )}
           <button 
              onClick={() => setShowChords(!showChords)}
              className={`p-2 rounded-lg transition-all flex items-center gap-2 ${showChords ? 'bg-brand-orange text-white' : 'hover:bg-white/10 text-white'}`}
