@@ -85,15 +85,21 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
       }
 
       return (
-        <div key={i} className="chord-pro-line flex flex-wrap" style={{ marginBottom: `${lineSpacing * 0.5}em` }}>
-          {segments.map((seg, sidx) => (
-            <div key={sidx} className="flex flex-col">
-              <span className="text-brand-orange font-bold text-[0.85em] leading-none h-[1.2em] whitespace-pre">
-                {seg.chord ? transposeChord(seg.chord, semitones, useFlats, notation) : '\u00A0'}
-              </span>
-              <span className="lyrics-text whitespace-pre">{seg.text || (sidx === segments.length - 1 ? '' : '\u00A0')}</span>
-            </div>
-          ))}
+        <div key={i} className="chord-pro-line flex flex-wrap items-start" style={{ marginBottom: `${lineSpacing * 0.5}em` }}>
+          {segments.map((seg, sidx) => {
+            const chordLabel = seg.chord ? transposeChord(seg.chord, semitones, useFlats, notation) : '';
+            // Reserva espaço com base no tamanho do próprio acorde, para não grudar em trechos
+            // instrumentais onde só há um espaço simples entre os colchetes (ex: Intro, Solo)
+            const minWidth = chordLabel ? `${chordLabel.length + 1}ch` : undefined;
+            return (
+              <div key={sidx} className="flex flex-col" style={{ minWidth, marginRight: chordLabel ? '0.35em' : 0 }}>
+                <span className="text-brand-orange font-bold text-[0.85em] leading-none h-[1.2em] whitespace-pre">
+                  {chordLabel || '\u00A0'}
+                </span>
+                <span className="lyrics-text whitespace-pre">{seg.text || (sidx === segments.length - 1 ? '' : '\u00A0')}</span>
+              </div>
+            );
+          })}
         </div>
       );
     }
