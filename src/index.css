@@ -59,7 +59,7 @@
 }
 
 .chord-line {
-  @apply font-mono font-bold text-brand-blue;
+  @apply font-mono font-bold text-brand-blue whitespace-pre;
 }
 
 .lyrics-line {
