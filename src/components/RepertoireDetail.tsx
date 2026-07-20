@@ -35,6 +35,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import ChordViewer from './ChordViewer';
+import ChordEditor from './ChordEditor';
 import { exportChordsToPDF } from '../lib/pdfExport';
 
 interface RepertoireDetailProps {
@@ -72,6 +73,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [targetSection, setTargetSection] = useState<string>('');
   const [selectedChord, setSelectedChord] = useState<Chord | null>(null);
+  const [editingChord, setEditingChord] = useState<Chord | null>(null);
   const [exporting, setExporting] = useState(false);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
@@ -916,9 +918,25 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
             onClose={() => setSelectedChord(null)} 
             allChords={items}
             onSwitchChord={(c) => setSelectedChord(c)}
+            onEdit={!isGuest ? (c) => {
+              setSelectedChord(null);
+              setEditingChord(c);
+            } : undefined}
           />
         )}
       </AnimatePresence>
+
+      {editingChord && (
+        <ChordEditor 
+          chord={editingChord}
+          profile={profile}
+          onClose={() => {
+            setEditingChord(null);
+            fetchRepertoireItems();
+            fetchLibrary();
+          }}
+        />
+      )}
 
       {/* Notificações */}
       {notification && (
