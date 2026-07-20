@@ -4,6 +4,7 @@ import {
   Search, 
   Plus, 
   Trash2, 
+  Pencil,
   GripVertical,
   Music,
   ExternalLink,
@@ -68,6 +69,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   const [assigning, setAssigning] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddingMode, setIsAddingMode] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [targetSection, setTargetSection] = useState<string>('');
   const [selectedChord, setSelectedChord] = useState<Chord | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -295,6 +297,13 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
   const openAddingMode = (section: string) => {
     setTargetSection(section);
+    setEditingItemId(null);
+    setIsAddingMode(true);
+  };
+
+  const openEditMode = (item: Chord & { item_id: string, section: string }) => {
+    setTargetSection(item.section);
+    setEditingItemId(item.item_id);
     setIsAddingMode(true);
   };
 
@@ -319,6 +328,30 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
       await fetchRepertoireItems();
     } catch (err: any) {
       setNotification({ message: 'Erro ao adicionar música: ' + err.message, type: 'error' });
+    }
+  };
+
+  const swapItem = async (chord: Chord) => {
+    if (!editingItemId) return;
+    try {
+      if (items.some(i => i.id === chord.id && i.section === targetSection && i.item_id !== editingItemId)) {
+        setNotification({ message: 'Esta música já está nesta seção.', type: 'error' });
+        return;
+      }
+
+      const { error } = await supabase
+        .from('repertoire_items')
+        .update({ chord_id: chord.id })
+        .eq('id', editingItemId);
+
+      if (error) throw error;
+
+      setNotification({ message: 'Música trocada com sucesso!', type: 'success' });
+      setIsAddingMode(false);
+      setEditingItemId(null);
+      await fetchRepertoireItems();
+    } catch (err: any) {
+      setNotification({ message: 'Erro ao trocar música: ' + err.message, type: 'error' });
     }
   };
 
@@ -498,12 +531,15 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
         <div className="bg-brand-blue text-white p-4 rounded-2xl flex items-center justify-between animate-in slide-in-from-top-4 duration-300">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-              <Plus className="w-4 h-4" />
+              {editingItemId ? <Pencil className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
             </div>
-            <p className="font-bold text-sm">Adicionando para: <span className="text-brand-orange">{targetSection}</span></p>
+            <p className="font-bold text-sm">
+              {editingItemId ? 'Trocando música em: ' : 'Adicionando para: '}
+              <span className="text-brand-orange">{targetSection}</span>
+            </p>
           </div>
           <button 
-            onClick={() => setIsAddingMode(false)}
+            onClick={() => { setIsAddingMode(false); setEditingItemId(null); }}
             className="text-xs font-black uppercase tracking-widest bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg transition-all"
           >
             Concluir
@@ -543,10 +579,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                        </div>
                     </div>
                     <button 
-                      onClick={() => addItem(chord)}
+                      onClick={() => editingItemId ? swapItem(chord) : addItem(chord)}
                       className="p-3 bg-brand-blue/5 text-brand-blue rounded-xl hover:bg-brand-blue hover:text-white transition-all"
                     >
-                      <Plus className="w-5 h-5" />
+                      {editingItemId ? <Pencil className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
                     </button>
                   </div>
                 ))}
@@ -598,9 +634,22 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                  <button 
                                    onClick={(e) => {
                                      e.stopPropagation();
+                                     openEditMode(item);
+                                   }}
+                                   className="p-1 text-slate-300 hover:text-brand-blue rounded transition-all"
+                                   title="Trocar música"
+                                 >
+                                   <Pencil className="w-2.5 h-2.5" />
+                                 </button>
+                               )}
+                               {!isGuest && (
+                                 <button 
+                                   onClick={(e) => {
+                                     e.stopPropagation();
                                      removeItem(item.item_id);
                                    }}
                                    className="p-1 text-slate-300 hover:text-red-500 rounded transition-all"
+                                   title="Excluir música"
                                  >
                                    <Trash2 className="w-2.5 h-2.5" />
                                  </button>
