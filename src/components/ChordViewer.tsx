@@ -64,16 +64,38 @@ function transposeChord(chord: string, semitones: number, useFlats: boolean, not
 }
 
 function processContent(content: string, semitones: number, useFlats: boolean, showChords: boolean, notation: 'english' | 'latin', fontSize: number, lineSpacing: number) {
-  return content.split('\n').map((line, i) => {
+  const lines = content.split('\n');
+  const elements: (JSX.Element | null)[] = [];
+  let insideChorus = false;
+
+  lines.forEach((line, i) => {
+    // Texto da linha sem os acordes, usado só para detectar o marcador "Refrão"
+    const strippedLower = line.replace(/\[.*?\]/g, '').trim().toLowerCase();
+    // Uma linha como "Refrão:", "Refrão", "Coro" ou "Chorus" liga o modo negrito.
+    // Ele continua ativo linha a linha até encontrar uma linha em branco.
+    const isChorusLabel = /^(refrão|refrao|coro|chorus)\b/.test(strippedLower);
+
+    if (isChorusLabel) {
+      insideChorus = true;
+    } else if (strippedLower === '') {
+      insideChorus = false;
+    }
+
+    const isChorus = insideChorus;
+    const chorusClass = isChorus ? 'font-bold border-l-4 border-brand-orange pl-3 py-1 bg-orange-50/50' : '';
+
     // Check if line is ChordPro format: [G] Lyrics [C] text
     const hasChordPro = line.includes('[') && line.includes(']');
-    
+
     if (hasChordPro) {
-      if (!showChords) return <div key={i} className="lyrics-line" style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>{line.replace(/\[.*?\]/g, '')}</div>;
-      
+      if (!showChords) {
+        elements.push(<div key={i} className={`lyrics-line ${chorusClass}`} style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>{line.replace(/\[.*?\]/g, '')}</div>);
+        return;
+      }
+
       const segments: { chord: string; text: string }[] = [];
       const parts = line.split(/(\[.*?\])/g);
-      
+
       let currentChord = '';
       for (const part of parts) {
         if (part.startsWith('[') && part.endsWith(']')) {
@@ -84,8 +106,8 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
         }
       }
 
-      return (
-        <div key={i} className="chord-pro-line flex flex-wrap items-start" style={{ marginBottom: `${lineSpacing * 0.5}em` }}>
+      elements.push(
+        <div key={i} className={`chord-pro-line flex flex-wrap items-start ${chorusClass}`} style={{ marginBottom: `${lineSpacing * 0.5}em` }}>
           {segments.map((seg, sidx) => {
             const chordLabel = seg.chord ? transposeChord(seg.chord, semitones, useFlats, notation) : '';
             // Reserva espaço com base no tamanho do próprio acorde, para não grudar em trechos
@@ -96,30 +118,33 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
                 <span className="text-brand-orange font-bold text-[0.85em] leading-none h-[1.2em] whitespace-pre">
                   {chordLabel || '\u00A0'}
                 </span>
-                <span className="lyrics-text whitespace-pre">{seg.text || (sidx === segments.length - 1 ? '' : '\u00A0')}</span>
+                <span className={`lyrics-text whitespace-pre ${isChorus ? 'font-bold' : ''}`}>{seg.text || (sidx === segments.length - 1 ? '' : '\u00A0')}</span>
               </div>
             );
           })}
         </div>
       );
+      return;
     }
 
     // Classic detection
     const isChordLine = /^\s*([A-G][b#]?[m7majdimaugsus0-9/]*\s+)*[A-G][b#]?[m7majdimaugsus0-9/]*\s*$/.test(line);
-    
+
     if (isChordLine) {
-      if (!showChords) return null;
+      if (!showChords) { elements.push(null); return; }
       const transposed = transposeChord(line, semitones, useFlats, notation);
-      return <div key={i} className="chord-line font-bold text-brand-orange" style={{ height: '1.2em' }}>{transposed}</div>;
+      elements.push(<div key={i} className="chord-line font-bold text-brand-orange" style={{ height: '1.2em' }}>{transposed}</div>);
+      return;
     }
-    
-    const isChorus = line.trim().toLowerCase().startsWith('refrão') || line.trim().toLowerCase().startsWith('[refrão]');
-    return (
-      <div key={i} className={`lyrics-line ${isChorus ? 'font-bold border-l-4 border-brand-orange pl-3 py-1 bg-orange-50/50' : ''}`} style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>
+
+    elements.push(
+      <div key={i} className={`lyrics-line ${chorusClass}`} style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>
         {line}
       </div>
     );
-  }).filter(Boolean);
+  });
+
+  return elements.filter(Boolean);
 }
 
 interface ChordViewerProps {
