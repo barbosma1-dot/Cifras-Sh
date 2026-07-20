@@ -66,18 +66,19 @@ function transposeChord(chord: string, semitones: number, useFlats: boolean, not
 
 function processContent(content: string, semitones: number, useFlats: boolean, showChords: boolean, notation: 'english' | 'latin', fontSize: number, lineSpacing: number) {
   const lines = content.split('\n');
-  const elements: (JSX.Element | null)[] = [];
   let insideChorus = false;
 
+  // 1ª passada: calcula, para cada linha, se ela pertence ao refrão e monta o elemento
+  // "cru" da linha (sem borda/fundo por linha — isso agora é feito no agrupamento).
+  type LineInfo = { isChorus: boolean; skip: boolean; el: JSX.Element | null };
+  const lineInfos: LineInfo[] = [];
+
   lines.forEach((line, i) => {
-    // Texto da linha sem os acordes, usado só para detectar os marcadores
     const strippedLower = line.replace(/\[.*?\]/g, '').trim().toLowerCase();
-    // "Refrão:", "Refrão", "Coro" ou "Chorus" ligam o modo negrito.
     const isChorusStart = /^(refrão|refrao|coro|chorus)\b/.test(strippedLower);
-    // "Fim", "Fim Refrão" ou outro marcador de seção (Estrofe, Ponte, Intro...) desligam o negrito.
+    // "Fim", "Fim Refrão" etc. fecham o bloco mas NÃO são exibidos no viewer.
     const isChorusEnd = /^(fim|end)\b/.test(strippedLower);
     const isOtherSectionLabel = /^(estrofe|verso|intro|solo|ponte|final|instrumental|vocalize|inst|passagem|dedilhado|ritmo)\b\s*:?\s*$/.test(strippedLower);
-    // Duas linhas em branco seguidas também fecham o bloco (folga maior = nova seção)
     const isDoubleBlank = strippedLower === '' && i > 0 && lines[i - 1].trim() === '';
 
     if (isChorusStart) {
@@ -86,15 +87,22 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
       insideChorus = false;
     }
 
-    const isChorus = insideChorus && !isChorusEnd;
-    const chorusClass = isChorus ? 'font-bold border-l-4 border-brand-orange pl-3 py-1 bg-orange-50/50' : '';
+    if (isChorusEnd) {
+      // Marcador "Fim" é apenas um controle interno; não gera linha no viewer.
+      lineInfos.push({ isChorus: false, skip: true, el: null });
+      return;
+    }
 
-    // Check if line is ChordPro format: [G] Lyrics [C] text
+    const isChorus = insideChorus;
     const hasChordPro = line.includes('[') && line.includes(']');
 
     if (hasChordPro) {
       if (!showChords) {
-        elements.push(<div key={i} className={`lyrics-line ${chorusClass}`} style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>{line.replace(/\[.*?\]/g, '')}</div>);
+        lineInfos.push({
+          isChorus,
+          skip: false,
+          el: <div key={i} className="lyrics-line" style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>{line.replace(/\[.*?\]/g, '')}</div>
+        });
         return;
       }
 
@@ -111,24 +119,26 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
         }
       }
 
-      elements.push(
-        <div key={i} className={`chord-pro-line flex flex-wrap items-start ${chorusClass}`} style={{ marginBottom: `${lineSpacing * 0.5}em` }}>
-          {segments.map((seg, sidx) => {
-            const chordLabel = seg.chord ? transposeChord(seg.chord, semitones, useFlats, notation) : '';
-            // Reserva espaço com base no tamanho do próprio acorde, para não grudar em trechos
-            // instrumentais onde só há um espaço simples entre os colchetes (ex: Intro, Solo)
-            const minWidth = chordLabel ? `${chordLabel.length + 1}ch` : undefined;
-            return (
-              <div key={sidx} className="flex flex-col" style={{ minWidth, marginRight: chordLabel ? '0.35em' : 0 }}>
-                <span className="text-brand-orange font-bold text-[0.85em] leading-none h-[1.2em] whitespace-pre">
-                  {chordLabel || '\u00A0'}
-                </span>
-                <span className={`lyrics-text whitespace-pre ${isChorus ? 'font-bold' : ''}`}>{seg.text || (sidx === segments.length - 1 ? '' : '\u00A0')}</span>
-              </div>
-            );
-          })}
-        </div>
-      );
+      lineInfos.push({
+        isChorus,
+        skip: false,
+        el: (
+          <div key={i} className="chord-pro-line flex flex-wrap items-start" style={{ marginBottom: `${lineSpacing * 0.5}em` }}>
+            {segments.map((seg, sidx) => {
+              const chordLabel = seg.chord ? transposeChord(seg.chord, semitones, useFlats, notation) : '';
+              const minWidth = chordLabel ? `${chordLabel.length + 1}ch` : undefined;
+              return (
+                <div key={sidx} className="flex flex-col" style={{ minWidth, marginRight: chordLabel ? '0.35em' : 0 }}>
+                  <span className="text-brand-orange font-bold text-[0.85em] leading-none h-[1.2em] whitespace-pre">
+                    {chordLabel || '\u00A0'}
+                  </span>
+                  <span className="lyrics-text whitespace-pre">{seg.text || (sidx === segments.length - 1 ? '' : '\u00A0')}</span>
+                </div>
+              );
+            })}
+          </div>
+        )
+      });
       return;
     }
 
@@ -136,20 +146,52 @@ function processContent(content: string, semitones: number, useFlats: boolean, s
     const isChordLine = /^\s*([A-G][b#]?[m7majdimaugsus0-9/]*\s+)*[A-G][b#]?[m7majdimaugsus0-9/]*\s*$/.test(line);
 
     if (isChordLine) {
-      if (!showChords) { elements.push(null); return; }
+      if (!showChords) { lineInfos.push({ isChorus, skip: true, el: null }); return; }
       const transposed = transposeChord(line, semitones, useFlats, notation);
-      elements.push(<div key={i} className={`chord-line font-bold text-brand-orange ${isChorus ? 'pl-3 border-l-4 border-brand-orange bg-orange-50/50' : ''}`} style={{ height: '1.2em' }}>{transposed}</div>);
+      lineInfos.push({
+        isChorus,
+        skip: false,
+        el: <div key={i} className="chord-line font-bold text-brand-orange" style={{ height: '1.2em' }}>{transposed}</div>
+      });
       return;
     }
 
-    elements.push(
-      <div key={i} className={`lyrics-line ${chorusClass}`} style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>
-        {line}
-      </div>
-    );
+    lineInfos.push({
+      isChorus,
+      skip: false,
+      el: <div key={i} className="lyrics-line" style={{ paddingBottom: `${lineSpacing * 0.3}em` }}>{line}</div>
+    });
   });
 
-  return elements.filter(Boolean);
+  // 2ª passada: agrupa linhas consecutivas do refrão em um único "quadro" com a cifra dentro,
+  // em vez de aplicar borda/fundo linha a linha (o que causava o efeito de linhas separadas).
+  const elements: JSX.Element[] = [];
+  let i = 0;
+  let groupIdx = 0;
+  while (i < lineInfos.length) {
+    const info = lineInfos[i];
+    if (info.skip) { i++; continue; }
+
+    if (info.isChorus) {
+      const group: JSX.Element[] = [];
+      while (i < lineInfos.length && lineInfos[i].isChorus) {
+        if (!lineInfos[i].skip && lineInfos[i].el) group.push(lineInfos[i].el as JSX.Element);
+        i++;
+      }
+      if (group.length > 0) {
+        elements.push(
+          <div key={`chorus-${groupIdx++}`} className="font-bold border-l-4 border-brand-orange bg-orange-50/50 rounded-r-2xl pl-3 pr-3 py-3 my-3">
+            {group}
+          </div>
+        );
+      }
+    } else {
+      if (info.el) elements.push(info.el);
+      i++;
+    }
+  }
+
+  return elements;
 }
 
 interface ChordViewerProps {
