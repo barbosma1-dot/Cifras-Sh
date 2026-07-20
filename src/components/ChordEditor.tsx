@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus } from 'lucide-react';
+import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
 import axios from 'axios';
@@ -21,6 +21,7 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
   const [categories, setCategories] = useState<string[]>(['Missa', 'Laudes', 'Oração', 'Outros']);
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
   const [newCategory, setNewCategory] = useState('');
+  const [categorySearch, setCategorySearch] = useState('');
   
   const [extractingMetadata, setExtractingMetadata] = useState(false);
   
@@ -551,32 +552,66 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">Categorias</label>
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {categories.map(cat => (
+
+                  {/* Barra de pesquisa de categorias */}
+                  <div className="relative mb-3">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={categorySearch}
+                      onChange={e => setCategorySearch(e.target.value)}
+                      placeholder="Pesquisar categoria..."
+                      className="w-full pl-9 pr-9 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/40 focus:border-brand-orange"
+                    />
+                    {categorySearch && (
                       <button
-                        key={cat}
                         type="button"
-                        onClick={() => {
-                          const newCategories = form.categories.includes(cat)
-                            ? form.categories.filter(c => c !== cat)
-                            : [...form.categories, cat];
-                          setForm({...form, categories: newCategories});
-                        }}
-                        className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                          form.categories.includes(cat)
-                            ? 'bg-brand-orange text-white shadow-md shadow-brand-orange/20'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
+                        onClick={() => setCategorySearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                       >
-                        {cat}
+                        <X className="w-4 h-4" />
                       </button>
-                    ))}
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 mb-3 max-h-48 overflow-y-auto pr-1">
+                    {categories
+                      .filter(cat =>
+                        // Sempre mostra as categorias já selecionadas, mesmo que não batam com a busca
+                        form.categories.includes(cat) ||
+                        cat.toLowerCase().includes(categorySearch.trim().toLowerCase())
+                      )
+                      .map(cat => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => {
+                            const newCategories = form.categories.includes(cat)
+                              ? form.categories.filter(c => c !== cat)
+                              : [...form.categories, cat];
+                            setForm({...form, categories: newCategories});
+                          }}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                            form.categories.includes(cat)
+                              ? 'bg-brand-orange text-white shadow-md shadow-brand-orange/20'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    {categorySearch.trim() && !categories.some(cat => cat.toLowerCase().includes(categorySearch.trim().toLowerCase())) && (
+                      <p className="text-xs text-slate-400 italic py-2">Nenhuma categoria encontrada.</p>
+                    )}
                   </div>
 
                   {!showNewCategoryInput ? (
                     <button
                       type="button"
-                      onClick={() => setShowNewCategoryInput(true)}
+                      onClick={() => {
+                        setNewCategory(categorySearch.trim());
+                        setShowNewCategoryInput(true);
+                      }}
                       className="text-xs font-bold text-brand-orange hover:underline flex items-center gap-1"
                     >
                       <Plus className="w-3 h-3" />
