@@ -49,6 +49,7 @@ import {
   isRepertoireOffline,
   OfflineRepertoireItem,
 } from '../lib/offlineDb';
+import { withTimeout } from '../lib/withTimeout';
 
 interface RepertoireDetailProps {
   repertoire: Repertoire;
@@ -298,16 +299,20 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
         throw new Error('offline');
       }
 
-      const { data, error } = await supabase
-        .from('repertoire_items')
-        .select(`
-          id,
-          order_index,
-          section,
-          chords (*)
-        `)
-        .eq('repertoire_id', repertoire.id)
-        .order('order_index', { ascending: true });
+      const { data, error } = await withTimeout(
+        supabase
+          .from('repertoire_items')
+          .select(`
+            id,
+            order_index,
+            section,
+            chords (*)
+          `)
+          .eq('repertoire_id', repertoire.id)
+          .order('order_index', { ascending: true }),
+        8000,
+        'timeout-repertoire-items'
+      );
 
       if (error) throw error;
       
