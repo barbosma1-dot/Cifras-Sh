@@ -733,15 +733,17 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                 
                 return (
                   <div key={section} className="group">
-                    <div className="flex justify-between items-center mb-0.5 px-0.5 opacity-60">
-                       <h3 className="text-[7px] font-black text-slate-300 uppercase tracking-[0.3em]">{section}</h3>
-                       <button 
-                         onClick={() => !isGuest && openAddingMode(section)}
-                         disabled={isGuest}
-                         className={`p-0.5 text-slate-300 hover:text-brand-blue rounded transition-all ${isGuest ? 'hidden' : 'opacity-100'}`}
-                       >
-                         <Plus className="w-2 h-2" />
-                       </button>
+                    <div className="flex justify-between items-center mb-1 px-0.5">
+                       <h3 className="text-[7px] font-black text-slate-300 uppercase tracking-[0.3em] opacity-60">{section}</h3>
+                       {!isGuest && (
+                         <button 
+                           onClick={() => openAddingMode(section)}
+                           className="flex items-center gap-1 px-2 py-1 bg-brand-blue/5 text-brand-blue rounded-lg text-[8px] font-bold uppercase hover:bg-brand-blue hover:text-white transition-all"
+                         >
+                           <Plus className="w-3 h-3" />
+                           Adicionar
+                         </button>
+                       )}
                     </div>
                     <div className="bg-white rounded-xl border border-slate-50 shadow-sm divide-y divide-slate-50 overflow-hidden">
                        {sectionItems.map((item, idx) => (
@@ -796,18 +798,18 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
               
               {!isGuest && (
                 <div className="pt-4 border-t border-slate-50">
-                  <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest mb-2">Outras Seções</p>
+                  <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest mb-2">Adicionar Música a uma Seção</p>
                   <div className="flex flex-wrap gap-2">
                     {sections.map(section => {
                       const sectionItems = items.filter(i => i.section === section);
-                      if (sectionItems.length > 0) return null;
+                      const hasItems = sectionItems.length > 0;
                       return (
                         <button
                           key={section}
                           onClick={() => openAddingMode(section)}
                           className="px-2 py-1 bg-slate-50 text-slate-400 rounded-lg text-[8px] font-bold uppercase hover:bg-brand-blue/5 hover:text-brand-blue transition-colors border border-transparent hover:border-brand-blue/20"
                         >
-                          + {section}
+                          + {section}{hasItems ? ` (${sectionItems.length})` : ''}
                         </button>
                       );
                     })}
