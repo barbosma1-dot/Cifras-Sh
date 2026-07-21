@@ -1,7 +1,94 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, Mission } from '../types';
-import { Settings, Users, Shield, Trash2, Plus, Loader2, Search, Edit, UserPlus, ArrowRight } from 'lucide-react';
+import { Settings, Users, Shield, Trash2, Plus, Loader2, Search, Edit, UserPlus, ArrowRight, Cpu, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
+
+interface AiProviderStatus {
+  name: string;
+  configured: boolean;
+  detail: string;
+  cota: string;
+}
+
+// Painel de diagnóstico dos provedores de IA usados na extração de PDF
+// (functions/api/extract-pdf.ts). Só chama o endpoint /api/ai-status, que
+// não consome cota nenhuma — apenas reporta o que está configurado no
+// Cloudflare Pages. Existe para responder rápido à pergunta "por que a
+// extração parou dizendo que o limite da IA foi atingido?" sem precisar
+// vasculhar os logs do Cloudflare.
+function AiStatusPanel() {
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [providers, setProviders] = useState<AiProviderStatus[]>([]);
+  const [resumo, setResumo] = useState('');
+  const [recomendacao, setRecomendacao] = useState('');
+  const [error, setError] = useState('');
+
+  const checkStatus = async () => {
+    setChecking(true);
+    setError('');
+    try {
+      const res = await fetch('/api/ai-status');
+      if (!res.ok) throw new Error(`Servidor respondeu ${res.status}`);
+      const data = await res.json();
+      setProviders(data.providers || []);
+      setResumo(data.resumo || '');
+      setRecomendacao(data.recomendacao || '');
+      setChecked(true);
+    } catch (err: any) {
+      setError('Não foi possível verificar os provedores de IA (' + (err?.message || 'erro desconhecido') + '). Confirme que o app está publicado no Cloudflare Pages, não rodando localmente.');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+        <div className="flex items-center gap-3">
+          <Cpu className="w-6 h-6 text-brand-blue" />
+          <div>
+            <h2 className="text-lg font-bold text-brand-blue">Status dos Provedores de IA</h2>
+            <p className="text-slate-500 text-sm">Diagnóstico da extração de PDF (Gemini → Cloudflare Workers AI → Groq)</p>
+          </div>
+        </div>
+        <button
+          onClick={checkStatus}
+          disabled={checking}
+          className="bg-brand-blue text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md disabled:opacity-60 shrink-0"
+        >
+          {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          Verificar agora
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-red-600 text-sm bg-red-50 border border-red-100 rounded-xl p-3 mb-4">{error}</p>
+      )}
+
+      {checked && (
+        <div className="space-y-3">
+          {resumo && <p className="text-sm font-medium text-slate-700">{resumo}</p>}
+          <div className="grid gap-3 sm:grid-cols-3">
+            {providers.map((p) => (
+              <div key={p.name} className={`rounded-2xl border p-4 ${p.configured ? 'border-green-100 bg-green-50' : 'border-amber-100 bg-amber-50'}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  {p.configured ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-amber-600" />}
+                  <span className="font-bold text-slate-800 text-sm">{p.name}</span>
+                </div>
+                <p className="text-xs text-slate-600">{p.detail}</p>
+                <p className="text-xs text-slate-400 mt-1">{p.cota}</p>
+              </div>
+            ))}
+          </div>
+          {recomendacao && (
+            <p className="text-sm text-brand-blue bg-blue-50 border border-blue-100 rounded-xl p-3">{recomendacao}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminSettings({ profile }: { profile: UserProfile | null }) {
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -283,6 +370,15 @@ export default function AdminSettings({ profile }: { profile: UserProfile | null
       <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
            <h1 className="text-2xl font-bold text-brand-blue">Painel Administrativo</h1>
+           <p className="text-slate-500">Gestão global de usuários e missões</p>
+        </div>
+      </div>
+
+      <AiStatusPanel />
+
+      <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+           <h2 className="text-xl font-bold text-brand-blue">Usuários e Missões</h2>
            <p className="text-slate-500">Gestão global de usuários e missões</p>
         </div>
         <div className="flex gap-4 w-full md:w-auto">
