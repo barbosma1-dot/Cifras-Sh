@@ -228,9 +228,16 @@ Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinh
 ### REGRAS DE OURO DE OCR (CRÍTICO):
 1. VARREDURA COMPLETA (CRÍTICO): Cada lote pode conter VÁRIAS páginas e VÁRIAS músicas diferentes — inclusive mais de uma música na MESMA página. Percorra TODAS as páginas do lote, do início ao fim, e retorne um objeto para CADA música encontrada. NUNCA pare depois de extrair a primeira música do lote — isso é o erro mais grave que você pode cometer aqui. Antes de responder, confira: "processei a última página deste lote, e há um objeto no array para cada música que vi, sem exceção?".
 2. CONTINUIDADE MULTI-PÁGINA: Se uma música começa em uma página e continua na próxima, MESCLE-AS em um único objeto. Não crie dois registros para a mesma música.
-3. ALINHAMENTO CHORDPRO: O acorde deve ser inserido EXATAMENTE antes da sílaba onde ele ocorre. 
-   Exemplo: [G]Vin[D/F#]de cria[Em]tu[C]ras.
-4. LINHAS INSTRUMENTAIS (Intro/Solo): Mantenha o espaçamento visual do PDF para representar o tempo rítmico. Use espaços múltiplos entre acordes.
+3. ALINHAMENTO CHORDPRO (CRÍTICO — ERRO MUITO COMUM): A maioria dos PDFs de origem imprime o acorde numa linha SEPARADA, ACIMA da linha de letra, alinhado pela posição horizontal (coluna) da sílaba onde ele cai — esse é só o jeito de IMPRIMIR, não o formato de saída. Você NUNCA deve reproduzir essas duas linhas separadamente no "content". Sempre que uma linha de acordes estiver posicionada acima de uma linha de LETRA (texto cantável), você deve: (a) olhar a posição horizontal de cada acorde em relação às letras da linha de baixo, (b) FUNDIR as duas linhas em UMA ÚNICA linha de saída, inserindo cada acorde entre colchetes imediatamente antes do caractere/sílaba sobre a qual ele estava posicionado, e (c) descartar a linha de acordes separada — ela não deve sobrar no resultado. Isso vale mesmo que o espaçamento do PDF pareça "impreciso"; use o seu melhor julgamento de qual sílaba cada acorde acompanha.
+   Exemplo de ENTRADA (duas linhas, como aparece no PDF):
+     C                D                Em   G
+     Vem, Santo Espírito, inflama os corações
+   Exemplo de SAÍDA CORRETA (uma linha só, ChordPro):
+     [C]Vem, [D]Santo Espírito, in[Em]flama os cora[G]ções
+   Exemplo de SAÍDA ERRADA (proibido — são duas linhas, uma delas só com acordes soltos):
+     [C]                [D]                [Em] [G]
+     Vem, Santo Espírito, inflama os corações
+4. LINHAS INSTRUMENTAIS (Intro/Solo/Ponte sem letra nenhuma): a regra 3 NÃO se aplica aqui — quando a linha de acordes NÃO tem nenhuma letra cantável embaixo (só uma sequência de acordes, como um trecho de intro/solo), mantenha-a como uma linha própria, só com os acordes, preservando o espaçamento visual do PDF para representar o tempo rítmico. Use espaços múltiplos entre acordes.
    Exemplo: [G]        [D/F#]        [Em]        [C]
 5. FLUXO DE COLUNAS: Se o PDF tiver duas colunas, leia a coluna da ESQUERDA inteira (de cima a baixo) antes de passar para a coluna da DIREITA. Nunca misture linhas horizontais de colunas diferentes.
 6. LIMPEZA TOTAL: Remova números de página, rodapés de hinários, nomes de missas/tempos litúrgicos repetidos e anotações manuais. 
