@@ -183,18 +183,23 @@ export const exportChordsToPDF = async (chords: Chord[], bookTitle: string = 'Me
         if (nextIsLyric) {
           if (y + LINE_GAP > bottomLimit) breakPage();
 
-          doc.setFont('helvetica', 'bold');
+          // Fonte monoespaçada aqui: o alinhamento do acorde acima da sílaba certa
+          // depende dos espaços múltiplos do texto original, que só ficam retos
+          // com uma fonte de largura fixa (com Helvetica proporcional os espaços
+          // "encolhem" e o acorde desalinha da sílaba).
+          doc.setFont('courier', 'bold');
           doc.setFontSize(CHORD_SIZE);
           doc.setTextColor(0, 0, 0);
           doc.text(trimmed, margin, y);
 
-          doc.setFont('helvetica', 'normal');
+          doc.setFont('courier', 'normal');
           doc.setFontSize(LYRIC_SIZE);
           const wrappedLyric: string[] = doc.splitTextToSize(nextTrimmed, contentWidth);
           doc.text(wrappedLyric[0], margin, y + CHORD_LYRIC_OFFSET);
           y += LINE_GAP;
 
           // Se a letra dessa linha for longa e quebrar em mais de uma linha, desenha o resto normalmente.
+          doc.setFont('helvetica', 'normal');
           for (let w = 1; w < wrappedLyric.length; w++) {
             if (y + PLAIN_LINE_GAP > bottomLimit) breakPage();
             doc.text(wrappedLyric[w], margin, y);
@@ -206,7 +211,7 @@ export const exportChordsToPDF = async (chords: Chord[], bookTitle: string = 'Me
         }
 
         if (y + PLAIN_LINE_GAP > bottomLimit) breakPage();
-        doc.setFont('helvetica', 'bold');
+        doc.setFont('courier', 'bold');
         doc.setFontSize(CHORD_SIZE);
         doc.setTextColor(0, 0, 0);
         doc.text(trimmed, margin, y);
