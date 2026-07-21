@@ -22,6 +22,10 @@ interface PDFImporterProps {
   missionId?: string | null;
 }
 
+// Categorias mais comuns, exibidas como atalhos (chips) para marcar cada
+// música individualmente sem precisar digitar tudo na mão.
+const COMMON_CATEGORIES = ['Missa', 'Louvor', 'Adoração', 'Oração', 'Ação de Graças', 'Outros'];
+
 export default function PDFImporter({ onClose, onImportComplete, bookId, missionId }: PDFImporterProps) {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -483,16 +487,47 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                       />
                     </div>
 
+                    <div className="mb-3">
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {COMMON_CATEGORIES.map(cat => {
+                          const currentCats = song.category ? song.category.split(',').map(c => c.trim()).filter(Boolean) : [];
+                          const active = currentCats.includes(cat);
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => {
+                                const newSongs = [...extractedSongs];
+                                const cats = song.category ? song.category.split(',').map(c => c.trim()).filter(Boolean) : [];
+                                const catIdx = cats.indexOf(cat);
+                                if (catIdx >= 0) cats.splice(catIdx, 1); else cats.push(cat);
+                                newSongs[idx] = { ...newSongs[idx], category: cats.join(', ') };
+                                setExtractedSongs(newSongs);
+                              }}
+                              className={`text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest whitespace-nowrap border transition-colors ${
+                                active
+                                  ? 'bg-brand-orange text-white border-brand-orange'
+                                  : 'bg-white text-slate-400 border-slate-200 hover:border-brand-orange/50 hover:text-brand-orange'
+                              }`}
+                            >
+                              {cat}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <input
+                        value={song.category || ''}
+                        onChange={(e) => {
+                          const newSongs = [...extractedSongs];
+                          newSongs[idx] = { ...newSongs[idx], category: e.target.value };
+                          setExtractedSongs(newSongs);
+                        }}
+                        placeholder="Categorias separadas por vírgula"
+                        className="w-full text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/20 outline-none"
+                      />
+                    </div>
+
                     <div className="flex flex-wrap gap-2 mb-3">
-                       {song.category ? song.category.split(',').map(cat => (
-                         <span key={cat} className="text-[8px] font-black bg-brand-orange/10 text-brand-orange px-2 py-0.5 rounded-full uppercase tracking-widest whitespace-nowrap">
-                           {cat.trim()}
-                         </span>
-                       )) : (
-                         <span className="text-[8px] font-black bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full uppercase tracking-widest font-black">
-                           MISSA
-                         </span>
-                       )}
                        <span className="text-[8px] font-black bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full uppercase tracking-widest font-black">
                          TOM: {song.original_key || 'C'}
                        </span>
