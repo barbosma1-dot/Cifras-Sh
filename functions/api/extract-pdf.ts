@@ -123,18 +123,30 @@ async function runCloudflareWorkersAI(env: any, images: string[], prompt: string
   // é o preço de ser a rede de segurança gratuita, ilimitada em chave, do app.
   const songs: any[] = [];
   for (const img of images) {
-    const bytes = Uint8Array.from(atob(img), (c) => c.charCodeAt(0));
     const result: any = await withTimeout(
       env.AI.run('@cf/moondream/moondream3.1-9B-A2B', {
         task: 'query',
-        image: [...bytes],
-        prompt,
+        // O schema atual do Moondream 3.1 na Workers AI exige "image" como
+        // string (URL pública ou data URI base64) — NÃO como array de bytes.
+        // Enviar array de bytes (formato antigo/de outro modelo) causa o erro
+        // "Type mismatch of '/image', 'string' not in 'array','binary'" e
+        // derruba esse provedor sempre, mesmo com o binding 'AI' configurado
+        // corretamente — era esse o motivo real da cascata nunca chegar até
+        // aqui com sucesso.
+        image: `data:image/jpeg;base64,${img}`,
+        // O parâmetro correto para a pergunta da task "query" é "question",
+        // não "prompt" — "prompt" não existe no schema deste modelo e era
+        // silenciosamente ignorado, fazendo o Moondream sempre responder à
+        // pergunta padrão ("What's in this image?") em vez de seguir as
+        // regras de extração de cifras.
+        question: prompt,
+        reasoning: false,
         max_tokens: 4096
       }),
       8000,
       "Cloudflare Workers AI"
     );
-    const raw = result?.result ?? result?.response ?? result?.answer ?? '';
+    const raw = result?.answer ?? result?.result ?? result?.response ?? '';
     songs.push(...safeParseSongs(String(raw)));
   }
   return songs;
