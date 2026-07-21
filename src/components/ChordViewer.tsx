@@ -227,6 +227,7 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
   }, [notification]);
 
   const [showTools, setShowTools] = useState(false);
+  const [immersive, setImmersive] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // ... (rest of the file remains similar but uses these states)
@@ -312,7 +313,15 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
       className="fixed inset-0 z-[60] bg-white flex flex-col"
     >
       {/* Header Controls */}
-      <div className="bg-brand-blue text-white shrink-0 px-3 md:px-8 pt-3 pb-2 md:py-4 flex flex-col gap-2">
+      <AnimatePresence>
+      {!immersive && (
+      <motion.div 
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -20 }}
+        transition={{ duration: 0.2 }}
+        className="bg-brand-blue text-white shrink-0 px-3 md:px-8 pt-3 pb-2 md:py-4 flex flex-col gap-2"
+      >
         {/* Linha 1: voltar + título/artista (altura livre, nunca é cortada) */}
         <div className="flex items-center gap-3">
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg shrink-0">
@@ -322,6 +331,13 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
             <h2 className="font-bold text-lg leading-tight truncate">{chord.title}</h2>
             <p className="text-xs text-white/60 truncate">{chord.artist}</p>
           </div>
+          <button 
+            onClick={() => setImmersive(true)}
+            className="p-2 rounded-lg transition-colors hover:bg-white/10 shrink-0"
+            title="Ocultar Menus"
+          >
+            <Maximize2 className="w-6 h-6" />
+          </button>
           <button 
             onClick={() => setShowTools(!showTools)}
             className={`p-2 rounded-lg transition-colors shrink-0 ${showTools ? 'bg-brand-orange text-white' : 'hover:bg-white/10'}`}
@@ -391,7 +407,20 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
+      )}
+      </AnimatePresence>
+
+      {/* Botão flutuante para voltar a exibir os menus quando estiverem ocultos */}
+      {immersive && (
+        <button
+          onClick={() => setImmersive(false)}
+          className="fixed top-3 right-3 z-[65] p-2.5 rounded-full bg-black/30 text-white backdrop-blur-sm hover:bg-black/50 transition-colors shadow-lg"
+          title="Mostrar Menus"
+        >
+          <Minimize2 className="w-5 h-5" />
+        </button>
+      )}
 
       {/* Main Area */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
@@ -701,7 +730,15 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
         </AnimatePresence>
 
         {/* Sidebar Controls (Floating on Mobile) */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 md:relative md:translate-x-0 md:bottom-0 md:w-64 md:border-l border-slate-100 bg-white shadow-2xl md:shadow-none p-4 rounded-2xl md:rounded-none flex md:flex-col gap-4 items-center justify-center z-[55]">
+        <AnimatePresence>
+        {!immersive && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.2 }}
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 md:relative md:translate-x-0 md:bottom-0 md:w-64 md:border-l border-slate-100 bg-white shadow-2xl md:shadow-none p-4 rounded-2xl md:rounded-none flex md:flex-col gap-4 items-center justify-center z-[55]"
+        >
           <div className="flex md:flex-col gap-2">
             <button 
               disabled={currentIndex <= 0}
@@ -736,7 +773,9 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
             <Music2 className="w-6 h-6" />
             <span className="hidden md:inline font-bold text-xs uppercase">Cifras</span>
           </button>
-        </div>
+        </motion.div>
+        )}
+        </AnimatePresence>
 
         {/* Youtube Overlay */}
         <AnimatePresence>
