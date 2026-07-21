@@ -1,12 +1,117 @@
-// Endpoint de diagnóstico: NÃO faz nenhuma chamada de IA (não consome cota).
-// Apenas informa quais dos 3 provedores da cascata de extração
-// (functions/api/extract-pdf.ts) estão de fato configurados neste projeto
-// Cloudflare Pages, para o admin conseguir descobrir rapidamente por que a
-// extração caiu direto no erro de "limite de uso da IA atingido" — em vez de
-// ter que adivinhar olhando os logs.
+// Endpoint de diagnóstico dos 3 provedores usados na cascata de extração
+// (functions/api/extract-pdf.ts).
+//
+// GET  -> só verifica CONFIGURAÇÃO (chave/binding existe?). Não consome cota.
+// POST -> faz um teste AO VIVO, com uma imagem 1x1 e um prompt mínimo, em
+//         cada provedor. Isso é o único jeito confiável de saber se um
+//         provedor "configurado" (GET) está de fato disponível AGORA —
+//         porque "configurado" não quer dizer "com cota sobrando": o
+//         Workers AI e o Groq também têm cota diária própria, só que maior
+//         que a do Gemini, e podem estar esgotados mesmo com o binding/chave
+//         presentes. O teste ao vivo gasta uma fração mínima de cota (uma
+//         imagem 1x1, poucos tokens de saída) — bem menos que uma página real.
 //
 // Nunca devolve o valor das chaves, só se elas existem e (para o Gemini)
 // se ainda estão com o valor de exemplo do .env.example.
+
+// Imagem 1x1 px em base64 (JPEG), usada só para o teste ao vivo — não é uma
+// página real, então o teste custa o mínimo possível de tokens/cota.
+const TINY_TEST_IMAGE =
+  "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=";
+const TEST_PROMPT = 'Responda apenas com o JSON: [{"title":"teste","artist":"","category":"","original_key":"","content":"ok"}]';
+
+async function testGeminiLive(env: any): Promise<{ ok: boolean; message: string }> {
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.includes("YOUR_API_KEY")) {
+    return { ok: false, message: "Não configurado." };
+  }
+  try {
+    const { GoogleGenAI } = await import("@google/genai");
+    const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-lite",
+      contents: [{ role: "user", parts: [{ text: TEST_PROMPT }, { inlineData: { mimeType: "image/jpeg", data: TINY_TEST_IMAGE } }] }],
+      config: { temperature: 0.1, responseMimeType: "application/json", maxOutputTokens: 200 }
+    });
+    if (!response.text) return { ok: false, message: "Respondeu vazio (verificar chave/modelo)." };
+    return { ok: true, message: "Respondendo normalmente agora." };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (/quota|429|resource_exhausted|rate.?limit/i.test(msg)) {
+      return { ok: false, message: "Cota esgotada agora (429/quota). Não é problema de configuração." };
+    }
+    return { ok: false, message: `Erro: ${msg}` };
+  }
+}
+
+async function testWorkersAiLive(env: any): Promise<{ ok: boolean; message: string }> {
+  if (!env.AI) return { ok: false, message: "Binding 'AI' ausente neste deploy." };
+  try {
+    const bytes = Uint8Array.from(atob(TINY_TEST_IMAGE), (c) => c.charCodeAt(0));
+    const result: any = await env.AI.run("@cf/moondream/moondream3.1-9B-A2B", {
+      task: "query",
+      image: [...bytes],
+      prompt: TEST_PROMPT,
+      max_tokens: 50
+    });
+    const raw = result?.result ?? result?.response ?? result?.answer ?? "";
+    if (!raw) return { ok: false, message: "Respondeu vazio." };
+    return { ok: true, message: "Respondendo normalmente agora." };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (/quota|429|resource_exhausted|rate.?limit|capacity/i.test(msg)) {
+      return { ok: false, message: "Cota/capacidade esgotada agora. Não é problema de configuração." };
+    }
+    return { ok: false, message: `Erro: ${msg}` };
+  }
+}
+
+async function testGroqLive(env: any): Promise<{ ok: boolean; message: string }> {
+  const apiKey = env.GROQ_API_KEY;
+  if (!apiKey || apiKey.length < 10) return { ok: false, message: "Não configurado." };
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "qwen/qwen3.6-27b",
+        messages: [{ role: "user", content: [{ type: "text", text: TEST_PROMPT }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${TINY_TEST_IMAGE}` } }] }],
+        temperature: 0.1,
+        reasoning_effort: "none",
+        max_tokens: 50
+      })
+    });
+    if (res.ok) return { ok: true, message: "Respondendo normalmente agora." };
+    const errText = await res.text().catch(() => "");
+    if (res.status === 429 || /quota|rate.?limit/i.test(errText)) {
+      return { ok: false, message: "Cota esgotada agora (429). Não é problema de configuração." };
+    }
+    return { ok: false, message: `Erro (${res.status}): ${errText.slice(0, 200)}` };
+  } catch (err: any) {
+    return { ok: false, message: `Erro: ${err?.message || err}` };
+  }
+}
+
+export const onRequestPost = async (context: any) => {
+  const { env } = context;
+  const [gemini, workersAi, groq] = await Promise.all([
+    testGeminiLive(env),
+    testWorkersAiLive(env),
+    testGroqLive(env)
+  ]);
+  const results = [
+    { name: "Gemini", ...gemini },
+    { name: "Cloudflare Workers AI", ...workersAi },
+    { name: "Groq", ...groq }
+  ];
+  const anyOk = results.some(r => r.ok);
+  return new Response(JSON.stringify({
+    results,
+    resumo: anyOk
+      ? "Pelo menos um provedor está respondendo agora — a próxima extração deve funcionar."
+      : "Nenhum dos 3 provedores respondeu com sucesso agora. Veja o motivo de cada um abaixo (configuração ausente x cota esgotada de verdade)."
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+};
 
 export const onRequestGet = async (context: any) => {
   const { env } = context;
