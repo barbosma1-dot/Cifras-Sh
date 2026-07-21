@@ -40,6 +40,9 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const [isExporting, setIsExporting] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // Filtro de "adicionadas recentemente" — facilita achar e revisar/editar
+  // categorias logo depois de uma importação de PDF.
+  const [recentFilter, setRecentFilter] = useState<'all' | '1h' | '24h' | '7d'>('all');
 
   const [chordToDelete, setChordToDelete] = useState<string | null>(null);
   const [deleteConfirming, setDeleteConfirming] = useState(false);
@@ -220,30 +223,51 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     return content.replace(/\[.*?\]/g, ' ');
   };
 
-  const filteredChords = chords.filter(c => {
-    const searchLower = searchTerm.toLowerCase();
-    const searchTerms = normalizedSearch(searchTerm).split(/\s+/).filter(t => t.length > 0);
-    
-    const chordCategories = c.category ? c.category.split(',').map(cat => cat.trim()) : [];
-    
-    if (searchTerms.length === 0) {
+  const RECENT_FILTER_MS: Record<'1h' | '24h' | '7d', number> = {
+    '1h': 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+  };
+
+  const filteredChords = chords
+    .filter(c => {
+      const searchLower = searchTerm.toLowerCase();
+      const searchTerms = normalizedSearch(searchTerm).split(/\s+/).filter(t => t.length > 0);
+      
+      const chordCategories = c.category ? c.category.split(',').map(cat => cat.trim()) : [];
+
       const matchesCategory = selectedCategory === 'all' || chordCategories.includes(selectedCategory);
-      return matchesCategory;
-    }
 
-    const titleNorm = normalizedSearch(c.title);
-    const artistNorm = normalizedSearch(c.artist);
-    const contentNorm = c.content ? normalizedSearch(stripChords(c.content)) : '';
+      let matchesRecent = true;
+      if (recentFilter !== 'all' && c.created_at) {
+        const createdMs = new Date(c.created_at).getTime();
+        matchesRecent = !Number.isNaN(createdMs) && (Date.now() - createdMs) <= RECENT_FILTER_MS[recentFilter];
+      }
 
-    const matchesSearch = searchTerms.every(term => 
-      titleNorm.includes(term) || 
-      artistNorm.includes(term) || 
-      contentNorm.includes(term)
-    );
-                         
-    const matchesCategory = selectedCategory === 'all' || chordCategories.includes(selectedCategory);
-    return matchesSearch && matchesCategory;
-  });
+      if (searchTerms.length === 0) {
+        return matchesCategory && matchesRecent;
+      }
+
+      const titleNorm = normalizedSearch(c.title);
+      const artistNorm = normalizedSearch(c.artist);
+      const contentNorm = c.content ? normalizedSearch(stripChords(c.content)) : '';
+
+      const matchesSearch = searchTerms.every(term => 
+        titleNorm.includes(term) || 
+        artistNorm.includes(term) || 
+        contentNorm.includes(term)
+      );
+                           
+      return matchesSearch && matchesCategory && matchesRecent;
+    })
+    .sort((a, b) => {
+      // Com o filtro de recentes ativo, mostra as mais novas primeiro —
+      // é exatamente o que ajuda a revisar/editar logo após uma importação.
+      if (recentFilter !== 'all') {
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      }
+      return 0; // mantém a ordem alfabética já vinda da query
+    });
 
   return (
     <div className="space-y-6">
@@ -336,6 +360,22 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             {categories.map(cat => (
               <option key={cat} value={cat}>{cat}</option>
             ))}
+          </select>
+
+          <select
+            className={`flex items-center justify-center gap-2 px-4 py-3 border rounded-2xl font-bold text-xs shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 outline-none ${
+              recentFilter !== 'all'
+                ? 'bg-brand-orange text-white border-brand-orange'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 focus:border-brand-orange'
+            }`}
+            value={recentFilter}
+            onChange={(e) => setRecentFilter(e.target.value as typeof recentFilter)}
+            title="Filtrar por cifras adicionadas recentemente — útil para revisar após uma importação"
+          >
+            <option value="all">Adicionadas: Todas</option>
+            <option value="1h">Última hora</option>
+            <option value="24h">Últimas 24h</option>
+            <option value="7d">Últimos 7 dias</option>
           </select>
         </div>
       </div>
