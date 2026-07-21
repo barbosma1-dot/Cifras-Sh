@@ -10,12 +10,18 @@ interface AiProviderStatus {
   cota: string;
 }
 
+interface AiLiveResult {
+  name: string;
+  ok: boolean;
+  message: string;
+}
+
 // Painel de diagnóstico dos provedores de IA usados na extração de PDF
-// (functions/api/extract-pdf.ts). Só chama o endpoint /api/ai-status, que
-// não consome cota nenhuma — apenas reporta o que está configurado no
-// Cloudflare Pages. Existe para responder rápido à pergunta "por que a
-// extração parou dizendo que o limite da IA foi atingido?" sem precisar
-// vasculhar os logs do Cloudflare.
+// (functions/api/extract-pdf.ts). O botão "Verificar agora" só olha
+// configuração (grátis, não consome cota). O botão "Testar ao vivo" faz uma
+// chamada mínima de verdade em cada provedor — necessário porque um
+// provedor "configurado" pode mesmo assim estar com a cota diária dele
+// esgotada (isso vale pros 3: Gemini, Workers AI e Groq).
 function AiStatusPanel() {
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
@@ -23,6 +29,11 @@ function AiStatusPanel() {
   const [resumo, setResumo] = useState('');
   const [recomendacao, setRecomendacao] = useState('');
   const [error, setError] = useState('');
+
+  const [testing, setTesting] = useState(false);
+  const [liveResults, setLiveResults] = useState<AiLiveResult[]>([]);
+  const [liveResumo, setLiveResumo] = useState('');
+  const [liveError, setLiveError] = useState('');
 
   const checkStatus = async () => {
     setChecking(true);
@@ -39,6 +50,22 @@ function AiStatusPanel() {
       setError('Não foi possível verificar os provedores de IA (' + (err?.message || 'erro desconhecido') + '). Confirme que o app está publicado no Cloudflare Pages, não rodando localmente.');
     } finally {
       setChecking(false);
+    }
+  };
+
+  const testLive = async () => {
+    setTesting(true);
+    setLiveError('');
+    try {
+      const res = await fetch('/api/ai-status', { method: 'POST' });
+      if (!res.ok) throw new Error(`Servidor respondeu ${res.status}`);
+      const data = await res.json();
+      setLiveResults(data.results || []);
+      setLiveResumo(data.resumo || '');
+    } catch (err: any) {
+      setLiveError('Não foi possível testar os provedores agora (' + (err?.message || 'erro desconhecido') + ').');
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -84,6 +111,43 @@ function AiStatusPanel() {
           {recomendacao && (
             <p className="text-sm text-brand-blue bg-blue-50 border border-blue-100 rounded-xl p-3">{recomendacao}</p>
           )}
+
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between gap-4 mt-3 mb-2">
+              <p className="text-sm text-slate-500">
+                "Configurado" não garante que tem cota sobrando agora. Para saber de verdade, teste ao vivo (gasta uma fração mínima de cota, bem menor que uma página real):
+              </p>
+              <button
+                onClick={testLive}
+                disabled={testing}
+                className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-orange-600 transition-all shadow-md disabled:opacity-60 shrink-0 whitespace-nowrap"
+              >
+                {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
+                Testar ao vivo
+              </button>
+            </div>
+
+            {liveError && (
+              <p className="text-red-600 text-sm bg-red-50 border border-red-100 rounded-xl p-3">{liveError}</p>
+            )}
+
+            {liveResults.length > 0 && (
+              <div className="space-y-2">
+                {liveResumo && <p className="text-sm font-medium text-slate-700">{liveResumo}</p>}
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {liveResults.map((r) => (
+                    <div key={r.name} className={`rounded-2xl border p-4 ${r.ok ? 'border-green-100 bg-green-50' : 'border-red-100 bg-red-50'}`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        {r.ok ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-red-500" />}
+                        <span className="font-bold text-slate-800 text-sm">{r.name}</span>
+                      </div>
+                      <p className="text-xs text-slate-600">{r.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
