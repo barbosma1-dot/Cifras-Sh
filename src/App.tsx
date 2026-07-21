@@ -332,9 +332,9 @@ export default function App() {
   return (
     <>
       {usingCachedAuth && (
-        <div className="fixed top-0 inset-x-0 z-[200] flex items-center justify-center gap-2 bg-amber-500 text-white text-xs font-bold py-2 px-4">
-          <WifiOff className="w-3.5 h-3.5" />
-          Sem conexão — usando o login salvo localmente. Alguns dados podem estar desatualizados.
+        <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-1.5 bg-amber-500 text-white text-[10px] font-bold py-1 px-2.5 rounded-full shadow-md max-w-[92vw]">
+          <WifiOff className="w-3 h-3 shrink-0" />
+          <span className="truncate">Sem conexão — login salvo localmente</span>
         </div>
       )}
       <Dashboard user={session.user} profile={profile} setProfile={setProfile} />
