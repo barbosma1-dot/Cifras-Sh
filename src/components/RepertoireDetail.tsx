@@ -91,10 +91,15 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   }, [notification]);
 
   useEffect(() => {
+    // O link público (?repertoireId=...) renderiza este componente com profile=null (isGuest=true).
+    // Um visitante sem login deve ver APENAS a lista de músicas deste repertório — nada de
+    // biblioteca completa de cifras, membros da missão ou registros de presença da equipe.
     fetchRepertoireItems();
-    fetchLibrary();
-    fetchMissionMembers();
-    fetchAttendance();
+    if (!isGuest) {
+      fetchLibrary();
+      fetchMissionMembers();
+      fetchAttendance();
+    }
   }, [repertoire.id]);
 
   async function fetchAttendance() {
@@ -387,10 +392,28 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
     }
   };
 
-  const handleShare = () => {
+  const handleShare = async () => {
     const shareUrl = `${window.location.origin}?repertoireId=${repertoire.id}`;
-    navigator.clipboard.writeText(shareUrl);
-    setNotification({ message: 'Link de compartilhamento copiado!', type: 'success' });
+    try {
+      // O link só funciona para quem não tem login se o repertório estiver marcado como
+      // público — é essa flag que a política de segurança (RLS) do Supabase usa para
+      // liberar a leitura para visitantes. Sem isso, o link simplesmente não abre para
+      // ninguém de fora da missão.
+      if (!repertoire.is_public) {
+        const { error } = await supabase
+          .from('repertoires')
+          .update({ is_public: true })
+          .eq('id', repertoire.id);
+        if (error) throw error;
+        repertoire.is_public = true;
+      }
+      await navigator.clipboard.writeText(shareUrl);
+      setNotification({ message: 'Link de compartilhamento copiado!', type: 'success' });
+    } catch (err: any) {
+      console.error('Erro ao gerar link público:', err);
+      navigator.clipboard.writeText(shareUrl);
+      setNotification({ message: 'Link copiado, mas não foi possível confirmar o acesso público. Peça a um administrador para verificar.', type: 'error' });
+    }
   };
 
   const normalizedSearch = (text: string) => {
