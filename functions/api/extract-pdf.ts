@@ -87,12 +87,26 @@ async function runGemini(env: any, images: string[], prompt: string): Promise<an
       contents,
       config: {
         temperature: 0.1,
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        // Sem isso, um lote com várias músicas longas podia estourar o limite padrão
+        // de tokens de saída do modelo e ser cortado no meio — o que ora quebrava o
+        // JSON (caindo no rascunho bruto), ora silenciosamente resultava em só a
+        // primeira música do lote sendo retornada, sem nenhum aviso de erro.
+        maxOutputTokens: 32768
       }
     }),
     30000,
     "Gemini"
   );
+
+  // Se a resposta foi cortada por atingir o limite de tokens, o JSON provavelmente
+  // está incompleto e o resultado (mesmo que pareça válido) pode estar faltando
+  // músicas do fim do lote. Melhor avisar já aqui do que devolver uma extração
+  // parcial sem o usuário saber que faltou algo.
+  const finishReason = response.candidates?.[0]?.finishReason;
+  if (finishReason === "MAX_TOKENS") {
+    throw new Error("Gemini: resposta cortada por limite de tokens (lote com músicas demais/muito longas)");
+  }
 
   const text = response.text;
   if (!text) throw new Error("Gemini: resposta vazia");
