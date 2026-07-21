@@ -186,7 +186,7 @@ Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinh
    Exemplo: [G]        [D/F#]        [Em]        [C]
 4. FLUXO DE COLUNAS: Se o PDF tiver duas colunas, leia a coluna da ESQUERDA inteira (de cima a baixo) antes de passar para a coluna da DIREITA. Nunca misture linhas horizontais de colunas diferentes.
 5. LIMPEZA TOTAL: Remova números de página, rodapés de hinários, nomes de missas/tempos litúrgicos repetidos e anotações manuais. 
-6. ESTRUTURA: Identifique e marque seções como {soc} (início de refrão) e {eoc} (fim de refrão) se possível, ou use tags como [REFRÃO], [PONTE], [INTRO].
+6. ESTRUTURA: Marque o início do refrão com uma linha contendo apenas "Refrão:" e feche o bloco com uma linha contendo apenas "Fim" logo após a última linha do refrão. NÃO use {soc}/{eoc} nem tags como [REFRÃO] — o app só reconhece o padrão "Refrão:" / "Fim". Para outras seções, use rótulos simples em linha própria, como "Intro", "Estrofe", "Ponte", "Solo".
 7. PÁGINAS SEM MÚSICA: Se a página for um índice, sumário, lista de CDs/álbuns, capa ou contracapa (sem acordes e sem letra de música), IGNORE-A completamente — não crie nenhum objeto para ela.
 
 ### FORMATO DE SAÍDA (Obrigatório):
