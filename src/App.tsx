@@ -9,13 +9,51 @@ import { UserProfile } from './types';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import RepertoireDetail from './components/RepertoireDetail';
-import { Loader2 } from 'lucide-react';
+import { Loader2, WifiOff } from 'lucide-react';
 import { Repertoire } from './types';
+import { withTimeout } from './lib/withTimeout';
+
+// Tempo máximo de espera por chamadas de rede no arranque do app. Sem isso,
+// numa conexão "falsa" (sinal presente mas sem internet de verdade), a tela
+// de carregamento pode ficar presa por muito tempo antes de falhar sozinha.
+const AUTH_TIMEOUT_MS = 7000;
+const PROFILE_CACHE_KEY = 'cifra-sh-cached-profile';
+const USER_CACHE_KEY = 'cifra-sh-cached-user';
+
+function cacheProfile(profile: UserProfile, user?: any) {
+  try {
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+    if (user) {
+      localStorage.setItem(USER_CACHE_KEY, JSON.stringify({ id: user.id, email: user.email }));
+    }
+  } catch {
+    // Armazenamento local indisponível (modo privado, etc). Sem problema, só não cacheia.
+  }
+}
+
+function getCachedProfile(): UserProfile | null {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as UserProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCachedUser(): { id: string; email: string } | null {
+  try {
+    const raw = localStorage.getItem(USER_CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [usingCachedAuth, setUsingCachedAuth] = useState(false);
   const [publicRepertoireId, setPublicRepertoireId] = useState<string | null>(null);
   const [publicRepertoire, setPublicRepertoire] = useState<Repertoire | null>(null);
   const [publicRepertoireLoading, setPublicRepertoireLoading] = useState(false);
@@ -77,11 +115,31 @@ export default function App() {
       }
 
       // 2. Check active session (which could be the one we just set or a previously saved one)
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      setSession(currentSession);
-      if (currentSession) {
-        await fetchProfile(currentSession.user.id, currentSession.user);
-      } else {
+      try {
+        const { data: { session: currentSession } } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_TIMEOUT_MS,
+          'timeout-session'
+        );
+        setSession(currentSession);
+        if (currentSession) {
+          await fetchProfile(currentSession.user.id, currentSession.user);
+        } else {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Erro ao obter sessão (possível falta de conexão):', err);
+
+        // Sem rede (ou rede muito lenta/instável): tenta usar o login e o perfil
+        // salvos localmente da última vez que o app abriu com sucesso, para que
+        // o usuário ainda consiga acessar os repertórios já baixados offline.
+        const cachedUser = getCachedUser();
+        const cachedProfile = getCachedProfile();
+        if (cachedUser && cachedProfile) {
+          setSession({ user: cachedUser });
+          setProfile(cachedProfile);
+          setUsingCachedAuth(true);
+        }
         setLoading(false);
       }
     };
@@ -104,11 +162,15 @@ export default function App() {
 
   async function fetchProfile(uid: string, user?: any) {
     try {
-      let { data, error: fetchError } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', uid)
-        .single();
+      let { data, error: fetchError } = await withTimeout(
+        supabase
+          .from('user_profiles')
+          .select('*')
+          .eq('id', uid)
+          .single(),
+        AUTH_TIMEOUT_MS,
+        'timeout-profile'
+      );
       
       if (fetchError && fetchError.code === 'PGRST116') {
         // Profile doesn't exist, create it
@@ -169,8 +231,17 @@ export default function App() {
       }
 
       setProfile(profileData);
+      cacheProfile(profileData, user);
+      setUsingCachedAuth(false);
     } catch (err) {
-      console.error('Error in fetchProfile:', err);
+      console.error('Error in fetchProfile (possível falta de conexão):', err);
+
+      // Sem rede: usa o último perfil salvo localmente, se existir e for do mesmo usuário.
+      const cachedProfile = getCachedProfile();
+      if (cachedProfile && cachedProfile.id === uid) {
+        setProfile(cachedProfile);
+        setUsingCachedAuth(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -258,5 +329,15 @@ export default function App() {
     return <Login />;
   }
 
-  return <Dashboard user={session.user} profile={profile} setProfile={setProfile} />;
+  return (
+    <>
+      {usingCachedAuth && (
+        <div className="fixed top-0 inset-x-0 z-[200] flex items-center justify-center gap-2 bg-amber-500 text-white text-xs font-bold py-2 px-4">
+          <WifiOff className="w-3.5 h-3.5" />
+          Sem conexão — usando o login salvo localmente. Alguns dados podem estar desatualizados.
+        </div>
+      )}
+      <Dashboard user={session.user} profile={profile} setProfile={setProfile} />
+    </>
+  );
 }
