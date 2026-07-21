@@ -388,28 +388,60 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     }
 
     setLoading(true);
+
+    // Limites de tamanho (evita que o upload trave a meio caminho e gere "Failed to fetch")
+    const MAX_AUDIO_MB = 45;
+    const MAX_ATTACHMENT_MB = 20;
+
     try {
+      // Validação prévia de tamanho, ANTES de tentar subir qualquer coisa
+      for (const att of attachments) {
+        if (att.isNew && att.file) {
+          const sizeMB = att.file.size / (1024 * 1024);
+          const limit = att.type === 'audio' ? MAX_AUDIO_MB : MAX_ATTACHMENT_MB;
+          if (sizeMB > limit) {
+            throw new Error(
+              `O arquivo "${att.file.name}" tem ${sizeMB.toFixed(1)}MB, acima do limite de ${limit}MB. Comprima o arquivo ou envie um menor.`
+            );
+          }
+        }
+      }
+
       const finalAttachments: { name: string; url: string; type: 'audio' | 'text' }[] = [];
-      
+
       for (const att of attachments) {
         if (att.isNew && att.file) {
           const file = att.file;
           const bucket = att.type === 'audio' ? 'audio' : 'attachments';
-          const fileExt = file.name.split('.').pop();
           const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
           const fileName = `${Math.random().toString(36).substring(2)}_${cleanName}`;
           const filePath = `${att.type}/${fileName}`;
-          
-          const { error: uploadError } = await supabase.storage
-            .from(bucket)
-            .upload(filePath, file);
-          
-          if (uploadError) throw uploadError;
-          
+
+          let uploadError: any = null;
+          try {
+            const result = await supabase.storage
+              .from(bucket)
+              .upload(filePath, file, {
+                cacheControl: '3600',
+                upsert: false,
+                contentType: file.type || undefined,
+              });
+            uploadError = result.error;
+          } catch (networkErr: any) {
+            // fetch falhou antes mesmo de o Supabase responder (rede, CORS, projeto pausado, etc.)
+            throw new Error(
+              `FAILED_TO_FETCH::Falha de rede ao enviar "${file.name}" para o bucket "${bucket}".`
+            );
+          }
+
+          if (uploadError) {
+            throw new Error(`Erro ao enviar "${file.name}": ${uploadError.message || uploadError}`);
+          }
+
           const { data: { publicUrl } } = supabase.storage
             .from(bucket)
             .getPublicUrl(filePath);
-            
+
           finalAttachments.push({
             name: att.name,
             url: publicUrl,
@@ -473,13 +505,19 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     } catch (error: any) {
       console.error('Erro ao salvar cifra:', error);
       let errorMsg = error.message || 'Verifique sua conexão';
-      
-      if (errorMsg.includes('Bucket not found')) {
+
+      if (errorMsg.startsWith('FAILED_TO_FETCH::') || errorMsg === 'Failed to fetch') {
+        errorMsg = 'Não foi possível conectar ao Supabase (Failed to fetch). Causas comuns: 1) o projeto Supabase está pausado por inatividade (acesse o painel e reative); 2) as variáveis VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY não estão configuradas no Cloudflare Pages; 3) o domínio do site não está liberado em CORS no Supabase; 4) sua internet caiu no meio do envio.';
+      } else if (errorMsg.includes('Bucket not found')) {
         errorMsg = 'Erro: Bucket de armazenamento não encontrado. Por favor, crie os buckets "audio" e "attachments" no painel Storage do seu Supabase e marque-os como "Public".';
       } else if (errorMsg.includes('column "attachment_url"')) {
         errorMsg = 'Erro: Banco de dados desatualizado. Por favor, execute o SQL no arquivo supabase_schema.sql no painel do seu Supabase para adicionar as novas colunas.';
+      } else if (errorMsg.toLowerCase().includes('exceeded the maximum allowed size') || errorMsg.toLowerCase().includes('payload too large')) {
+        errorMsg = 'Erro: o arquivo enviado é maior do que o limite permitido no seu bucket do Supabase Storage. Aumente o limite em Storage > Configurações ou envie um arquivo menor.';
+      } else if (errorMsg.toLowerCase().includes('jwt') || errorMsg.toLowerCase().includes('invalid api key')) {
+        errorMsg = 'Erro de autenticação com o Supabase. Verifique se a VITE_SUPABASE_ANON_KEY está correta e se sua sessão de login não expirou.';
       }
-      
+
       setNotification({ message: errorMsg, type: 'error' });
     } finally {
       setLoading(false);
