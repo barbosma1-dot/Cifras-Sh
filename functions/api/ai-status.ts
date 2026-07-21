@@ -14,10 +14,13 @@
 // Nunca devolve o valor das chaves, só se elas existem e (para o Gemini)
 // se ainda estão com o valor de exemplo do .env.example.
 
-// Imagem 1x1 px em base64 (JPEG), usada só para o teste ao vivo — não é uma
-// página real, então o teste custa o mínimo possível de tokens/cota.
+// Imagem 64x64 px (vermelho sólido) em base64 (JPEG), usada só para o teste ao
+// vivo — pequena o bastante para custar quase nada de cota, mas válida o
+// bastante para não ser rejeitada por provedores que exigem uma imagem "de
+// verdade" (uma imagem de 1x1 px, por exemplo, é recusada por alguns deles
+// com erro de "invalid image data", o que daria um falso alarme aqui).
 const TINY_TEST_IMAGE =
-  "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=";
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABAAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDzqiiivjj+kQooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigD//2Q==";
 const TEST_PROMPT = 'Responda apenas com o JSON: [{"title":"teste","artist":"","category":"","original_key":"","content":"ok"}]';
 
 // Lê todas as chaves Gemini configuradas (mesma lógica de functions/api/extract-pdf.ts):
@@ -38,7 +41,7 @@ async function testOneGeminiKey(apiKey: string): Promise<{ ok: boolean; message:
     const { GoogleGenAI } = await import("@google/genai");
     const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-3.1-flash-lite",
       contents: [{ role: "user", parts: [{ text: TEST_PROMPT }, { inlineData: { mimeType: "image/jpeg", data: TINY_TEST_IMAGE } }] }],
       config: { temperature: 0.1, responseMimeType: "application/json", maxOutputTokens: 200 }
     });
