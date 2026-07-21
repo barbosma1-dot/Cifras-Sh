@@ -98,10 +98,13 @@ async function callGeminiWithKey(apiKey: string, images: string[], prompt: strin
 
   const response = await withTimeout(
     ai.models.generateContent({
-      // gemini-2.5-flash-lite: modelo estável (não preview) com a maior cota gratuita
-      // de RPM/RPD entre os modelos Gemini disponíveis, e otimizado para tarefas de
-      // extração estruturada como esta.
-      model: "gemini-2.5-flash-lite",
+      // gemini-3.1-flash-lite: a Google aposentou o gemini-2.5-flash-lite (passou a
+      // devolver 404 "no longer available to new users" em jul/2026) — este é o
+      // substituto oficial recomendado pela Google, mesma categoria (rápido/barato,
+      // ótimo para extração estruturada). Se a Google trocar de novo no futuro, o
+      // sintoma é sempre esse: erro 404 "model ... is no longer available" em TODAS
+      // as chaves ao mesmo tempo (diferente de 429, que é só cota).
+      model: "gemini-3.1-flash-lite",
       contents,
       config: {
         temperature: 0.1,
