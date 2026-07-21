@@ -20,11 +20,20 @@ const TINY_TEST_IMAGE =
   "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=";
 const TEST_PROMPT = 'Responda apenas com o JSON: [{"title":"teste","artist":"","category":"","original_key":"","content":"ok"}]';
 
-async function testGeminiLive(env: any): Promise<{ ok: boolean; message: string }> {
-  const apiKey = env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.includes("YOUR_API_KEY")) {
-    return { ok: false, message: "Não configurado." };
+// Lê todas as chaves Gemini configuradas (mesma lógica de functions/api/extract-pdf.ts):
+// GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4, GEMINI_API_KEY_5.
+function getGeminiKeys(env: any): string[] {
+  const keys: string[] = [];
+  const candidates = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3, env.GEMINI_API_KEY_4, env.GEMINI_API_KEY_5];
+  for (const k of candidates) {
+    if (k && typeof k === "string" && k.trim() && k !== "MY_GEMINI_API_KEY" && !k.includes("YOUR_API_KEY")) {
+      keys.push(k.trim());
+    }
   }
+  return keys;
+}
+
+async function testOneGeminiKey(apiKey: string): Promise<{ ok: boolean; message: string }> {
   try {
     const { GoogleGenAI } = await import("@google/genai");
     const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
@@ -38,10 +47,22 @@ async function testGeminiLive(env: any): Promise<{ ok: boolean; message: string 
   } catch (err: any) {
     const msg = err?.message || String(err);
     if (/quota|429|resource_exhausted|rate.?limit/i.test(msg)) {
-      return { ok: false, message: "Cota esgotada agora (429/quota). Não é problema de configuração." };
+      return { ok: false, message: "Cota esgotada agora (429/quota)." };
     }
     return { ok: false, message: `Erro: ${msg}` };
   }
+}
+
+async function testGeminiLive(env: any): Promise<{ ok: boolean; message: string; keys?: { ok: boolean; message: string }[] }> {
+  const keys = getGeminiKeys(env);
+  if (keys.length === 0) return { ok: false, message: "Não configurado." };
+
+  const perKey = await Promise.all(keys.map(testOneGeminiKey));
+  const okCount = perKey.filter(r => r.ok).length;
+  const summary = keys.length === 1
+    ? perKey[0].message
+    : `${okCount} de ${keys.length} chaves respondendo. ` + perKey.map((r, i) => `Chave ${i + 1}: ${r.ok ? "OK" : r.message}`).join(" | ");
+  return { ok: okCount > 0, message: summary, keys: perKey };
 }
 
 async function testWorkersAiLive(env: any): Promise<{ ok: boolean; message: string }> {
@@ -116,10 +137,10 @@ export const onRequestPost = async (context: any) => {
 export const onRequestGet = async (context: any) => {
   const { env } = context;
 
-  const geminiKey = env.GEMINI_API_KEY as string | undefined;
+  const geminiKeys = getGeminiKeys(env);
   const groqKey = env.GROQ_API_KEY as string | undefined;
 
-  const geminiConfigured = !!geminiKey && geminiKey !== "MY_GEMINI_API_KEY" && !geminiKey.includes("YOUR_API_KEY");
+  const geminiConfigured = geminiKeys.length > 0;
   const groqConfigured = !!groqKey && groqKey.length > 10;
   const workersAiConfigured = !!env.AI;
 
@@ -128,9 +149,9 @@ export const onRequestGet = async (context: any) => {
       name: "Gemini",
       configured: geminiConfigured,
       detail: geminiConfigured
-        ? "Chave GEMINI_API_KEY presente."
-        : "GEMINI_API_KEY ausente ou ainda com o valor de exemplo. Configure em Cloudflare Pages > Settings > Environment variables.",
-      cota: "Tier gratuito: cota diária/por-minuto limitada. Costuma ser o primeiro a esgotar."
+        ? `${geminiKeys.length} chave${geminiKeys.length > 1 ? 's' : ''} configurada${geminiKeys.length > 1 ? 's' : ''} (GEMINI_API_KEY${geminiKeys.length > 1 ? ', GEMINI_API_KEY_2...' : ''}).`
+        : "Nenhuma chave GEMINI_API_KEY configurada. Configure em Cloudflare Pages > Settings > Environment variables.",
+      cota: "Tier gratuito: cota diária/por-minuto limitada por chave. Com várias chaves (GEMINI_API_KEY_2, _3...), o app tenta a próxima automaticamente quando uma esgota."
     },
     {
       name: "Cloudflare Workers AI",
