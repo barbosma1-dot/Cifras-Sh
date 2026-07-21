@@ -435,20 +435,42 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
           const fileName = `${Math.random().toString(36).substring(2)}_${cleanName}`;
           const filePath = `${att.type}/${fileName}`;
 
+          // Tenta até 3 vezes com pequena pausa entre tentativas: cobre quedas
+          // momentâneas de conexão (comum em rede móvel) sem incomodar o usuário.
+          const MAX_ATTEMPTS = 3;
           let uploadError: any = null;
-          try {
-            const result = await supabase.storage
-              .from(bucket)
-              .upload(filePath, file, {
-                cacheControl: '3600',
-                upsert: false,
-                contentType: file.type || undefined,
-              });
-            uploadError = result.error;
-          } catch (networkErr: any) {
+          let lastNetworkErr: any = null;
+
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            uploadError = null;
+            lastNetworkErr = null;
+            try {
+              const result = await supabase.storage
+                .from(bucket)
+                .upload(filePath, file, {
+                  cacheControl: '3600',
+                  upsert: false,
+                  contentType: file.type || undefined,
+                });
+              uploadError = result.error;
+            } catch (networkErr: any) {
+              lastNetworkErr = networkErr;
+            }
+
+            // Sucesso (sem erro de rede nem erro do Supabase) -> sai do loop de tentativas
+            if (!lastNetworkErr && !uploadError) break;
+
+            if (attempt < MAX_ATTEMPTS) {
+              console.warn(`Tentativa ${attempt} de enviar "${file.name}" falhou, tentando de novo...`, lastNetworkErr || uploadError);
+              await new Promise(r => setTimeout(r, attempt * 800));
+            }
+          }
+
+          if (lastNetworkErr) {
             // fetch falhou antes mesmo de o Supabase responder (rede, CORS, projeto pausado, etc.)
+            console.error(`Falha de rede definitiva ao enviar "${file.name}":`, lastNetworkErr);
             throw new Error(
-              `FAILED_TO_FETCH::Falha de rede ao enviar "${file.name}" para o bucket "${bucket}".`
+              `FAILED_TO_FETCH::Falha de rede ao enviar "${file.name}" para o bucket "${bucket}" (após ${MAX_ATTEMPTS} tentativas).`
             );
           }
 
