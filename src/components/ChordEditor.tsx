@@ -409,6 +409,24 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
 
       const finalAttachments: { name: string; url: string; type: 'audio' | 'text' }[] = [];
 
+      // Verificação rápida: o bucket "attachments" existe e responde? Isso isola se o problema
+      // é o bucket (não existe / não é público) ou algo bloqueando a rede (firewall, ad-blocker, CORS).
+      const needsAttachmentsBucket = attachments.some(a => a.isNew && a.file && a.type === 'text');
+      if (needsAttachmentsBucket) {
+        try {
+          const { error: listError } = await supabase.storage.from('attachments').list('', { limit: 1 });
+          if (listError) {
+            throw new Error(`PRECHECK::Bucket "attachments": ${listError.message}`);
+          }
+        } catch (precheckErr: any) {
+          if (precheckErr?.message?.startsWith('PRECHECK::')) throw precheckErr;
+          console.error('Pré-checagem do bucket "attachments" falhou (rede):', precheckErr);
+          throw new Error(
+            'FAILED_TO_FETCH::A checagem inicial do bucket "attachments" já falhou por rede, antes mesmo do upload.'
+          );
+        }
+      }
+
       for (const att of attachments) {
         if (att.isNew && att.file) {
           const file = att.file;
@@ -508,6 +526,8 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
 
       if (errorMsg.startsWith('FAILED_TO_FETCH::') || errorMsg === 'Failed to fetch') {
         errorMsg = 'Não foi possível conectar ao Supabase (Failed to fetch). Causas comuns: 1) o projeto Supabase está pausado por inatividade (acesse o painel e reative); 2) as variáveis VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY não estão configuradas no Cloudflare Pages; 3) o domínio do site não está liberado em CORS no Supabase; 4) sua internet caiu no meio do envio.';
+      } else if (errorMsg.startsWith('PRECHECK::')) {
+        errorMsg = `Erro real encontrado: ${errorMsg.replace('PRECHECK::', '')}. O bucket "attachments" provavelmente não existe no seu projeto Supabase, ou não está com a política de leitura pública ativada. Vá em Storage no painel do Supabase e confira.`;
       } else if (errorMsg.includes('Bucket not found')) {
         errorMsg = 'Erro: Bucket de armazenamento não encontrado. Por favor, crie os buckets "audio" e "attachments" no painel Storage do seu Supabase e marque-os como "Public".';
       } else if (errorMsg.includes('column "attachment_url"')) {
