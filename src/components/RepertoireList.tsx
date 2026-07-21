@@ -11,13 +11,17 @@ import {
   Share2,
   CalendarDays,
   Loader2,
-  X
+  X,
+  WifiOff,
+  CheckCircle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, Repertoire, Mission } from '../types';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import RepertoireDetail from './RepertoireDetail';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { listOfflineRepertoires } from '../lib/offlineDb';
 
 export default function RepertoireList({ profile, initialMissionId, initialRepertoireId }: { profile: UserProfile | null, initialMissionId?: string | null, initialRepertoireId?: string | null }) {
   const [repertoires, setRepertoires] = useState<Repertoire[]>([]);
@@ -39,6 +43,25 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
   
   // Active filter for mission
   const [activeMissionFilter, setActiveMissionFilter] = useState<string | null>(initialMissionId || null);
+
+  // --- Uso offline ---
+  const isOnline = useOnlineStatus();
+  const [offlineIds, setOfflineIds] = useState<Set<string>>(new Set());
+  const [usingOfflineList, setUsingOfflineList] = useState(false);
+
+  const refreshOfflineIds = () => {
+    listOfflineRepertoires().then((records) => {
+      setOfflineIds(new Set(records.map((r) => r.id)));
+    });
+  };
+
+  useEffect(() => {
+    refreshOfflineIds();
+    // Atualiza o indicador sempre que a janela voltar a ficar em foco
+    // (ex: usuário baixou um repertório na tela de detalhe e voltou pra lista).
+    window.addEventListener('focus', refreshOfflineIds);
+    return () => window.removeEventListener('focus', refreshOfflineIds);
+  }, []);
 
   useEffect(() => {
     if (initialRepertoireId) {
@@ -93,6 +116,10 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
   async function fetchData() {
     setLoading(true);
     try {
+      if (!navigator.onLine) {
+        throw new Error('offline');
+      }
+
       const userId = profile?.id || (profile as any)?.uid;
       
       // Fetch missions the user belongs to
@@ -162,8 +189,19 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
       
       if (error) throw error;
       setRepertoires(data as any[]);
+      setUsingOfflineList(false);
     } catch (err) {
       console.error(err);
+
+      // Fallback: sem rede (ou erro de fetch), mostra os repertórios já baixados offline.
+      const offlineRecords = await listOfflineRepertoires();
+      if (offlineRecords.length > 0) {
+        setRepertoires(offlineRecords.map((r) => r.repertoire));
+        setOfflineIds(new Set(offlineRecords.map((r) => r.id)));
+        setUsingOfflineList(true);
+      } else {
+        setUsingOfflineList(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -207,6 +245,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
         onBack={() => {
           setSelectedRepertoire(null);
           fetchData(); // Recarrega dados ao voltar
+          refreshOfflineIds();
         }} 
       />
     );
@@ -243,6 +282,15 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
           </button>
         </div>
       </div>
+
+      {(!isOnline || usingOfflineList) && (
+        <div className="flex items-center gap-2 bg-amber-50 text-amber-700 border border-amber-200 px-4 py-3 rounded-2xl text-sm font-bold">
+          <WifiOff className="w-4 h-4 flex-shrink-0" />
+          {usingOfflineList
+            ? 'Sem conexão. Exibindo apenas os repertórios já baixados para uso offline.'
+            : 'Sem conexão com a internet.'}
+        </div>
+      )}
 
       {/* Modal de Novo Repertório */}
       {isModalOpen && (
@@ -368,6 +416,11 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
                           <span className="flex items-center gap-1"><Clock className="w-2.5 h-2.5" /> {format(new Date(item.date), 'HH:mm')}</span>
                           <span className="flex items-center gap-1 font-bold uppercase tracking-wider text-[8px]"><Filter className="w-2.5 h-2.5" /> {item.type}</span>
                           <span className="flex items-center gap-1"><Share2 className="w-2.5 h-2.5" /> {(item.chord_ids || []).length}</span>
+                          {offlineIds.has(item.id) && (
+                            <span className="flex items-center gap-1 text-emerald-500" title="Disponível offline">
+                              <CheckCircle className="w-2.5 h-2.5" /> OFFLINE
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
