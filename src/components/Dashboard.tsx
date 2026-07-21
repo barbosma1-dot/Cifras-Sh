@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Music, 
   BookText, 
@@ -56,6 +56,22 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
   const [triggerNewChord, setTriggerNewChord] = useState(0);
 
   const { isInstallable, install } = usePWAInstall();
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (!sidebarRef.current || sidebarRef.current.contains(event.target as Node)) return;
+
+      if (window.innerWidth < 768) {
+        if (isSidebarOpen) setIsSidebarOpen(false);
+      } else {
+        if (isSidebarOpen && !isCollapsed) setIsCollapsed(true);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isSidebarOpen, isCollapsed]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -191,6 +207,7 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       {/* Sidebar - Desktop/Mobile */}
       <motion.div
+        ref={sidebarRef}
         initial={false}
         animate={{ 
           width: isSidebarOpen ? (isCollapsed ? 60 : 210) : 0,
