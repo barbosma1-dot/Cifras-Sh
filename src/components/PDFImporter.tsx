@@ -80,9 +80,15 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       const firstPage = Math.max(1, Math.min(startPage || 1, totalPages));
       const lastPage = Math.max(firstPage, Math.min(endPage || totalPages, totalPages));
 
-      // Lotes maiores = menos chamadas de IA para o mesmo número de páginas, o que
-      // poupa tanto a cota por minuto (RPM) quanto a cota diária (RPD) da chave gratuita.
-      const batchSize = 5;
+      // Lotes maiores = menos chamadas de IA para o mesmo número de páginas (poupa cota
+      // por minuto e diária), MAS modelos de visão mais leves como o gemini-2.5-flash-lite
+      // tendem a "prender a atenção" na primeira imagem de um lote com várias e ignorar
+      // silenciosamente o resto — foi isso que causou extrações incompletas mesmo com
+      // instruções explícitas no prompt para processar todas as páginas do lote. Uma
+      // página por chamada elimina essa ambiguidade: não há "resto do lote" pra ignorar.
+      // Custa mais chamadas (mais lento, mais cota consumida), mas é a única forma
+      // confiável de garantir que nenhuma música seja pulada.
+      const batchSize = 1;
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
       // Espaçamento mínimo real entre chamadas à IA, calculado para ficar com folga
