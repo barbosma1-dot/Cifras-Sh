@@ -18,6 +18,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [publicRepertoireId, setPublicRepertoireId] = useState<string | null>(null);
   const [publicRepertoire, setPublicRepertoire] = useState<Repertoire | null>(null);
+  const [publicRepertoireLoading, setPublicRepertoireLoading] = useState(false);
+  const [publicRepertoireError, setPublicRepertoireError] = useState(false);
 
   useEffect(() => {
     // Check for public repertoire access
@@ -25,6 +27,7 @@ export default function App() {
     const repertoireId = urlParams.get('repertoireId');
     if (repertoireId) {
       setPublicRepertoireId(repertoireId);
+      setPublicRepertoireLoading(true);
       fetchPublicRepertoire(repertoireId);
     }
 
@@ -180,12 +183,17 @@ export default function App() {
         .select('*')
         .eq('id', id)
         .single();
-      
-      if (data) {
+
+      if (error || !data) {
+        setPublicRepertoireError(true);
+      } else {
         setPublicRepertoire(data as Repertoire);
       }
     } catch (err) {
       console.error('Error fetching public repertoire:', err);
+      setPublicRepertoireError(true);
+    } finally {
+      setPublicRepertoireLoading(false);
     }
   }
 
@@ -198,6 +206,19 @@ export default function App() {
   }
 
   if (!session) {
+    // Se veio de um link de repertório compartilhado, espera essa busca terminar
+    // antes de decidir se mostra o repertório ou a tela de Login. Antes, a tela de
+    // Login aparecia de imediato (a checagem de sessão termina antes da busca do
+    // repertório público), e quem abrisse o link sem estar logado via a tela de
+    // Login em vez do repertório, mesmo quando o link era válido.
+    if (publicRepertoireId && publicRepertoireLoading) {
+      return (
+        <div className="flex items-center justify-center min-h-screen bg-brand-blue">
+          <Loader2 className="w-12 h-12 text-white animate-spin" />
+        </div>
+      );
+    }
+
     if (publicRepertoire) {
       return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-8">
@@ -213,6 +234,27 @@ export default function App() {
         </div>
       );
     }
+
+    if (publicRepertoireId && publicRepertoireError) {
+      return (
+        <div className="min-h-screen bg-brand-blue flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center space-y-3">
+            <p className="text-slate-800 font-semibold">Não foi possível abrir este repertório.</p>
+            <p className="text-slate-500 text-sm">
+              O link pode ter expirado, o repertório pode não ser mais público, ou você
+              pode precisar fazer login para acessá-lo.
+            </p>
+            <button
+              onClick={() => { window.location.href = window.location.origin; }}
+              className="mt-2 w-full bg-orange-500 text-white font-semibold py-2.5 rounded-xl"
+            >
+              Ir para o login
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return <Login />;
   }
 
