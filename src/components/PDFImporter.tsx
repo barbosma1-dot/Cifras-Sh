@@ -42,6 +42,12 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
     if (e.target.files && e.target.files[0]) {
       const selected = e.target.files[0];
       setFile(selected);
+      // Reseta a lista de músicas extraídas aqui (ao trocar de arquivo), não a
+      // cada clique em "Iniciar Extração" — senão, ao continuar um PDF grande
+      // de onde parou (ex.: retomar na página 21), as músicas já extraídas das
+      // páginas anteriores eram apagadas antes mesmo da nova leva começar.
+      setExtractedSongs([]);
+      setNotification(null);
       try {
         const arrayBuffer = await selected.arrayBuffer();
         const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
@@ -57,7 +63,10 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   const processPDF = async () => {
     if (!file) return;
     setLoading(true);
-    setExtractedSongs([]);
+    // Limpa o aviso da tentativa anterior para não deixar uma mensagem de erro
+    // antiga (de um lote de páginas diferente) exibida por cima do resultado
+    // desta nova tentativa.
+    setNotification(null);
     setStatus('Lendo PDF...');
 
     try {
@@ -91,6 +100,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
 
       let consecutiveFailures = 0;
       let stoppedEarly = false;
+      let lastBatchErrorMessage = '';
 
       for (let i = firstPage; i <= lastPage; i += batchSize) {
         const endOfBatch = Math.min(i + batchSize - 1, lastPage);
@@ -173,17 +183,20 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
         } catch (error: any) {
           console.error(`Erro no lote ${i}-${endOfBatch}:`, error);
           consecutiveFailures++;
+          lastBatchErrorMessage = error?.message || 'Erro desconhecido';
 
           // Se vários lotes seguidos falharem por outro motivo (rede caiu, chave de API
-          // inválida, etc.), paramos, mas preservamos o que já foi extraído e deixamos
-          // o intervalo pronto para retomar da página em que parou.
-          if (consecutiveFailures >= 5) {
+          // inválida, timeout dos provedores, etc.), paramos, mas preservamos o que já foi
+          // extraído e deixamos o intervalo pronto para retomar da página em que parou.
+          // Limite reduzido de 5 para 3: assim o motivo real do erro aparece na tela mais
+          // cedo, em vez de continuar tentando (e gastando cota) 5 vezes às cegas.
+          if (consecutiveFailures >= 3) {
             stoppedEarly = true;
             setStartPage(i);
             setEndPage(lastPage);
             setNotification({
               type: 'error',
-              message: `Muitas falhas seguidas na extração. Parando por segurança na página ${i} — as músicas já processadas foram mantidas abaixo, e o intervalo já está ajustado para retomar dali.`
+              message: `Falha repetida na extração (página ${i}): ${lastBatchErrorMessage}. As músicas já processadas foram mantidas abaixo, e o intervalo já está ajustado para retomar dali.`
             });
             break;
           }
