@@ -29,11 +29,24 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   const [extractedSongs, setExtractedSongs] = useState<ExtractedSong[]>([]);
   const [importing, setImporting] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [numPages, setNumPages] = useState<number | null>(null);
+  const [startPage, setStartPage] = useState<number>(1);
+  const [endPage, setEndPage] = useState<number>(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selected = e.target.files[0];
+      setFile(selected);
+      try {
+        const arrayBuffer = await selected.arrayBuffer();
+        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+        setNumPages(pdf.numPages);
+        setStartPage(1);
+        setEndPage(pdf.numPages);
+      } catch (err) {
+        console.error('Erro ao ler número de páginas:', err);
+      }
     }
   };
 
@@ -46,21 +59,26 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-      const numPages = pdf.numPages;
-      const allExtracted: ExtractedSong[] = [];
+      const totalPages = pdf.numPages;
 
-      // Processaremos em lotes de 3 páginas para manter contexto de músicas que continuam
+      // Respeita o intervalo de páginas escolhido pelo usuário — importante para PDFs
+      // grandes (hinários com centenas de páginas), onde processar tudo de uma vez é
+      // lento, arriscado (pode travar o navegador no celular) e consome muita cota da IA.
+      const firstPage = Math.max(1, Math.min(startPage || 1, totalPages));
+      const lastPage = Math.max(firstPage, Math.min(endPage || totalPages, totalPages));
+
       const batchSize = 3;
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-      
-      for (let i = 1; i <= numPages; i += batchSize) {
+      let consecutiveFailures = 0;
+
+      for (let i = firstPage; i <= lastPage; i += batchSize) {
+        const endOfBatch = Math.min(i + batchSize - 1, lastPage);
+
         try {
           const currentBatch: string[] = [];
-          const endPage = Math.min(i + batchSize - 1, numPages);
-          
-          setStatus(`Processando páginas ${i} até ${endPage} de ${numPages}...`);
-          
-          for (let j = i; j <= endPage; j++) {
+          setStatus(`Processando páginas ${i} até ${endOfBatch} de ${lastPage}...`);
+
+          for (let j = i; j <= endOfBatch; j++) {
             const page = await pdf.getPage(j);
             const viewport = page.getViewport({ scale: 2.0 }); // Even smaller scale for speed/size
             const canvas = document.createElement('canvas');
@@ -69,38 +87,79 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
             canvas.width = viewport.width;
 
             if (context) {
-              await page.render({ 
-                canvasContext: context, 
+              await page.render({
+                canvasContext: context,
                 viewport,
               } as any).promise;
               const base64Image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
               currentBatch.push(base64Image);
             }
           }
-          
-          setStatus(`Convertendo músicas das páginas ${i}-${endPage}...`);
-          const extracted = await extractWithGemini(currentBatch);
-          if (extracted && extracted.length > 0) {
-            allExtracted.push(...extracted);
+
+          setStatus(`Convertendo músicas das páginas ${i}-${endOfBatch}...`);
+
+          // Tenta o lote com algumas repetições em caso de limite de taxa (429), em vez
+          // de abortar a importação inteira na primeira vez que isso acontecer — em um
+          // PDF de centenas de páginas, um bloqueio temporário é praticamente garantido
+          // de acontecer em algum lote no meio do caminho.
+          let extracted: ExtractedSong[] = [];
+          let attempt = 0;
+          const maxAttempts = 3;
+          while (attempt < maxAttempts) {
+            try {
+              extracted = await extractWithGemini(currentBatch);
+              break;
+            } catch (err: any) {
+              attempt++;
+              const isRateLimit = /429|quota|limite/i.test(err.message || '');
+              if (isRateLimit && attempt < maxAttempts) {
+                const backoffMs = 8000 * attempt; // 8s, 16s
+                setStatus(`Limite temporário da IA — aguardando ${backoffMs / 1000}s para tentar de novo (páginas ${i}-${endOfBatch})...`);
+                await delay(backoffMs);
+                continue;
+              }
+              throw err;
+            }
           }
 
-          // Small delay to avoid hitting rate limits too quickly
-          if (i + batchSize <= numPages) {
-            await delay(1000); 
+          if (extracted && extracted.length > 0) {
+            // Atualiza incrementalmente: assim as músicas já extraídas ficam visíveis e
+            // salváveis na hora, e não se perdem se o restante do PDF falhar ou se o
+            // navegador for fechado no meio de um documento longo.
+            setExtractedSongs(prev => [...prev, ...extracted]);
+            consecutiveFailures = 0;
+          }
+
+          if (i + batchSize <= lastPage) {
+            await delay(1000);
           }
         } catch (error: any) {
-          console.error(`Erro no lote ${i}:`, error);
-          if (error.message?.includes('429') || error.message?.includes('quota') || error.message?.includes('Limite')) {
-            setNotification({ 
-              type: 'error', 
-              message: 'Limite de uso da IA atingido. A extração foi interrompida para evitar bloqueios. Você pode salvar as músicas já processadas.' 
+          console.error(`Erro no lote ${i}-${endOfBatch}:`, error);
+          consecutiveFailures++;
+          const isRateLimit = /429|quota|limite/i.test(error.message || '');
+
+          if (isRateLimit) {
+            // Depois de esgotar as tentativas, faz uma pausa mais longa e segue para o
+            // próximo lote em vez de desistir do restante do PDF.
+            setNotification({
+              type: 'error',
+              message: 'Limite de uso da IA atingido em um trecho. Aguardando um pouco mais antes de continuar com o restante do PDF...'
             });
-            break; // Stop but preserve what we have
+            await delay(20000);
+          }
+
+          // Se vários lotes seguidos falharem, algo mais sério está errado (rede caiu,
+          // chave de API inválida, etc.) — aí sim paramos, mas preservamos o que já foi extraído.
+          if (consecutiveFailures >= 5) {
+            setNotification({
+              type: 'error',
+              message: 'Muitas falhas seguidas na extração. Parando por segurança — as músicas já processadas foram mantidas abaixo.'
+            });
+            break;
           }
         }
       }
 
-      setExtractedSongs(allExtracted);
       setStatus('Extração concluída!');
     } catch (error) {
       console.error('Erro ao processar PDF:', error);
@@ -124,6 +183,7 @@ Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinh
 4. FLUXO DE COLUNAS: Se o PDF tiver duas colunas, leia a coluna da ESQUERDA inteira (de cima a baixo) antes de passar para a coluna da DIREITA. Nunca misture linhas horizontais de colunas diferentes.
 5. LIMPEZA TOTAL: Remova números de página, rodapés de hinários, nomes de missas/tempos litúrgicos repetidos e anotações manuais. 
 6. ESTRUTURA: Identifique e marque seções como {soc} (início de refrão) e {eoc} (fim de refrão) se possível, ou use tags como [REFRÃO], [PONTE], [INTRO].
+7. PÁGINAS SEM MÚSICA: Se a página for um índice, sumário, lista de CDs/álbuns, capa ou contracapa (sem acordes e sem letra de música), IGNORE-A completamente — não crie nenhum objeto para ela.
 
 ### FORMATO DE SAÍDA (Obrigatório):
 Retorne um ARRAY JSON de objetos seguindo estritamente este esquema:
@@ -157,15 +217,13 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       return Array.isArray(data) ? data : [];
     } catch (error: any) {
       console.error('Extraction error:', error);
-      setNotification({ type: 'error', message: error.message || 'Falha na extração por IA' });
-      return [];
+      throw error;
     }
   };
 
   const importAll = async () => {
     if (extractedSongs.length === 0) return;
     setImporting(true);
-    setStatus('Salvando no banco de dados...');
 
     try {
       const songsToInsert = extractedSongs.map(s => ({
@@ -177,15 +235,25 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
         updated_at: new Date().toISOString()
       }));
 
-      const { data: insertedChords, error: insertError } = await supabase
-        .from('chords')
-        .insert(songsToInsert)
-        .select();
+      // Insere em lotes menores: um `insert` único com centenas de músicas (comum ao
+      // importar um hinário inteiro) arrisca estourar tamanho de payload ou timeout.
+      const CHUNK = 25;
+      const allInserted: any[] = [];
+      for (let i = 0; i < songsToInsert.length; i += CHUNK) {
+        const chunk = songsToInsert.slice(i, i + CHUNK);
+        setStatus(`Salvando ${i + 1}-${Math.min(i + CHUNK, songsToInsert.length)} de ${songsToInsert.length}...`);
 
-      if (insertError) throw insertError;
+        const { data: insertedChords, error: insertError } = await supabase
+          .from('chords')
+          .insert(chunk)
+          .select();
 
-      if (bookId && insertedChords) {
-        const bookItems = insertedChords.map(chord => ({
+        if (insertError) throw insertError;
+        if (insertedChords) allInserted.push(...insertedChords);
+      }
+
+      if (bookId && allInserted.length > 0) {
+        const bookItems = allInserted.map(chord => ({
           book_id: bookId,
           chord_id: chord.id,
           created_at: new Date().toISOString()
@@ -268,7 +336,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
             </div>
           )}
 
-          {file && !extractedSongs.length && (
+          {file && !loading && extractedSongs.length === 0 && (
             <div className="flex flex-col items-center justify-center p-20 space-y-6">
               <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 flex items-center gap-4 w-full max-w-md">
                 <div className="bg-red-100 p-3 rounded-xl">
@@ -276,26 +344,68 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-slate-800 truncate">{file.name}</p>
-                  <p className="text-xs text-slate-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                  <p className="text-xs text-slate-400">
+                    {(file.size / 1024 / 1024).toFixed(2)} MB{numPages ? ` · ${numPages} páginas` : ''}
+                  </p>
                 </div>
                 <button onClick={() => setFile(null)} className="text-slate-300 hover:text-red-500 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {!loading ? (
-                <button 
-                  onClick={processPDF}
-                  className="bg-brand-orange text-white px-12 py-4 rounded-2xl font-black text-lg shadow-xl shadow-brand-orange/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
-                >
-                  <Sparkles className="w-6 h-6" />
-                  INICIAR EXTRAÇÃO
-                </button>
-              ) : (
-                <div className="flex flex-col items-center gap-4">
-                  <Loader2 className="w-16 h-16 animate-spin text-brand-orange" />
-                  <p className="font-black text-brand-blue animate-pulse text-xl uppercase tracking-widest">{status}</p>
+              {numPages && numPages > 10 && (
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 w-full max-w-md space-y-2">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    PDF grande detectado — processe por partes
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    Escolha um intervalo de páginas para essa extração (você pode importar o restante depois, repetindo o processo com outro intervalo).
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <label className="text-[10px] text-slate-400 font-bold uppercase">De</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={numPages}
+                        value={startPage}
+                        onChange={(e) => setStartPage(Number(e.target.value))}
+                        className="w-full p-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] text-slate-400 font-bold uppercase">Até</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={numPages}
+                        value={endPage}
+                        onChange={(e) => setEndPage(Number(e.target.value))}
+                        className="w-full p-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700"
+                      />
+                    </div>
+                  </div>
                 </div>
+              )}
+
+              <button 
+                onClick={processPDF}
+                className="bg-brand-orange text-white px-12 py-4 rounded-2xl font-black text-lg shadow-xl shadow-brand-orange/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
+              >
+                <Sparkles className="w-6 h-6" />
+                INICIAR EXTRAÇÃO
+              </button>
+            </div>
+          )}
+
+          {loading && (
+            <div className="flex flex-col items-center justify-center gap-4 py-10">
+              <Loader2 className="w-12 h-12 animate-spin text-brand-orange" />
+              <p className="font-black text-brand-blue animate-pulse text-lg uppercase tracking-widest text-center">{status}</p>
+              {extractedSongs.length > 0 && (
+                <p className="text-slate-400 text-sm font-bold">
+                  {extractedSongs.length} cifra{extractedSongs.length === 1 ? '' : 's'} encontrada{extractedSongs.length === 1 ? '' : 's'} até agora — já podem ser salvas abaixo a qualquer momento.
+                </p>
               )}
             </div>
           )}
@@ -310,7 +420,8 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 <div className="flex gap-4">
                   <button 
                     onClick={() => setExtractedSongs([])}
-                    className="px-6 py-2 bg-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-300 transition-colors"
+                    disabled={loading}
+                    className="px-6 py-2 bg-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     RECOMEÇAR
                   </button>
