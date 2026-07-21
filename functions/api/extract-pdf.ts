@@ -57,10 +57,28 @@ function safeParseSongs(rawText: string): any[] {
   }];
 }
 
-async function runGemini(env: any, images: string[], prompt: string): Promise<any[]> {
-  const apiKey = env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY não configurada");
+// Lê todas as chaves Gemini configuradas, na ordem GEMINI_API_KEY,
+// GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4, GEMINI_API_KEY_5.
+// Só a primeira é obrigatória — as demais são opcionais, para quem quiser
+// juntar a cota gratuita de várias contas Google diferentes.
+function getGeminiKeys(env: any): string[] {
+  const keys: string[] = [];
+  const candidates = [
+    env.GEMINI_API_KEY,
+    env.GEMINI_API_KEY_2,
+    env.GEMINI_API_KEY_3,
+    env.GEMINI_API_KEY_4,
+    env.GEMINI_API_KEY_5
+  ];
+  for (const k of candidates) {
+    if (k && typeof k === "string" && k.trim() && k !== "MY_GEMINI_API_KEY" && !k.includes("YOUR_API_KEY")) {
+      keys.push(k.trim());
+    }
+  }
+  return keys;
+}
 
+async function callGeminiWithKey(apiKey: string, images: string[], prompt: string): Promise<any[]> {
   const ai = new GoogleGenAI({
     apiKey,
     httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -111,6 +129,30 @@ async function runGemini(env: any, images: string[], prompt: string): Promise<an
   const text = response.text;
   if (!text) throw new Error("Gemini: resposta vazia");
   return safeParseSongs(text);
+}
+
+async function runGemini(env: any, images: string[], prompt: string): Promise<any[]> {
+  const keys = getGeminiKeys(env);
+  if (keys.length === 0) throw new Error("GEMINI_API_KEY não configurada");
+
+  let lastErr: any = null;
+  for (let i = 0; i < keys.length; i++) {
+    try {
+      return await callGeminiWithKey(keys[i], images, prompt);
+    } catch (err: any) {
+      lastErr = err;
+      const isQuota = /quota|429|resource_exhausted|rate.?limit/i.test(err?.message || "");
+      // Só passa para a próxima chave se o motivo foi cota/limite de taxa —
+      // se a chave for inválida ou outro erro qualquer, tentar as outras
+      // chaves não vai resolver e só atrasa o retorno do erro real.
+      if (isQuota && i < keys.length - 1) {
+        console.error(`Gemini: chave #${i + 1} sem cota, tentando chave #${i + 2}...`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 async function runCloudflareWorkersAI(env: any, images: string[], prompt: string): Promise<any[]> {
