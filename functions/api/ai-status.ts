@@ -47,14 +47,14 @@ async function testGeminiLive(env: any): Promise<{ ok: boolean; message: string 
 async function testWorkersAiLive(env: any): Promise<{ ok: boolean; message: string }> {
   if (!env.AI) return { ok: false, message: "Binding 'AI' ausente neste deploy." };
   try {
-    const bytes = Uint8Array.from(atob(TINY_TEST_IMAGE), (c) => c.charCodeAt(0));
     const result: any = await env.AI.run("@cf/moondream/moondream3.1-9B-A2B", {
       task: "query",
-      image: [...bytes],
-      prompt: TEST_PROMPT,
+      image: `data:image/jpeg;base64,${TINY_TEST_IMAGE}`,
+      question: TEST_PROMPT,
+      reasoning: false,
       max_tokens: 50
     });
-    const raw = result?.result ?? result?.response ?? result?.answer ?? "";
+    const raw = result?.answer ?? result?.result ?? result?.response ?? "";
     if (!raw) return { ok: false, message: "Respondeu vazio." };
     return { ok: true, message: "Respondendo normalmente agora." };
   } catch (err: any) {
