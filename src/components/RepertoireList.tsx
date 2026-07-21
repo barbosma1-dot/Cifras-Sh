@@ -22,6 +22,7 @@ import { ptBR } from 'date-fns/locale';
 import RepertoireDetail from './RepertoireDetail';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { listOfflineRepertoires } from '../lib/offlineDb';
+import { withTimeout } from '../lib/withTimeout';
 
 export default function RepertoireList({ profile, initialMissionId, initialRepertoireId }: { profile: UserProfile | null, initialMissionId?: string | null, initialRepertoireId?: string | null }) {
   const [repertoires, setRepertoires] = useState<Repertoire[]>([]);
@@ -113,6 +114,78 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
     }
   }, [profile]);
 
+  async function doFetchOnline() {
+    const userId = profile?.id || (profile as any)?.uid;
+
+    // Fetch missions the user belongs to
+    const { data: mData, error: mError } = await supabase
+      .from('mission_members')
+      .select('missions(*)')
+      .eq('user_id', userId);
+
+    if (mError) throw mError;
+    const userMissions = (mData as any[]).map(m => m.missions);
+
+    // Fallback: If no missions found in mission_members but profile has one
+    const currentMissionId = profile?.missionId || profile?.mission_id;
+    if (userMissions.length === 0 && currentMissionId) {
+      const { data: legacyMission } = await supabase
+        .from('missions')
+        .select('*')
+        .eq('id', currentMissionId)
+        .single();
+      if (legacyMission) userMissions.push(legacyMission);
+    }
+
+    setMissions(userMissions);
+    if (userMissions.length > 0 && !newMissionId) setNewMissionId(userMissions[0].id);
+
+    // Fetch repertoires from these missions
+    let missionIds = userMissions.map(m => m.id);
+    const isAdmin = profile?.role === 'admin' || profile?.email === 'barbosma1@gmail.com';
+
+    if (isAdmin) {
+      // Admins see all repertoires
+      const { data, error } = await supabase
+        .from('repertoires')
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+      setRepertoires(data || []);
+      return;
+    }
+
+    if (activeMissionFilter) {
+      missionIds = [activeMissionFilter];
+    }
+
+    if (missionIds.length === 0) {
+      // Tenta buscar repertórios públicos ou onde o usuário é responsável
+      const { data: fallbackReps } = await supabase
+        .from('repertoires')
+        .select('*')
+        .or(`is_public.eq.true,responsible_id.eq.${userId}`)
+        .order('date', { ascending: false });
+      setRepertoires(fallbackReps || []);
+      return;
+    }
+
+    // Constrói a query de forma segura
+    let query = supabase.from('repertoires').select('*');
+
+    if (missionIds.length > 0) {
+      query = query.or(`mission_id.in.(${missionIds.join(',')}),responsible_id.eq.${userId}`);
+    } else {
+      query = query.eq('responsible_id', userId);
+    }
+
+    const { data, error } = await query.order('date', { ascending: false });
+
+    if (error) throw error;
+    setRepertoires(data as any[]);
+  }
+
   async function fetchData() {
     setLoading(true);
     try {
@@ -120,80 +193,16 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
         throw new Error('offline');
       }
 
-      const userId = profile?.id || (profile as any)?.uid;
-      
-      // Fetch missions the user belongs to
-      const { data: mData, error: mError } = await supabase
-        .from('mission_members')
-        .select('missions(*)')
-        .eq('user_id', userId);
-      
-      if (mError) throw mError;
-      const userMissions = (mData as any[]).map(m => m.missions);
-      
-      // Fallback: If no missions found in mission_members but profile has one
-      const currentMissionId = profile?.missionId || profile?.mission_id;
-      if (userMissions.length === 0 && currentMissionId) {
-        const { data: legacyMission } = await supabase
-          .from('missions')
-          .select('*')
-          .eq('id', currentMissionId)
-          .single();
-        if (legacyMission) userMissions.push(legacyMission);
-      }
-
-      setMissions(userMissions);
-      if (userMissions.length > 0 && !newMissionId) setNewMissionId(userMissions[0].id);
-
-      // Fetch repertoires from these missions
-      let missionIds = userMissions.map(m => m.id);
-      const isAdmin = profile?.role === 'admin' || profile?.email === 'barbosma1@gmail.com';
-      
-      if (isAdmin) {
-        // Admins see all repertoires
-        const { data, error } = await supabase
-          .from('repertoires')
-          .select('*')
-          .order('date', { ascending: false });
-        
-        if (error) throw error;
-        setRepertoires(data || []);
-        return;
-      }
-
-      if (activeMissionFilter) {
-        missionIds = [activeMissionFilter];
-      }
-      
-      if (missionIds.length === 0) {
-        // Tenta buscar repertórios públicos ou onde o usuário é responsável
-        const { data: fallbackReps } = await supabase
-          .from('repertoires')
-          .select('*')
-          .or(`is_public.eq.true,responsible_id.eq.${userId}`)
-          .order('date', { ascending: false });
-        setRepertoires(fallbackReps || []);
-        return;
-      }
-
-      // Constrói a query de forma segura
-      let query = supabase.from('repertoires').select('*');
-      
-      if (missionIds.length > 0) {
-        query = query.or(`mission_id.in.(${missionIds.join(',')}),responsible_id.eq.${userId}`);
-      } else {
-        query = query.eq('responsible_id', userId);
-      }
-
-      const { data, error } = await query.order('date', { ascending: false });
-      
-      if (error) throw error;
-      setRepertoires(data as any[]);
+      // doFetchOnline é protegido por um timeout: em conexões "falsas" (sinal
+      // presente mas sem internet de verdade), as chamadas ao Supabase podem
+      // demorar dezenas de segundos até falhar sozinhas. Com o timeout, caímos
+      // no fallback offline rapidamente em vez de travar a tela.
+      await withTimeout(doFetchOnline(), 8000, 'timeout-repertoires');
       setUsingOfflineList(false);
     } catch (err) {
       console.error(err);
 
-      // Fallback: sem rede (ou erro de fetch), mostra os repertórios já baixados offline.
+      // Fallback: sem rede (ou erro/timeout de fetch), mostra os repertórios já baixados offline.
       const offlineRecords = await listOfflineRepertoires();
       if (offlineRecords.length > 0) {
         setRepertoires(offlineRecords.map((r) => r.repertoire));
@@ -206,6 +215,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
       setLoading(false);
     }
   }
+
 
   const handleCreate = async () => {
     if (!newName || !newMissionId) {
