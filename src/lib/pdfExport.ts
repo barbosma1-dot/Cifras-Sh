@@ -33,8 +33,20 @@ function parseChordProLine(line: string): Segment[] {
   return segments;
 }
 
-const isChordOnlyLine = (line: string) =>
-  /^\s*([A-G][b#]?[m7majdimaugsus0-9/]*\s+)*[A-G][b#]?[m7majdimaugsus0-9/]*\s*$/.test(line);
+// Reconhece UM acorde isolado, incluindo baixo com barra (ex: A/D, D/F#, G#7/C, C#m7).
+// A versão anterior não aceitava letra maiúscula depois da barra (baixo), então
+// qualquer linha de acordes com "cifra de baixo" (muito comum: A/D, D/F#, D/B, D/C...)
+// deixava de ser reconhecida como linha de acordes e virava "letra" (não-negrito),
+// quebrando o espaçamento vertical entre acorde e letra nas linhas seguintes.
+const CHORD_TOKEN =
+  /^[A-G](?:#|b)?(?:maj7|maj9|maj|m7b5|m9|m7|m6|m11|m|sus2|sus4|sus|dim7|dim|aug|add9|add11|add2|69|6|7|9|11|13|2|4|5)?(?:\/[A-G](?:#|b)?)?$/;
+
+const isChordOnlyLine = (line: string) => {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  const tokens = trimmed.split(/\s+/);
+  return tokens.length > 0 && tokens.every((t) => CHORD_TOKEN.test(t));
+};
 
 export const exportChordsToPDF = async (chords: Chord[], bookTitle: string = 'Meu Caderno de Cifras') => {
   const doc = new jsPDF('p', 'mm', 'a4');
@@ -47,8 +59,9 @@ export const exportChordsToPDF = async (chords: Chord[], bookTitle: string = 'Me
 
   const CHORD_SIZE = 8.5;
   const LYRIC_SIZE = 10;
-  const LINE_GAP = 5.4;       // linha com acorde + letra
-  const PLAIN_LINE_GAP = 4.6; // linha simples (letra ou linha de acordes "clássica")
+  const CHORD_LYRIC_OFFSET = 4.3; // distância do acorde até a letra, dentro do mesmo par
+  const LINE_GAP = 7.4;           // passo total até o próximo par acorde+letra (era 5.4, causava sobreposição)
+  const PLAIN_LINE_GAP = 5.0;     // linha simples (letra ou linha de acordes "clássica"), era 4.6
 
   // ---------- Capa (igual à versão anterior) ----------
   doc.setFillColor(30, 41, 59);
@@ -116,12 +129,15 @@ export const exportChordsToPDF = async (chords: Chord[], bookTitle: string = 'Me
 
     const lines = (chord.content || '').split('\n');
 
-    for (const rawLine of lines) {
+    let idx = 0;
+    while (idx < lines.length) {
+      const rawLine = lines[idx];
       const trimmed = rawLine.trim();
 
       if (!trimmed) {
         y += 2.2;
         if (y > bottomLimit) breakPage();
+        idx++;
         continue;
       }
 
@@ -133,7 +149,7 @@ export const exportChordsToPDF = async (chords: Chord[], bookTitle: string = 'Me
         const segments = parseChordProLine(rawLine);
         let x = margin;
         const chordY = y;
-        const lyricY = y + 3.6;
+        const lyricY = y + CHORD_LYRIC_OFFSET;
 
         segments.forEach(seg => {
           doc.setFont('helvetica', 'bold');
@@ -150,24 +166,65 @@ export const exportChordsToPDF = async (chords: Chord[], bookTitle: string = 'Me
         });
 
         y += LINE_GAP;
-      } else if (isChordOnlyLine(trimmed)) {
+        idx++;
+        continue;
+      }
+
+      if (isChordOnlyLine(trimmed)) {
+        // Formato "clássico": linha só com acordes, seguida da linha de letra logo abaixo.
+        // Tratamos as duas como um par (como no formato ChordPro), com o mesmo espaçamento
+        // generoso, em vez de avançar cada linha isoladamente — era isso que fazia a letra
+        // colar visualmente no acorde da linha seguinte.
+        const nextRaw = lines[idx + 1];
+        const nextTrimmed = nextRaw ? nextRaw.trim() : '';
+        const nextHasChordPro = !!nextRaw && nextRaw.includes('[') && nextRaw.includes(']');
+        const nextIsLyric = !!nextTrimmed && !nextHasChordPro && !isChordOnlyLine(nextTrimmed);
+
+        if (nextIsLyric) {
+          if (y + LINE_GAP > bottomLimit) breakPage();
+
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(CHORD_SIZE);
+          doc.setTextColor(0, 0, 0);
+          doc.text(trimmed, margin, y);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(LYRIC_SIZE);
+          const wrappedLyric: string[] = doc.splitTextToSize(nextTrimmed, contentWidth);
+          doc.text(wrappedLyric[0], margin, y + CHORD_LYRIC_OFFSET);
+          y += LINE_GAP;
+
+          // Se a letra dessa linha for longa e quebrar em mais de uma linha, desenha o resto normalmente.
+          for (let w = 1; w < wrappedLyric.length; w++) {
+            if (y + PLAIN_LINE_GAP > bottomLimit) breakPage();
+            doc.text(wrappedLyric[w], margin, y);
+            y += PLAIN_LINE_GAP;
+          }
+
+          idx += 2;
+          continue;
+        }
+
         if (y + PLAIN_LINE_GAP > bottomLimit) breakPage();
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(LYRIC_SIZE);
+        doc.setFontSize(CHORD_SIZE);
         doc.setTextColor(0, 0, 0);
         doc.text(trimmed, margin, y);
         y += PLAIN_LINE_GAP;
-      } else {
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(LYRIC_SIZE);
-        doc.setTextColor(0, 0, 0);
-        const wrapped: string[] = doc.splitTextToSize(trimmed, contentWidth);
-        wrapped.forEach((wLine) => {
-          if (y + PLAIN_LINE_GAP > bottomLimit) breakPage();
-          doc.text(wLine, margin, y);
-          y += PLAIN_LINE_GAP;
-        });
+        idx++;
+        continue;
       }
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(LYRIC_SIZE);
+      doc.setTextColor(0, 0, 0);
+      const wrapped: string[] = doc.splitTextToSize(trimmed, contentWidth);
+      wrapped.forEach((wLine) => {
+        if (y + PLAIN_LINE_GAP > bottomLimit) breakPage();
+        doc.text(wLine, margin, y);
+        y += PLAIN_LINE_GAP;
+      });
+      idx++;
     }
 
     drawFooter();
