@@ -9,6 +9,19 @@ function cleanJsonText(text: string): string {
   return text.replace(/```json/g, "").replace(/```/g, "").trim();
 }
 
+// Sem isso, se um provedor (Gemini, Workers AI ou Groq) travar sem nunca
+// responder — nem sucesso nem erro —, a cascata inteira fica parada nele para
+// sempre, e o próximo provedor nunca chega a ser tentado.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}: tempo limite de ${ms / 1000}s excedido`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
 // Normaliza a resposta de qualquer provedor para o formato que o cliente
 // espera: um array de músicas. Provedores menores (Moondream, Groq) nem
 // sempre devolvem JSON perfeito — em vez de descartar a página, guardamos o
@@ -55,17 +68,21 @@ async function runGemini(env: any, images: string[], prompt: string): Promise<an
     }
   ];
 
-  const response = await ai.models.generateContent({
-    // gemini-2.5-flash-lite: modelo estável (não preview) com a maior cota gratuita
-    // de RPM/RPD entre os modelos Gemini disponíveis, e otimizado para tarefas de
-    // extração estruturada como esta.
-    model: "gemini-2.5-flash-lite",
-    contents,
-    config: {
-      temperature: 0.1,
-      responseMimeType: "application/json"
-    }
-  });
+  const response = await withTimeout(
+    ai.models.generateContent({
+      // gemini-2.5-flash-lite: modelo estável (não preview) com a maior cota gratuita
+      // de RPM/RPD entre os modelos Gemini disponíveis, e otimizado para tarefas de
+      // extração estruturada como esta.
+      model: "gemini-2.5-flash-lite",
+      contents,
+      config: {
+        temperature: 0.1,
+        responseMimeType: "application/json"
+      }
+    }),
+    30000,
+    "Gemini"
+  );
 
   const text = response.text;
   if (!text) throw new Error("Gemini: resposta vazia");
@@ -83,12 +100,16 @@ async function runCloudflareWorkersAI(env: any, images: string[], prompt: string
   const songs: any[] = [];
   for (const img of images) {
     const bytes = Uint8Array.from(atob(img), (c) => c.charCodeAt(0));
-    const result: any = await env.AI.run('@cf/moondream/moondream3.1-9B-A2B', {
-      task: 'query',
-      image: [...bytes],
-      prompt,
-      max_tokens: 4096
-    });
+    const result: any = await withTimeout(
+      env.AI.run('@cf/moondream/moondream3.1-9B-A2B', {
+        task: 'query',
+        image: [...bytes],
+        prompt,
+        max_tokens: 4096
+      }),
+      8000,
+      "Cloudflare Workers AI"
+    );
     const raw = result?.result ?? result?.response ?? result?.answer ?? '';
     songs.push(...safeParseSongs(String(raw)));
   }
@@ -109,18 +130,29 @@ async function runGroq(env: any, images: string[], prompt: string): Promise<any[
     content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${img}` } });
   }
 
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content }],
-      temperature: 0.1
-    })
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  let res: Response;
+  try {
+    res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content }],
+        temperature: 0.1
+      }),
+      signal: controller.signal
+    });
+  } catch (err: any) {
+    if (err.name === "AbortError") throw new Error("Groq: tempo limite de 20s excedido");
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
