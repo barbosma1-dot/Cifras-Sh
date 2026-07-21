@@ -71,9 +71,26 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       const firstPage = Math.max(1, Math.min(startPage || 1, totalPages));
       const lastPage = Math.max(firstPage, Math.min(endPage || totalPages, totalPages));
 
-      const batchSize = 3;
+      // Lotes maiores = menos chamadas de IA para o mesmo número de páginas, o que
+      // poupa tanto a cota por minuto (RPM) quanto a cota diária (RPD) da chave gratuita.
+      const batchSize = 5;
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+      // Espaçamento mínimo real entre chamadas à IA, calculado para ficar com folga
+      // abaixo do limite de requisições por minuto do tier gratuito (evita bater no
+      // 429 em vez de só reagir a ele depois).
+      const MIN_INTERVAL_MS = 4500;
+      let lastCallAt = 0;
+      const waitForRateLimit = async () => {
+        const elapsed = Date.now() - lastCallAt;
+        if (elapsed < MIN_INTERVAL_MS) {
+          await delay(MIN_INTERVAL_MS - elapsed);
+        }
+        lastCallAt = Date.now();
+      };
+
       let consecutiveFailures = 0;
+      let stoppedEarly = false;
 
       for (let i = firstPage; i <= lastPage; i += batchSize) {
         const endOfBatch = Math.min(i + batchSize - 1, lastPage);
@@ -103,13 +120,14 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
           setStatus(`Convertendo músicas das páginas ${i}-${endOfBatch}...`);
 
           // Tenta o lote com algumas repetições em caso de limite de taxa (429), em vez
-          // de abortar a importação inteira na primeira vez que isso acontecer — em um
-          // PDF de centenas de páginas, um bloqueio temporário é praticamente garantido
-          // de acontecer em algum lote no meio do caminho.
+          // de abortar a importação inteira na primeira vez que isso acontecer — um
+          // bloqueio temporário de RPM pode acontecer mesmo respeitando o espaçamento.
           let extracted: ExtractedSong[] = [];
           let attempt = 0;
           const maxAttempts = 3;
+          let quotaExhausted = false;
           while (attempt < maxAttempts) {
+            await waitForRateLimit();
             try {
               extracted = await extractWithGemini(currentBatch);
               break;
@@ -117,10 +135,14 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               attempt++;
               const isRateLimit = /429|quota|limite/i.test(err.message || '');
               if (isRateLimit && attempt < maxAttempts) {
-                const backoffMs = 8000 * attempt; // 8s, 16s
+                const backoffMs = 10000 * attempt; // 10s, 20s
                 setStatus(`Limite temporário da IA — aguardando ${backoffMs / 1000}s para tentar de novo (páginas ${i}-${endOfBatch})...`);
                 await delay(backoffMs);
                 continue;
+              }
+              if (isRateLimit) {
+                quotaExhausted = true;
+                break;
               }
               throw err;
             }
@@ -134,37 +156,43 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
             consecutiveFailures = 0;
           }
 
-          if (i + batchSize <= lastPage) {
-            await delay(1000);
+          if (quotaExhausted) {
+            // Depois de esgotar as tentativas de reenvio, provavelmente a cota da chave
+            // (por minuto ou diária) foi atingida. Insistir agora só desperdiça mais cota
+            // — melhor parar, deixar o que já foi extraído salvo, e configurar o intervalo
+            // de páginas para retomar exatamente daqui na próxima tentativa.
+            stoppedEarly = true;
+            setStartPage(i);
+            setEndPage(lastPage);
+            setNotification({
+              type: 'error',
+              message: `Limite de uso da IA atingido na página ${i}. As músicas já extraídas foram mantidas abaixo. Aguarde alguns minutos (ou até amanhã, se o limite diário foi atingido) e clique em "Iniciar extração" novamente — o intervalo de páginas já está ajustado para continuar da página ${i}.`
+            });
+            break;
           }
         } catch (error: any) {
           console.error(`Erro no lote ${i}-${endOfBatch}:`, error);
           consecutiveFailures++;
-          const isRateLimit = /429|quota|limite/i.test(error.message || '');
 
-          if (isRateLimit) {
-            // Depois de esgotar as tentativas, faz uma pausa mais longa e segue para o
-            // próximo lote em vez de desistir do restante do PDF.
-            setNotification({
-              type: 'error',
-              message: 'Limite de uso da IA atingido em um trecho. Aguardando um pouco mais antes de continuar com o restante do PDF...'
-            });
-            await delay(20000);
-          }
-
-          // Se vários lotes seguidos falharem, algo mais sério está errado (rede caiu,
-          // chave de API inválida, etc.) — aí sim paramos, mas preservamos o que já foi extraído.
+          // Se vários lotes seguidos falharem por outro motivo (rede caiu, chave de API
+          // inválida, etc.), paramos, mas preservamos o que já foi extraído e deixamos
+          // o intervalo pronto para retomar da página em que parou.
           if (consecutiveFailures >= 5) {
+            stoppedEarly = true;
+            setStartPage(i);
+            setEndPage(lastPage);
             setNotification({
               type: 'error',
-              message: 'Muitas falhas seguidas na extração. Parando por segurança — as músicas já processadas foram mantidas abaixo.'
+              message: `Muitas falhas seguidas na extração. Parando por segurança na página ${i} — as músicas já processadas foram mantidas abaixo, e o intervalo já está ajustado para retomar dali.`
             });
             break;
           }
         }
       }
 
-      setStatus('Extração concluída!');
+      if (!stoppedEarly) {
+        setStatus('Extração concluída!');
+      }
     } catch (error) {
       console.error('Erro ao processar PDF:', error);
       setNotification({ type: 'error', message: 'Falha ao processar o PDF. Verifique se o arquivo está correto.' });
@@ -201,16 +229,36 @@ Retorne um ARRAY JSON de objetos seguindo estritamente este esquema:
 
 NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
 
-      const response = await fetch('/api/extract-pdf', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          images,
-          prompt
-        })
-      });
+      // Timeout duro: sem isso, se o servidor (ou algum provedor de IA na
+      // cascata) travar sem responder, o app fica parado em "Processando..."
+      // pra sempre, sem cair no retry nem mostrar erro nenhum. 100s dá folga
+      // para o servidor tentar os 3 provedores da cascata (cada um com seu
+      // próprio timeout interno, ~90s no pior caso) antes de o cliente desistir.
+      const REQUEST_TIMEOUT_MS = 100000;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      let response: Response;
+      try {
+        response = await fetch('/api/extract-pdf', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            images,
+            prompt
+          }),
+          signal: controller.signal
+        });
+      } catch (fetchErr: any) {
+        if (fetchErr.name === 'AbortError') {
+          throw new Error(`Tempo limite excedido (${REQUEST_TIMEOUT_MS / 1000}s) ao contatar o servidor de IA.`);
+        }
+        throw fetchErr;
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
