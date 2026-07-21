@@ -536,18 +536,14 @@ export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, 
               style={columns ? {
                 columnCount: 2,
                 columnGap: window.innerWidth > 768 ? '4rem' : '1.5rem',
-                columnFill: 'auto',
+                columnFill: 'balance',
                 columnRule: '1px dashed #e2e8f0',
                 padding: window.innerWidth > 768 ? '20mm' : '1rem',
                 width: '100%',
                 maxWidth: '1000px',
-                // Proporção A4 (210x297) -> Altura baseada na largura
-                height: window.innerWidth > 768 ? 'calc(min(141.4vw, 1200px))' : 'auto',
-                minHeight: window.innerWidth > 768 ? '297mm' : 'auto',
-                overflowY: 'auto'
               } : {}}
             >
-              <div className="h-full">
+              <div>
                 {processContent(chord.content, semitones, useFlats, showChords, notationSystem, fontSize, lineSpacing)}
               </div>
             </div>
