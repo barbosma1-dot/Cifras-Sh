@@ -27,7 +27,11 @@ import {
   Mic,
   Piano,
   Music2,
-  Box
+  Box,
+  Download,
+  CheckCircle,
+  Trash,
+  WifiOff
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, Repertoire, Chord, RepertoireAttendance, AttendanceStatus } from '../types';
@@ -37,6 +41,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
 import { exportChordsToPDF } from '../lib/pdfExport';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import {
+  saveRepertoireOffline,
+  getOfflineRepertoire,
+  removeOfflineRepertoire,
+  isRepertoireOffline,
+  OfflineRepertoireItem,
+} from '../lib/offlineDb';
 
 interface RepertoireDetailProps {
   repertoire: Repertoire;
@@ -82,6 +94,43 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
   const isGuest = !profile;
   const canManageEscala = !isGuest && ['admin', 'coordinator', 'editor'].includes(profile.role);
+
+  // --- Uso offline ---
+  const isOnline = useOnlineStatus();
+  const [isSavedOffline, setIsSavedOffline] = useState(false);
+  const [savingOffline, setSavingOffline] = useState(false);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+
+  useEffect(() => {
+    isRepertoireOffline(repertoire.id).then(setIsSavedOffline);
+  }, [repertoire.id]);
+
+  const handleDownloadOffline = async () => {
+    if (items.length === 0) {
+      setNotification({ message: 'Adicione músicas ao repertório antes de baixar.', type: 'error' });
+      return;
+    }
+    setSavingOffline(true);
+    try {
+      await saveRepertoireOffline(repertoire, items as OfflineRepertoireItem[]);
+      setIsSavedOffline(true);
+      setNotification({ message: 'Repertório salvo para uso offline!', type: 'success' });
+    } catch (err: any) {
+      setNotification({ message: 'Erro ao salvar offline: ' + err.message, type: 'error' });
+    } finally {
+      setSavingOffline(false);
+    }
+  };
+
+  const handleRemoveOffline = async () => {
+    try {
+      await removeOfflineRepertoire(repertoire.id);
+      setIsSavedOffline(false);
+      setNotification({ message: 'Removido do armazenamento offline.', type: 'success' });
+    } catch (err: any) {
+      setNotification({ message: 'Erro ao remover cópia offline: ' + err.message, type: 'error' });
+    }
+  };
 
   useEffect(() => {
     if (notification) {
@@ -244,6 +293,11 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   async function fetchRepertoireItems() {
     setLoading(true);
     try {
+      if (!navigator.onLine) {
+        // Sem rede: nem tenta o Supabase, vai direto pro cache offline.
+        throw new Error('offline');
+      }
+
       const { data, error } = await supabase
         .from('repertoire_items')
         .select(`
@@ -281,8 +335,28 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
       });
 
       setItems(sorted);
+      setUsingOfflineData(false);
+
+      // Se este repertório já tinha sido baixado antes, mantém a cópia offline atualizada.
+      const alreadyOffline = await isRepertoireOffline(repertoire.id);
+      if (alreadyOffline) {
+        saveRepertoireOffline(repertoire, sorted as OfflineRepertoireItem[]).catch(() => {});
+      }
     } catch (err) {
       console.error('Erro ao buscar itens do repertório:', err);
+
+      // Fallback: tenta carregar a cópia salva offline.
+      const offlineData = await getOfflineRepertoire(repertoire.id);
+      if (offlineData) {
+        setItems(offlineData.items);
+        setUsingOfflineData(true);
+        setNotification({ message: 'Sem conexão. Exibindo dados salvos offline.', type: 'error' });
+      } else {
+        setUsingOfflineData(false);
+        if (!navigator.onLine) {
+          setNotification({ message: 'Sem conexão e este repertório não foi baixado para uso offline.', type: 'error' });
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -466,6 +540,25 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {isSavedOffline ? (
+            <button
+              onClick={handleRemoveOffline}
+              className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 group"
+              title="Salvo offline — clique para remover"
+            >
+              <CheckCircle className="w-5 h-5 group-hover:hidden" />
+              <Trash className="w-5 h-5 hidden group-hover:block" />
+            </button>
+          ) : (
+            <button
+              onClick={handleDownloadOffline}
+              disabled={savingOffline || items.length === 0}
+              className="p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all disabled:opacity-40"
+              title="Baixar para uso offline"
+            >
+              {savingOffline ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+            </button>
+          )}
           {!isGuest && (
             <button 
               onClick={() => setIsEditingBaseInfo(true)}
@@ -477,6 +570,15 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
           )}
         </div>
       </div>
+
+      {(!isOnline || usingOfflineData) && (
+        <div className="flex items-center gap-2 bg-amber-50 text-amber-700 border border-amber-200 px-4 py-3 rounded-2xl text-sm font-bold">
+          <WifiOff className="w-4 h-4 flex-shrink-0" />
+          {usingOfflineData
+            ? 'Você está offline. Exibindo a última versão salva deste repertório.'
+            : 'Sem conexão com a internet.'}
+        </div>
+      )}
 
       <AnimatePresence>
         {isEditingBaseInfo && (
