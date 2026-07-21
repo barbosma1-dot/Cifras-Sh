@@ -6,7 +6,17 @@ import { GoogleGenAI } from "@google/genai";
 // usuário só vê um erro se TODOS os provedores configurados falharem.
 
 function cleanJsonText(text: string): string {
-  return text.replace(/```json/g, "").replace(/```/g, "").trim();
+  let cleaned = text.replace(/```json/gi, "").replace(/```/g, "");
+  // Modelos de raciocínio (ex.: qwen3.6 no Groq) podem devolver um bloco
+  // <think>...</think> com o "pensamento" antes do JSON de verdade. Sem
+  // remover isso, JSON.parse falha e a página inteira cai no modo de
+  // rascunho bruto (era a causa do bug "Revisar título (extraído por IA
+  // reserva)" aparecendo com o texto de raciocínio da IA no lugar da cifra).
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  // Se o bloco de raciocínio não foi fechado corretamente (ou o provedor só
+  // emite a tag de fechamento), corta tudo antes do </think> também.
+  cleaned = cleaned.replace(/^[\s\S]*<\/think>/i, "");
+  return cleaned.trim();
 }
 
 // Sem isso, se um provedor (Gemini, Workers AI ou Groq) travar sem nunca
@@ -143,7 +153,13 @@ async function runGroq(env: any, images: string[], prompt: string): Promise<any[
       body: JSON.stringify({
         model,
         messages: [{ role: "user", content }],
-        temperature: 0.1
+        temperature: 0.1,
+        // Sem isso, o Qwen 3.6 "pensa em voz alta" e devolve um bloco
+        // <think>...</think> antes do JSON, quebrando o parser (era a causa
+        // raiz do bug em que o título extraído virava
+        // "Revisar título (extraído por IA reserva)" com o raciocínio da IA
+        // dentro do campo de conteúdo).
+        reasoning_effort: "none"
       }),
       signal: controller.signal
     });
