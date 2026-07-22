@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Search, 
   Filter, 
@@ -40,6 +40,14 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const [isExporting, setIsExporting] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // Combobox de categoria com busca própria: com a nova regra de "álbum vira
+  // categoria" na importação de PDF, a lista de categorias pode crescer muito
+  // (uma por álbum/coletânea), e um <select> nativo fica difícil de navegar
+  // nesse caso — por isso o dropdown de categoria agora tem seu próprio campo
+  // de busca interno, para filtrar a lista de categorias antes de escolher.
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const [categorySearchTerm, setCategorySearchTerm] = useState('');
+  const categoryDropdownRef = useRef<HTMLDivElement>(null);
   // Filtro de "adicionadas recentemente" — facilita achar e revisar/editar
   // categorias logo depois de uma importação de PDF.
   const [recentFilter, setRecentFilter] = useState<'all' | '1h' | '24h' | '7d'>('all');
@@ -63,6 +71,16 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   useEffect(() => {
     setActiveBookId(initialBookId || null);
   }, [initialBookId]);
+
+  useEffect(() => {
+    function handleClickOutsideCategory(event: MouseEvent) {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(event.target as Node)) {
+        setIsCategoryDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutsideCategory);
+    return () => document.removeEventListener('mousedown', handleClickOutsideCategory);
+  }, []);
 
   useEffect(() => {
     fetchChords();
@@ -351,16 +369,56 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             </button>
           )}
           
-          <select 
-            className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-slate-600 font-bold text-xs hover:bg-slate-50 shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 focus:border-brand-orange outline-none"
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-          >
-            <option value="all">Todas Categorias</option>
-            {categories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
+          <div className="relative" ref={categoryDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsCategoryDropdownOpen(prev => !prev)}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-slate-600 font-bold text-xs hover:bg-slate-50 shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 focus:border-brand-orange outline-none min-w-[160px] justify-between"
+            >
+              <span className="truncate">{selectedCategory === 'all' ? 'Todas Categorias' : selectedCategory}</span>
+              <Filter className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+            </button>
+
+            {isCategoryDropdownOpen && (
+              <div className="absolute z-40 mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden right-0 md:left-0">
+                <div className="relative p-2 border-b border-slate-100">
+                  <Search className="absolute left-5 top-4.5 w-4 h-4 text-slate-300" />
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Buscar categoria..."
+                    value={categorySearchTerm}
+                    onChange={(e) => setCategorySearchTerm(e.target.value)}
+                    className="w-full pl-8 pr-2 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium outline-none focus:border-brand-orange"
+                  />
+                </div>
+                <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedCategory('all'); setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
+                    className={`w-full text-left px-4 py-2 text-xs font-bold hover:bg-slate-50 transition-colors ${selectedCategory === 'all' ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
+                  >
+                    Todas Categorias
+                  </button>
+                  {categories
+                    .filter(cat => cat.toLowerCase().includes(categorySearchTerm.toLowerCase()))
+                    .map(cat => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => { setSelectedCategory(cat); setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
+                        className={`w-full text-left px-4 py-2 text-xs font-bold hover:bg-slate-50 transition-colors truncate ${selectedCategory === cat ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  {categories.filter(cat => cat.toLowerCase().includes(categorySearchTerm.toLowerCase())).length === 0 && (
+                    <p className="px-4 py-3 text-[11px] text-slate-400 italic">Nenhuma categoria encontrada</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           <select
             className={`flex items-center justify-center gap-2 px-4 py-3 border rounded-2xl font-bold text-xs shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 outline-none ${
