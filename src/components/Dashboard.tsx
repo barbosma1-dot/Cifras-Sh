@@ -13,7 +13,8 @@ import {
   Search,
   ChevronRight,
   Bell,
-  Download
+  Download,
+  History
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, UserNotification } from '../types';
@@ -23,6 +24,7 @@ import RepertoireList from './RepertoireList';
 import MissionView from './MissionView';
 import ProfileView from './ProfileView';
 import AdminSettings from './AdminSettings';
+import ImportBatchesList from './ImportBatchesList';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
@@ -146,6 +148,10 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
     { id: 'profile', label: 'Meu Perfil', icon: UserCircle },
   ];
 
+  if (['admin', 'editor', 'coordinator', 'moderator'].includes(profile?.role || '')) {
+    menuItems.splice(2, 0, { id: 'importBatches', label: 'Lotes de Importação', icon: History });
+  }
+
   const isAdmin = profile?.role === 'admin' || 
                   profile?.email === 'barbosma1@gmail.com' || 
                   user?.email === 'barbosma1@gmail.com';
@@ -197,6 +203,7 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
             }}
           />
         );
+      case 'importBatches': return <ImportBatchesList profile={profile} />;
       case 'profile': return <ProfileView profile={profile} setProfile={setProfile} />;
       case 'settings': return <AdminSettings profile={profile} />;
       default: return <ChordsList profile={profile} />;
