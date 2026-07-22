@@ -11,7 +11,7 @@ export default async (req: Request, context: Context) => {
 
   try {
     const body = await req.json();
-    const { images, prompt } = body;
+    const { images, prompt, textBlocks } = body;
 
     if (!images || !Array.isArray(images) || images.length === 0) {
       return new Response(JSON.stringify({ error: "Images are required" }), {
@@ -19,6 +19,13 @@ export default async (req: Request, context: Context) => {
         headers: { "Content-Type": "application/json" }
       });
     }
+
+    // Blocos de texto pré-alinhados por coordenada (ver src/lib/chordproExtractor.ts
+    // no cliente) — já trazem os acordes posicionados corretamente para páginas com
+    // camada de texto real, calculados matematicamente em vez de "adivinhados"
+    // visualmente pela IA. Concatenados ao prompt, junto com a regra 0 dele.
+    const hasTextBlocks = Array.isArray(textBlocks) && textBlocks.length > 0;
+    const fullPrompt = hasTextBlocks ? `${prompt}\n\n${textBlocks.join('\n\n')}` : prompt;
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -39,7 +46,7 @@ export default async (req: Request, context: Context) => {
       {
         role: "user",
         parts: [
-          { text: prompt },
+          { text: fullPrompt },
           ...images.map((img: string) => ({ 
             inlineData: { 
               mimeType: "image/jpeg", 
