@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
@@ -34,14 +34,21 @@ interface PDFImporterProps {
   onImportComplete: () => void;
   bookId?: string | null;
   missionId?: string | null;
+  // Presentes quando a tela é aberta a partir de "Lotes de Importação" para
+  // ATUALIZAR um lote já existente, em vez de criar um novo do zero: o
+  // arquivo é o mesmo PDF baixado de volta do Storage, e reimportBatchId
+  // amarra as músicas reextraídas ao lote antigo (permitindo casar e
+  // atualizar em vez de duplicar — ver `importAll`).
+  reimportBatchId?: string | null;
+  reimportFile?: File | null;
 }
 
 // Categorias mais comuns, exibidas como atalhos (chips) para marcar cada
 // música individualmente sem precisar digitar tudo na mão.
 const COMMON_CATEGORIES = ['Missa', 'Louvor', 'Adoração', 'Oração', 'Ação de Graças', 'Outros'];
 
-export default function PDFImporter({ onClose, onImportComplete, bookId, missionId }: PDFImporterProps) {
-  const [file, setFile] = useState<File | null>(null);
+export default function PDFImporter({ onClose, onImportComplete, bookId, missionId, reimportBatchId, reimportFile }: PDFImporterProps) {
+  const [file, setFile] = useState<File | null>(reimportFile || null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>('');
   const [extractedSongs, setExtractedSongs] = useState<ExtractedSong[]>([]);
@@ -50,7 +57,29 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   const [numPages, setNumPages] = useState<number | null>(null);
   const [startPage, setStartPage] = useState<number>(1);
   const [endPage, setEndPage] = useState<number>(1);
+  // Id do lote no banco (import_batches). Criado/atualizado em
+  // `ensureImportBatch`, usado por `importAll` para casar músicas
+  // reimportadas com as que já existiam do mesmo lote.
+  const [importBatchId, setImportBatchId] = useState<string | null>(reimportBatchId || null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Se veio de "Atualizar Lote" (arquivo já baixado do Storage), carrega o
+  // número de páginas automaticamente, sem exigir que o usuário escolha o
+  // arquivo de novo manualmente.
+  useEffect(() => {
+    if (!reimportFile) return;
+    (async () => {
+      try {
+        const arrayBuffer = await reimportFile.arrayBuffer();
+        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+        setNumPages(pdf.numPages);
+        setStartPage(1);
+        setEndPage(pdf.numPages);
+      } catch (err) {
+        console.error('Erro ao ler número de páginas do lote:', err);
+      }
+    })();
+  }, [reimportFile]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -74,6 +103,79 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
     }
   };
 
+  /**
+   * Garante que exista uma linha em `import_batches` para este lote antes de
+   * começar a extrair — assim toda música extraída já nasce ligada ao lote
+   * (`import_batch_id`), e a tela de "Lotes de Importação" consegue depois
+   * oferecer "Atualizar" sem o usuário precisar reencontrar/reenviar o PDF
+   * na mão.
+   *
+   * - Reimportação de um lote existente (`reimportBatchId`): reaproveita a
+   *   mesma linha, só atualizando `last_reimported_at`/intervalo de páginas.
+   * - Importação nova: cria a linha e sobe o PDF original para o bucket
+   *   "pdf-imports" do Storage (se o upload falhar — bucket ausente em
+   *   projetos ainda não migrados — a importação segue normalmente, só sem
+   *   a opção de reimportar esse lote depois).
+   */
+  const ensureImportBatch = async (totalPages: number): Promise<string | null> => {
+    if (importBatchId) {
+      // Já existe (reimportação) — só atualiza o intervalo/timestamp.
+      await supabase
+        .from('import_batches')
+        .update({ page_start: startPage, page_end: endPage, total_pages: totalPages, last_reimported_at: new Date().toISOString() })
+        .eq('id', importBatchId);
+      return importBatchId;
+    }
+
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const { data: batch, error } = await supabase
+        .from('import_batches')
+        .insert({
+          source_file_name: file?.name || 'arquivo.pdf',
+          page_start: startPage,
+          page_end: endPage,
+          total_pages: totalPages,
+          chord_book_id: bookId || null,
+          mission_id: missionId || null,
+          uploaded_by: userData?.user?.id || null,
+          status: 'processing'
+        })
+        .select('id')
+        .single();
+
+      if (error || !batch) {
+        console.error('Não foi possível criar o lote de importação (tabela import_batches ausente?):', error);
+        return null;
+      }
+
+      setImportBatchId(batch.id);
+
+      // Sobe o PDF original para permitir reimportar depois sem pedir o
+      // arquivo de novo. Melhor esforço: se falhar, a importação continua.
+      if (file) {
+        try {
+          const path = `${batch.id}/${file.name}`;
+          const { error: uploadError } = await supabase.storage
+            .from('pdf-imports')
+            .upload(path, file, { upsert: true, contentType: 'application/pdf' });
+          if (!uploadError) {
+            await supabase.from('import_batches').update({ storage_path: path, file_size_bytes: file.size }).eq('id', batch.id);
+          } else {
+            console.error('Falha ao subir PDF do lote para o Storage (bucket "pdf-imports" existe?):', uploadError);
+          }
+        } catch (uploadErr) {
+          console.error('Falha ao subir PDF do lote para o Storage:', uploadErr);
+        }
+      }
+
+      return batch.id;
+    } catch (err) {
+      console.error('Erro ao registrar lote de importação:', err);
+      return null;
+    }
+  };
+
   const processPDF = async () => {
     if (!file) return;
     setLoading(true);
@@ -93,6 +195,8 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       // lento, arriscado (pode travar o navegador no celular) e consome muita cota da IA.
       const firstPage = Math.max(1, Math.min(startPage || 1, totalPages));
       const lastPage = Math.max(firstPage, Math.min(endPage || totalPages, totalPages));
+
+      const activeBatchId = await ensureImportBatch(totalPages);
 
       // Lotes maiores = menos chamadas de IA para o mesmo número de páginas (poupa cota
       // por minuto e diária), MAS modelos de visão mais leves como o gemini-2.5-flash-lite
@@ -244,6 +348,11 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
 
       if (!stoppedEarly) {
         setStatus('Extração concluída!');
+        if (activeBatchId) {
+          await supabase.from('import_batches').update({ status: 'completed' }).eq('id', activeBatchId);
+        }
+      } else if (activeBatchId) {
+        await supabase.from('import_batches').update({ status: 'partial' }).eq('id', activeBatchId);
       }
     } catch (error) {
       console.error('Erro ao processar PDF:', error);
@@ -353,23 +462,56 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
     setImporting(true);
 
     try {
-      const songsToInsert = extractedSongs.map(s => ({
+      const nowIso = new Date().toISOString();
+      const songsToUpsert = extractedSongs.map(s => ({
         ...s,
         artist: s.artist || 'Desconhecido',
         category: s.category || 'Outros',
         original_key: s.original_key || 'C',
         youtube_url: s.youtube_url || null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        import_batch_id: importBatchId || null,
+        updated_at: nowIso
       }));
 
-      // Insere em lotes menores: um `insert` único com centenas de músicas (comum ao
-      // importar um hinário inteiro) arrisca estourar tamanho de payload ou timeout.
+      // Se este lote já tinha músicas salvas antes (reimportação via "Atualizar
+      // Lote"), busca-as para casar por (título, artista) normalizados — a mesma
+      // chave gerada pela coluna `import_match_key` da migration — em vez de
+      // sempre criar registros novos e duplicar tudo a cada reimportação.
+      const existingByKey = new Map<string, string>(); // match_key -> chord id
+      if (importBatchId) {
+        const { data: existing, error: existingErr } = await supabase
+          .from('chords')
+          .select('id, title, artist')
+          .eq('import_batch_id', importBatchId);
+        if (existingErr) {
+          console.error('Falha ao buscar cifras já existentes do lote (seguindo como inserção normal):', existingErr);
+        } else {
+          for (const c of existing || []) {
+            const key = `${(c.title || '').trim().toLowerCase()}|${(c.artist || '').trim().toLowerCase()}`;
+            existingByKey.set(key, c.id);
+          }
+        }
+      }
+
+      const toInsert: any[] = [];
+      const toUpdate: { id: string; values: any }[] = [];
+      for (const s of songsToUpsert) {
+        const key = `${(s.title || '').trim().toLowerCase()}|${(s.artist || '').trim().toLowerCase()}`;
+        const existingId = existingByKey.get(key);
+        if (existingId) {
+          toUpdate.push({ id: existingId, values: s });
+        } else {
+          toInsert.push({ ...s, created_at: nowIso });
+        }
+      }
+
+      // Insere em lotes menores: um `insert`/`update` único com centenas de músicas
+      // (comum ao importar um hinário inteiro) arrisca estourar tamanho de payload.
       const CHUNK = 25;
       const allInserted: any[] = [];
-      for (let i = 0; i < songsToInsert.length; i += CHUNK) {
-        const chunk = songsToInsert.slice(i, i + CHUNK);
-        setStatus(`Salvando ${i + 1}-${Math.min(i + CHUNK, songsToInsert.length)} de ${songsToInsert.length}...`);
+      for (let i = 0; i < toInsert.length; i += CHUNK) {
+        const chunk = toInsert.slice(i, i + CHUNK);
+        setStatus(`Salvando ${i + 1}-${Math.min(i + CHUNK, toInsert.length)} de ${toInsert.length} novas...`);
 
         const { data: insertedChords, error: insertError } = await supabase
           .from('chords')
@@ -378,6 +520,28 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
 
         if (insertError) throw insertError;
         if (insertedChords) allInserted.push(...insertedChords);
+      }
+
+      // Atualiza as que já existiam do mesmo lote — preserva o `id` (e, portanto,
+      // vínculos em cadernos/repertórios existentes), só substituindo o conteúdo
+      // pela versão reextraída.
+      for (let i = 0; i < toUpdate.length; i++) {
+        setStatus(`Atualizando cifra já existente ${i + 1}/${toUpdate.length}...`);
+        const { id, values } = toUpdate[i];
+        const { error: updateError } = await supabase
+          .from('chords')
+          .update(values)
+          .eq('id', id);
+        if (updateError) {
+          console.error(`Falha ao atualizar cifra existente ${id}:`, updateError);
+        }
+      }
+
+      if (importBatchId) {
+        await supabase
+          .from('import_batches')
+          .update({ song_count: existingByKey.size + toInsert.length, last_reimported_at: nowIso })
+          .eq('id', importBatchId);
       }
 
       if (bookId && allInserted.length > 0) {
@@ -398,7 +562,12 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
         }
       }
 
-      setNotification({ type: 'success', message: `${extractedSongs.length} cifras importadas com sucesso!` });
+      setNotification({
+        type: 'success',
+        message: toUpdate.length > 0
+          ? `${toInsert.length} cifras novas salvas e ${toUpdate.length} cifras já existentes atualizadas!`
+          : `${toInsert.length} cifras importadas com sucesso!`
+      });
       setTimeout(() => {
         onImportComplete();
         onClose();
