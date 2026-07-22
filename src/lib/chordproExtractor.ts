@@ -39,9 +39,29 @@ const Y_TOLERANCE = 2;
 // instrumental) mesmo que a próxima linha do array não seja de acorde.
 const MAX_PAIR_GAP = 20;
 
-// Token de acorde: nota (A-G) + acidente opcional + qualidade opcional
-// (m, maj, min, dim, aug, sus, add) + número opcional + baixo opcional (/X).
-const CHORD_TOKEN_RE = /^\(?[A-G](#|b)?(maj|min|dim|aug|sus|add|m)?\d*(\/[A-G](#|b)?)?\)?$/;
+// Token de acorde: nota (A-G) + acidente opcional + qualidade opcional +
+// extensão(ões) numérica(s) opcionais + alteração opcional + baixo opcional
+// (/X). A versão anterior só aceitava UMA palavra de qualidade seguida de UM
+// número (ex.: "Dm7"), o que rejeitava notações comuns em cifras brasileiras
+// como "Dm7(9)", "F#m7b5", "A7M", "Bb7b5", "Ddim°" — tokens que caíam fora do
+// padrão eram tratados como texto solto, e a linha inteira deixava de ser
+// reconhecida como linha de acordes (limiar de 80% em isChordLine), fazendo
+// os acordes dela "sumirem" (saírem sem colchete) na importação. Esta versão
+// é bem mais permissiva nas extensões/alterações, mantendo a raiz A-G como
+// âncora obrigatória — por isso não gera falsos positivos em palavras comuns
+// da letra (testado contra "Amor", "Deus", "Se", "Ela" etc.).
+const ROOT = '[A-G](?:#|b|♯|♭)?';
+const QUALITY =
+  '(?:maj7|Maj7|MAJ7|m7b5|m7#5|dim7|sus2|sus4|add\\d{1,2}|maj|min|dim|aug|sus|add|no|[mM])?';
+const EXTENSION = '(?:[#b]?\\d{1,2}){0,2}'; // 7, 9, 11, 13, b5, #11, 7b5...
+const EXTRA_MAJOR = '(?:M)?'; // notação "7M" (maior com sétima)
+const DIM_SYMBOL = '(?:°|º|ø)?';
+const ALTERATION = '(?:\\(\\s*[#b]?\\d{1,2}[+-]?\\s*\\)|[+-])?'; // (9), (b5), (#11), +5, -5
+const BASS = `(?:\\/${ROOT}\\d{0,2})?`; // /G, /F#, /A7 (baixo com extensão, raro mas ocorre)
+
+const CHORD_TOKEN_RE = new RegExp(
+  `^\\(?${ROOT}${QUALITY}${EXTENSION}${EXTRA_MAJOR}${DIM_SYMBOL}${ALTERATION}${BASS}\\)?$`
+);
 // Símbolos comuns em grades de acordes por compasso (a skill trata como
 // "acordes" para fins de agrupamento em linha instrumental).
 const BAR_SYMBOL_RE = /^[|%]+$/;
