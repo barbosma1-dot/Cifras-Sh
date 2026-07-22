@@ -14,6 +14,19 @@ interface ExtractedSong {
   category: string;
   content: string;
   original_key: string;
+  youtube_url?: string;
+}
+
+// Reconhece links de YouTube em qualquer formato comum que possa aparecer
+// impresso num PDF (site com QR code, rodapé de cifra, etc.): youtube.com/watch?v=,
+// youtu.be/, youtube.com/embed/, m.youtube.com, com ou sem "https://"/"www.".
+const YOUTUBE_URL_RE =
+  /(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i;
+
+/** Varre um texto (conteúdo da cifra, ou qualquer campo livre vindo da IA) em busca de um link do YouTube e devolve a URL normalizada, ou null. */
+function findYoutubeUrlInText(text: string): string | null {
+  const match = text.match(YOUTUBE_URL_RE);
+  return match ? `https://www.youtube.com/watch?v=${match[1]}` : null;
 }
 
 interface PDFImporterProps {
@@ -262,6 +275,8 @@ Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinh
    Exemplo: [G]        [D/F#]        [Em]        [C]
 5. FLUXO DE COLUNAS: Se o PDF tiver duas colunas, leia a coluna da ESQUERDA inteira (de cima a baixo) antes de passar para a coluna da DIREITA. Nunca misture linhas horizontais de colunas diferentes.
 6. LIMPEZA TOTAL: Remova números de página, rodapés de hinários, nomes de missas/tempos litúrgicos repetidos e anotações manuais. 
+6b. ÁLBUM COMO CATEGORIA (CRÍTICO): Se a página, o cabeçalho, o rodapé, a capa do hinário/coletânea ou o índice mencionar o nome de um ÁLBUM, CD, hinário ou coletânea ao qual a música pertence (ex.: "Álbum: Alma Missionária", "CD Encontro com Deus 3", "Coletânea Diante do Trono Vol. 2"), inclua esse nome de álbum como mais um item na lista de "category" da música, além das categorias litúrgicas normais (Missa, Louvor, etc.). Não invente nome de álbum — só inclua se ele aparecer explicitamente escrito no PDF.
+6c. LINK DE VÍDEO/YOUTUBE: Se houver, em qualquer lugar da página (rodapé, cabeçalho, junto de um QR code, nota de rodapé), um link ou URL de YouTube impresso como texto (ex.: "youtube.com/watch?v=...", "youtu.be/...", ou instrução tipo "Assista em: ..."), extraia essa URL completa e devolva no campo "youtube_url". Se não houver nenhum link de vídeo visível na página, devolva "youtube_url": "".
 7. ESTRUTURA: Marque o início do refrão com uma linha contendo apenas "Refrão:" e feche o bloco com uma linha contendo apenas "Fim" logo após a última linha do refrão. NÃO use {soc}/{eoc} nem tags como [REFRÃO] — o app só reconhece o padrão "Refrão:" / "Fim". Para outras seções, use rótulos simples em linha própria, como "Intro", "Estrofe", "Ponte", "Solo".
 8. PÁGINAS SEM MÚSICA: Se a página for um índice, sumário, lista de CDs/álbuns, capa ou contracapa (sem NENHUM acorde e sem NENHUMA letra), IGNORE-A completamente — não crie nenhum objeto para ela. Uma página com acordes mas sem letra (regra 9) NÃO se enquadra aqui — ela tem música e deve ser extraída.
 9. CIFRA SEM LETRA (GRADE DE ACORDES POR COMPASSO): Algumas músicas são notadas apenas como sequência de acordes por compasso, sem nenhuma letra impressa (comum em cifras de banda/instrumental) — ex.: "D/F# | % | G | Gm |" ou "-a- F | C | Am | G |". Isso É uma música válida e DEVE ser extraída como as demais, mesmo sem letra nenhuma. Não tente inventar sílabas nem forçar o formato colchete-sobre-sílaba da regra 3 (que só se aplica quando há letra). Em vez disso, preserve fielmente cada linha de compasso tal como está no PDF, incluindo as barras "|", o símbolo de repetição "%" e os rótulos de seção como estão (ex.: "-Intro-", "-a1-", "-chorus-", "-c bridge-", "-fim-"). Nunca pule uma música só porque ela não tem letra.
@@ -271,9 +286,10 @@ Retorne um ARRAY JSON de objetos seguindo estritamente este esquema:
 [{
   "title": "TÍTULO DA MÚSICA (Letras Maiúsculas)",
   "artist": "Autor ou Ministério (Ex: Pe. Zezinho, Shalom)",
-  "category": "Missa, Oração, Outros (use uma ou mais, separadas por vírgula)",
+  "category": "Missa, Oração, Outros, Nome do Álbum se houver (use uma ou mais, separadas por vírgula)",
   "original_key": "Tom (Ex: G, Am, F#m)",
-  "content": "A cifra completa em formato ChordPro"
+  "content": "A cifra completa em formato ChordPro",
+  "youtube_url": "URL do YouTube impressa na página, se houver; caso contrário string vazia"
 }]
 
 NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
@@ -316,7 +332,16 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       }
 
       const data = await response.json();
-      return Array.isArray(data) ? data : [];
+      const songs: ExtractedSong[] = Array.isArray(data) ? data : [];
+
+      // Fallback local: se a IA não retornou "youtube_url" (campo novo, pode
+      // ainda não vir preenchido em todo caso), tenta achar um link colado
+      // dentro do próprio "content" antes de desistir — sem gastar outra
+      // chamada de IA.
+      return songs.map(s => ({
+        ...s,
+        youtube_url: s.youtube_url || (s.content ? findYoutubeUrlInText(s.content) || '' : '')
+      }));
     } catch (error: any) {
       console.error('Extraction error:', error);
       throw error;
@@ -333,6 +358,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
         artist: s.artist || 'Desconhecido',
         category: s.category || 'Outros',
         original_key: s.original_key || 'C',
+        youtube_url: s.youtube_url || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }));
@@ -621,6 +647,22 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                           setExtractedSongs(newSongs);
                         }}
                         placeholder="Categorias separadas por vírgula"
+                        className="w-full text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/20 outline-none"
+                      />
+                    </div>
+
+                    <div className="mb-3">
+                      <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                        <span className="text-[8px] font-black uppercase tracking-widest">Link YouTube</span>
+                      </div>
+                      <input
+                        value={song.youtube_url || ''}
+                        onChange={(e) => {
+                          const newSongs = [...extractedSongs];
+                          newSongs[idx] = { ...newSongs[idx], youtube_url: e.target.value };
+                          setExtractedSongs(newSongs);
+                        }}
+                        placeholder="Detectado automaticamente do PDF, se houver"
                         className="w-full text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/20 outline-none"
                       />
                     </div>
