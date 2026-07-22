@@ -3,6 +3,7 @@ import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save } f
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { extractPreAlignedPageText } from '../lib/chordproExtractor';
 
 // Configuração do worker do PDF.js
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -113,6 +114,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
 
         try {
           const currentBatch: string[] = [];
+          const currentTextBlocks: string[] = [];
           setStatus(`Processando páginas ${i} até ${endOfBatch} de ${lastPage}...`);
 
           for (let j = i; j <= endOfBatch; j++) {
@@ -131,6 +133,24 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               const base64Image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
               currentBatch.push(base64Image);
             }
+
+            // Tenta extrair a camada de texto REAL do PDF (não a imagem) e alinhar os
+            // acordes por coordenada (ver src/lib/chordproExtractor.ts) — muito mais
+            // confiável do que pedir pra IA "adivinhar" visualmente onde cada acorde
+            // cai em cima da letra, que era a causa mais comum de acorde deslocado.
+            // Só funciona em páginas com texto selecionável (cifra digital); em
+            // páginas escaneadas/foto, `extractPreAlignedPageText` devolve null e a
+            // IA usa só a imagem, como já fazia antes.
+            try {
+              const preAligned = await extractPreAlignedPageText(page);
+              if (preAligned) {
+                currentTextBlocks.push(
+                  `--- Página ${j} (texto pré-alinhado por coordenadas — USE ESTE ALINHAMENTO DE ACORDES) ---\n${preAligned}`
+                );
+              }
+            } catch (err) {
+              console.error(`Falha ao extrair camada de texto da página ${j}:`, err);
+            }
           }
 
           setStatus(`Convertendo músicas das páginas ${i}-${endOfBatch}...`);
@@ -145,7 +165,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
           while (attempt < maxAttempts) {
             await waitForRateLimit();
             try {
-              extracted = await extractWithGemini(currentBatch);
+              extracted = await extractWithGemini(currentBatch, currentTextBlocks);
               break;
             } catch (err: any) {
               attempt++;
@@ -220,12 +240,13 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
     }
   };
 
-  const extractWithGemini = async (images: string[]): Promise<ExtractedSong[]> => {
+  const extractWithGemini = async (images: string[], textBlocks: string[] = []): Promise<ExtractedSong[]> => {
     try {
       const prompt = `Você é um Analista de Cifras Litúrgicas sênior especializado em OCR e transcrição musical de ALTA FIDELIDADE para o formato ChordPro (.chopro).
 Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinhamento dos acordes com as sílabas seja PERFEITO.
 
 ### REGRAS DE OURO DE OCR (CRÍTICO):
+0. ALINHAMENTO PRÉ-CALCULADO (quando presente): Junto com a imagem de uma página, pode vir também um bloco de texto começando com "--- Página N (texto pré-alinhado por coordenadas...)". Esse bloco foi calculado a partir da posição real de cada palavra no PDF (não é um palpite de IA) e já tem os acordes posicionados CORRETAMENTE. Para essa página, use o bloco de texto como fonte de verdade para o conteúdo e a posição dos acordes — copie as linhas de acorde+letra QUASE literalmente, mantendo os colchetes [Acorde] exatamente onde estão. Use a IMAGEM da mesma página apenas para decidir título, artista, categoria, tom, marcação de Refrão/Fim e limpeza de cabeçalhos/rodapés — NÃO para reposicionar acordes que já vieram prontos no bloco de texto. Se uma página NÃO tiver bloco de texto pré-alinhado correspondente, ela é uma página escaneada/foto — nesse caso siga a regra 3 abaixo normalmente, usando só a imagem, inclusive para o posicionamento dos acordes.
 1. VARREDURA COMPLETA (CRÍTICO): Cada lote pode conter VÁRIAS páginas e VÁRIAS músicas diferentes — inclusive mais de uma música na MESMA página. Percorra TODAS as páginas do lote, do início ao fim, e retorne um objeto para CADA música encontrada. NUNCA pare depois de extrair a primeira música do lote — isso é o erro mais grave que você pode cometer aqui. Antes de responder, confira: "processei a última página deste lote, e há um objeto no array para cada música que vi, sem exceção?".
 2. CONTINUIDADE MULTI-PÁGINA: Se uma música começa em uma página e continua na próxima, MESCLE-AS em um único objeto. Não crie dois registros para a mesma música.
 3. ALINHAMENTO CHORDPRO (CRÍTICO — ERRO MUITO COMUM): A maioria dos PDFs de origem imprime o acorde numa linha SEPARADA, ACIMA da linha de letra, alinhado pela posição horizontal (coluna) da sílaba onde ele cai — esse é só o jeito de IMPRIMIR, não o formato de saída. Você NUNCA deve reproduzir essas duas linhas separadamente no "content". Sempre que uma linha de acordes estiver posicionada acima de uma linha de LETRA (texto cantável), você deve: (a) olhar a posição horizontal de cada acorde em relação às letras da linha de baixo, (b) FUNDIR as duas linhas em UMA ÚNICA linha de saída, inserindo cada acorde entre colchetes imediatamente antes do caractere/sílaba sobre a qual ele estava posicionado, e (c) descartar a linha de acordes separada — ela não deve sobrar no resultado. Isso vale mesmo que o espaçamento do PDF pareça "impreciso"; use o seu melhor julgamento de qual sílaba cada acorde acompanha.
@@ -275,6 +296,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
           },
           body: JSON.stringify({
             images,
+            textBlocks,
             prompt
           }),
           signal: controller.signal
