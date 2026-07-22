@@ -258,7 +258,7 @@ export const onRequestPost = async (context: any) => {
   const { request, env } = context;
   try {
     const body: any = await request.json();
-    const { images, prompt } = body;
+    const { images, prompt, textBlocks } = body;
 
     if (!images || !Array.isArray(images) || images.length === 0) {
       return new Response(JSON.stringify({ error: "Images are required" }), {
@@ -267,10 +267,19 @@ export const onRequestPost = async (context: any) => {
       });
     }
 
+    // Blocos de texto pré-alinhados por coordenada (ver src/lib/chordproExtractor.ts
+    // no cliente) — quando presentes, já trazem os acordes posicionados corretamente
+    // para páginas com camada de texto real (cifra digital), calculados matematicamente
+    // em vez de "adivinhados" visualmente pela IA. Concatenamos ao prompt para que todos
+    // os provedores da cascata (que recebem só texto+imagens, não um campo separado)
+    // vejam essa instrução junto com a regra 0 do prompt.
+    const hasTextBlocks = Array.isArray(textBlocks) && textBlocks.length > 0;
+    const fullPrompt = hasTextBlocks ? `${prompt}\n\n${textBlocks.join('\n\n')}` : prompt;
+
     const providers: { name: string; run: () => Promise<any[]> }[] = [
-      { name: "Gemini", run: () => runGemini(env, images, prompt) },
-      { name: "Cloudflare Workers AI", run: () => runCloudflareWorkersAI(env, images, prompt) },
-      { name: "Groq", run: () => runGroq(env, images, prompt) },
+      { name: "Gemini", run: () => runGemini(env, images, fullPrompt) },
+      { name: "Cloudflare Workers AI", run: () => runCloudflareWorkersAI(env, images, fullPrompt) },
+      { name: "Groq", run: () => runGroq(env, images, fullPrompt) },
     ];
 
     let lastError: any = null;
