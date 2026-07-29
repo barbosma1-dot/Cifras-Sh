@@ -17,6 +17,15 @@ interface ExtractedSong {
   youtube_url?: string;
 }
 
+/** Cifra já salva no caderno com o mesmo nome (título) de uma música recém-extraída do PDF. */
+interface DuplicateMatch {
+  id: string;
+  title: string;
+  artist: string;
+}
+
+const normalizeTitle = (t: string) => (t || '').trim().toLowerCase();
+
 // Reconhece links de YouTube em qualquer formato comum que possa aparecer
 // impresso num PDF (site com QR code, rodapé de cifra, etc.): youtube.com/watch?v=,
 // youtu.be/, youtube.com/embed/, m.youtube.com, com ou sem "https://"/"www.".
@@ -52,6 +61,16 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>('');
   const [extractedSongs, setExtractedSongs] = useState<ExtractedSong[]>([]);
+  const extractedSongsRef = useRef<ExtractedSong[]>([]);
+  useEffect(() => { extractedSongsRef.current = extractedSongs; }, [extractedSongs]);
+  // Cifras já existentes no caderno com o MESMO título de uma música recém-extraída
+  // (busca global, não limitada ao lote — diferente do casamento por import_batch_id
+  // usado na reimportação de um lote já rastreado). Chave = índice em extractedSongs.
+  const [duplicates, setDuplicates] = useState<Record<number, DuplicateMatch>>({});
+  // Escolha do usuário por música: true = substituir a cifra existente encontrada.
+  // Por padrão fica desmarcado (mais seguro: importa como nova em vez de sobrescrever
+  // sem confirmação).
+  const [replaceChoices, setReplaceChoices] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -354,6 +373,12 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       } else if (activeBatchId) {
         await supabase.from('import_batches').update({ status: 'partial' }).eq('id', activeBatchId);
       }
+
+      // Verifica, para cada música extraída, se já existe uma cifra salva com o
+      // mesmo título em QUALQUER lugar do caderno (não só neste lote) — assim o
+      // usuário pode optar por substituir em vez de acabar com duas cifras
+      // duplicadas do mesmo hino.
+      await checkForDuplicateTitles(extractedSongsRef.current);
     } catch (error) {
       console.error('Erro ao processar PDF:', error);
       setNotification({ type: 'error', message: 'Falha ao processar o PDF. Verifique se o arquivo está correto.' });
@@ -457,6 +482,52 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
     }
   };
 
+  /**
+   * Busca, para a lista de músicas recém-extraídas, cifras já salvas no
+   * caderno com título igual (ignorando maiúsculas/minúsculas e espaços nas
+   * pontas). Preenche `duplicates` (índice -> cifra existente) para exibir o
+   * aviso "já existe" em cada cartão, com a opção de substituir.
+   */
+  const checkForDuplicateTitles = async (songs: ExtractedSong[]) => {
+    const titles = Array.from(new Set(songs.map(s => normalizeTitle(s.title)).filter(Boolean)));
+    if (titles.length === 0) return;
+
+    try {
+      // ilike em lote via .or(): funciona bem para o tamanho comum de um PDF
+      // importado (dezenas de músicas); busca só id/título/artista, campos
+      // leves, para não trazer o conteúdo inteiro de cada cifra.
+      const CHUNK = 40;
+      const found: DuplicateMatch[] = [];
+      for (let i = 0; i < titles.length; i += CHUNK) {
+        const chunk = titles.slice(i, i + CHUNK);
+        const orFilter = chunk
+          .map(t => `title.ilike.${t.replace(/[%,]/g, '')}`)
+          .join(',');
+        const { data, error } = await supabase
+          .from('chords')
+          .select('id, title, artist')
+          .or(orFilter);
+        if (error) {
+          console.error('Falha ao verificar cifras já existentes (seguindo sem aviso de duplicidade):', error);
+          continue;
+        }
+        if (data) found.push(...(data as DuplicateMatch[]));
+      }
+
+      const byTitle = new Map<string, DuplicateMatch>();
+      for (const c of found) byTitle.set(normalizeTitle(c.title), c);
+
+      const map: Record<number, DuplicateMatch> = {};
+      songs.forEach((s, idx) => {
+        const match = byTitle.get(normalizeTitle(s.title));
+        if (match) map[idx] = match;
+      });
+      setDuplicates(map);
+    } catch (err) {
+      console.error('Falha ao verificar cifras já existentes (seguindo sem aviso de duplicidade):', err);
+    }
+  };
+
   const importAll = async () => {
     if (extractedSongs.length === 0) return;
     setImporting(true);
@@ -495,15 +566,21 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
 
       const toInsert: any[] = [];
       const toUpdate: { id: string; values: any }[] = [];
-      for (const s of songsToUpsert) {
+      songsToUpsert.forEach((s, idx) => {
         const key = `${(s.title || '').trim().toLowerCase()}|${(s.artist || '').trim().toLowerCase()}`;
-        const existingId = existingByKey.get(key);
+        // Prioridade 1: casamento pelo próprio lote (reimportação de um lote já
+        // rastreado — ver `checkForDuplicateTitles`/tela "Lotes de Importação").
+        const batchExistingId = existingByKey.get(key);
+        // Prioridade 2: o usuário marcou explicitamente "substituir" para esta
+        // música, ao ver o aviso de que já existe uma cifra com esse título.
+        const replaceId = !batchExistingId && replaceChoices[idx] ? duplicates[idx]?.id : undefined;
+        const existingId = batchExistingId || replaceId;
         if (existingId) {
           toUpdate.push({ id: existingId, values: s });
         } else {
           toInsert.push({ ...s, created_at: nowIso });
         }
-      }
+      });
 
       // Insere em lotes menores: um `insert`/`update` único com centenas de músicas
       // (comum ao importar um hinário inteiro) arrisca estourar tamanho de payload.
@@ -716,7 +793,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 </h3>
                 <div className="flex gap-4">
                   <button 
-                    onClick={() => setExtractedSongs([])}
+                    onClick={() => { setExtractedSongs([]); setDuplicates({}); setReplaceChoices({}); }}
                     disabled={loading}
                     className="px-6 py-2 bg-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
@@ -767,6 +844,22 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                         </div>
                       </div>
                     </div>
+
+                    {duplicates[idx] && (
+                      <label className="flex items-start gap-2 mb-3 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!replaceChoices[idx]}
+                          onChange={(e) => setReplaceChoices(prev => ({ ...prev, [idx]: e.target.checked }))}
+                          className="mt-0.5 accent-amber-600"
+                        />
+                        <span className="text-[11px] font-bold text-amber-700 leading-snug">
+                          Já existe uma cifra chamada "{duplicates[idx].title}"{duplicates[idx].artist ? ` (${duplicates[idx].artist})` : ''} no caderno.
+                          <br />
+                          Marque para <u>substituir a existente</u> em vez de salvar como uma nova cifra duplicada.
+                        </span>
+                      </label>
+                    )}
 
                     <div className="bg-slate-50 rounded-xl p-3 mb-3 flex-1">
                       <textarea 
