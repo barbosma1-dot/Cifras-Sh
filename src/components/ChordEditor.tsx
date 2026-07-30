@@ -3,6 +3,7 @@ import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus, Sear
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
 import axios from 'axios';
+import { useBackButton } from '../hooks/useBackButton';
 import PDFImporter from './PDFImporter';
 
 interface ChordEditorProps {
@@ -13,6 +14,7 @@ interface ChordEditorProps {
 }
 
 export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEditorProps) {
+  useBackButton(true, onClose);
   const [loading, setLoading] = useState(false);
   const [scraping, setScraping] = useState(false);
   const [searchingYoutube, setSearchingYoutube] = useState(false);
