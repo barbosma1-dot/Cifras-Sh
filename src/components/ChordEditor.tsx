@@ -372,7 +372,12 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
   ]);
 
   const searchYoutube = async (title?: string, artist?: string) => {
-    const t = title || form.title;
+    const rawTitle = title || form.title;
+    // Alguns títulos vindos de importação antiga têm um trecho de letra colado
+    // entre parênteses/traço (ex.: "Ossos Secos (Espírito Santo Desce)") — isso
+    // some do NOME da música mas não deve ir pra busca do vídeo, senão vira
+    // ruído que desvia o resultado do canal/vídeo oficial.
+    const t = (rawTitle || '').split(/[(\-–—]/)[0].trim() || rawTitle;
     const a = artist || form.artist;
     if (!t) return;
 
