@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save } from 'lucide-react';
+import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -36,6 +36,35 @@ const YOUTUBE_URL_RE =
 function findYoutubeUrlInText(text: string): string | null {
   const match = text.match(YOUTUBE_URL_RE);
   return match ? `https://www.youtube.com/watch?v=${match[1]}` : null;
+}
+
+// Monta a mesma busca já usada com sucesso na edição manual de cifra (ver
+// `searchYoutube` em ChordEditor.tsx): título + artista (quando conhecido) +
+// "letra e cifra". Incluir o artista é o que mais aumenta a precisão — sem
+// ele, títulos comuns (ex. "Digno é o Senhor") costumam trazer o vídeo do
+// ministério/intérprete errado.
+function buildYoutubeQuery(title: string, artist?: string): string {
+  const cleanTitle = (title || '').trim();
+  if (!cleanTitle) return '';
+  const cleanArtist = artist && artist.trim() && artist.trim().toLowerCase() !== 'desconhecido'
+    ? artist.trim()
+    : '';
+  return `${cleanTitle} ${cleanArtist} letra e cifra`.replace(/\s+/g, ' ').trim();
+}
+
+/** Busca no YouTube pelo nome da música + artista e devolve a URL do primeiro resultado (ou null). */
+async function searchYoutubeForSong(title: string, artist?: string): Promise<string | null> {
+  const query = buildYoutubeQuery(title, artist);
+  if (!query) return null;
+  try {
+    const res = await fetch(`/api/youtube-search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.videoUrl || null;
+  } catch (err) {
+    console.error('Erro ao buscar vídeo no YouTube:', err);
+    return null;
+  }
 }
 
 /**
@@ -88,6 +117,9 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   // Por padrão fica desmarcado (mais seguro: importa como nova em vez de sobrescrever
   // sem confirmação).
   const [replaceChoices, setReplaceChoices] = useState<Record<number, boolean>>({});
+  // Índices de `extractedSongs` com uma busca (re)manual de YouTube em andamento
+  // (botão "Buscar" clicado individualmente num card).
+  const [searchingYoutubeIdx, setSearchingYoutubeIdx] = useState<Set<number>>(new Set());
   const [importing, setImporting] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -396,6 +428,11 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       // usuário pode optar por substituir em vez de acabar com duas cifras
       // duplicadas do mesmo hino.
       await checkForDuplicateTitles(extractedSongsRef.current);
+
+      // Busca automaticamente no YouTube (pelo nome da música + artista) o link
+      // de toda música que não tinha nenhum vídeo impresso no PDF.
+      await fillMissingYoutubeLinks(extractedSongsRef.current);
+      setStatus('Concluído!');
     } catch (error) {
       console.error('Erro ao processar PDF:', error);
       setNotification({ type: 'error', message: 'Falha ao processar o PDF. Verifique se o arquivo está correto.' });
@@ -512,6 +549,62 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
    * pontas). Preenche `duplicates` (índice -> cifra existente) para exibir o
    * aviso "já existe" em cada cartão, com a opção de substituir.
    */
+  /**
+   * Para toda música extraída que NÃO teve um link de YouTube encontrado
+   * impresso no PDF, busca automaticamente pelo nome da música + artista e
+   * usa o primeiro resultado — em vez de deixar o campo em branco esperando
+   * o usuário preencher na mão depois. Roda sequencialmente com um pequeno
+   * intervalo entre buscas para não sobrecarregar o endpoint.
+   */
+  const fillMissingYoutubeLinks = async (songs: ExtractedSong[]) => {
+    const pendingIndexes = songs
+      .map((s, i) => (!s.youtube_url && s.title ? i : -1))
+      .filter(i => i >= 0);
+    if (pendingIndexes.length === 0) return;
+
+    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    for (let k = 0; k < pendingIndexes.length; k++) {
+      const idx = pendingIndexes[k];
+      const song = songs[idx];
+      setStatus(`Buscando vídeo no YouTube (${k + 1}/${pendingIndexes.length}): ${song.title}...`);
+      const videoUrl = await searchYoutubeForSong(song.title, song.artist);
+      if (videoUrl) {
+        setExtractedSongs(prev => {
+          if (!prev[idx] || prev[idx].youtube_url) return prev;
+          const next = [...prev];
+          next[idx] = { ...next[idx], youtube_url: videoUrl };
+          return next;
+        });
+      }
+      if (k < pendingIndexes.length - 1) await delay(600);
+    }
+  };
+
+  /** Busca manual (botão "Buscar" no card): repete a busca no YouTube para uma única música da revisão. */
+  const handleManualYoutubeSearch = async (idx: number) => {
+    const song = extractedSongsRef.current[idx];
+    if (!song) return;
+    setSearchingYoutubeIdx(prev => new Set(prev).add(idx));
+    try {
+      const videoUrl = await searchYoutubeForSong(song.title, song.artist);
+      if (videoUrl) {
+        setExtractedSongs(prev => {
+          const next = [...prev];
+          next[idx] = { ...next[idx], youtube_url: videoUrl };
+          return next;
+        });
+      } else {
+        setNotification({ type: 'error', message: `Nenhum vídeo encontrado para "${song.title}".` });
+      }
+    } finally {
+      setSearchingYoutubeIdx(prev => {
+        const next = new Set(prev);
+        next.delete(idx);
+        return next;
+      });
+    }
+  };
+
   const checkForDuplicateTitles = async (songs: ExtractedSong[]) => {
     const titles = Array.from(new Set(songs.map(s => normalizeTitle(s.title)).filter(Boolean)));
     if (titles.length === 0) return;
@@ -561,7 +654,10 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       const songsToUpsert = extractedSongs.map(s => ({
         ...s,
         artist: s.artist || 'Desconhecido',
-        category: s.category || 'Outros',
+        // Sem valor padrão automático: se o usuário não marcou/escreveu nenhuma
+        // categoria na revisão, a cifra é salva sem categoria mesmo — quem
+        // categoriza é o usuário, manualmente, nunca a importação sozinha.
+        category: s.category || '',
         original_key: s.original_key || 'C',
         youtube_url: s.youtube_url || null,
         import_batch_id: importBatchId || null,
@@ -941,16 +1037,31 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                       <div className="flex items-center gap-1.5 text-slate-400 mb-1">
                         <span className="text-[8px] font-black uppercase tracking-widest">Link YouTube</span>
                       </div>
-                      <input
-                        value={song.youtube_url || ''}
-                        onChange={(e) => {
-                          const newSongs = [...extractedSongs];
-                          newSongs[idx] = { ...newSongs[idx], youtube_url: e.target.value };
-                          setExtractedSongs(newSongs);
-                        }}
-                        placeholder="Detectado automaticamente do PDF, se houver"
-                        className="w-full text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/20 outline-none"
-                      />
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          value={song.youtube_url || ''}
+                          onChange={(e) => {
+                            const newSongs = [...extractedSongs];
+                            newSongs[idx] = { ...newSongs[idx], youtube_url: e.target.value };
+                            setExtractedSongs(newSongs);
+                          }}
+                          placeholder="Buscado automaticamente pelo nome + artista"
+                          className="w-full text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/20 outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleManualYoutubeSearch(idx)}
+                          disabled={searchingYoutubeIdx.has(idx) || !song.title}
+                          title="Buscar no YouTube pelo nome da música e artista"
+                          className="flex-shrink-0 p-1.5 bg-red-50 text-red-500 rounded-lg border border-red-100 hover:bg-red-100 transition-colors disabled:opacity-40"
+                        >
+                          {searchingYoutubeIdx.has(idx) ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Search className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap gap-2 mb-3">
