@@ -14,6 +14,7 @@ import {
   BookText,
   FileDown,
   Upload,
+  Copy,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Chord, UserProfile } from '../types';
@@ -54,6 +55,8 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
   const [chordToDelete, setChordToDelete] = useState<string | null>(null);
   const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const [isDuplicatesModalOpen, setIsDuplicatesModalOpen] = useState(false);
+  const [duplicateActionId, setDuplicateActionId] = useState<string | null>(null);
 
   const [isAddChordModalOpen, setIsAddChordModalOpen] = useState(false);
   const [isSelectingExisting, setIsSelectingExisting] = useState(false);
@@ -191,26 +194,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     }
   }
 
-  async function deleteChord(id: string) {
-    const userRole = profile?.role || '';
-    const userEmail = profile?.email || '';
-    const allowedRoles = ['admin', 'coordinator', 'editor', 'moderator'];
-    const canDelete = allowedRoles.includes(userRole);
-    
-    if (!canDelete) {
-      console.warn(`Permission denied for delete: ${userRole}`);
-      return;
-    }
-    
+  async function removeChordFromDb(id: string): Promise<boolean> {
     try {
-      setDeleteConfirming(true);
-      console.log(`Iniciando exclusão da cifra: ${id}`);
-      
-      // 1. Limpar referências
       await supabase.from('chord_book_items').delete().eq('chord_id', id);
       await supabase.from('repertoire_items').delete().eq('chord_id', id);
 
-      // 2. Deletar a cifra principal
       const { error } = await supabase
         .from('chords')
         .delete()
@@ -218,16 +206,28 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
       if (error) {
         console.error('Erro Supabase ao deletar cifra:', error);
-        throw error;
+        return false;
       }
-      
+
       setChords(prev => prev.filter(c => c.id !== id));
+      return true;
     } catch (err: any) {
       console.error('Erro crítico na exclusão:', err);
-    } finally {
-      setDeleteConfirming(false);
-      setChordToDelete(null);
+      return false;
     }
+  }
+
+  async function deleteChord(id: string) {
+    const userRole = profile?.role || '';
+    const allowedRoles = ['admin', 'coordinator', 'editor', 'moderator'];
+    if (!allowedRoles.includes(userRole)) {
+      console.warn(`Permission denied for delete: ${userRole}`);
+      return;
+    }
+    setDeleteConfirming(true);
+    await removeChordFromDb(id);
+    setDeleteConfirming(false);
+    setChordToDelete(null);
   }
 
   const normalizedSearch = (text: string) => {
@@ -239,6 +239,59 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
   const stripChords = (content: string) => {
     return content.replace(/\[.*?\]/g, ' ');
+  };
+
+  // Chave usada para agrupar "a mesma música" nos casos vistos na prática:
+  // cifras vindas de importação de PDF às vezes saem com um trecho de letra
+  // colado no título (ex.: "Ossos Secos" e "Ossos Secos (Espírito Santo
+  // Desce)"), então uma comparação de título EXATO deixa passar essas como
+  // não-duplicadas. Aqui: 1) tira tudo a partir do primeiro "(" ou "-", 2)
+  // normaliza acento/maiúscula, 3) tira espaço extra. "Ossos Secos" e
+  // "Ossos Secos (Espírito Santo Desce)" caem na mesma chave "ossos secos".
+  const duplicateGroupKey = (title: string): string => {
+    const beforeParen = (title || '').split(/[(\-–—]/)[0];
+    return normalizedSearch(beforeParen).replace(/\s+/g, ' ').trim();
+  };
+
+  const duplicateGroups: { key: string; title: string; items: Chord[] }[] = (() => {
+    const map = new Map<string, Chord[]>();
+    for (const c of chords) {
+      const key = duplicateGroupKey(c.title);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return Array.from(map.entries())
+      .filter(([, items]) => items.length > 1)
+      .map(([key, items]) => ({
+        key,
+        title: items[0].title,
+        // Mais recente primeiro — e entre empates, título mais curto primeiro
+        // (o título "poluído" com trecho de letra tende a ser mais longo que
+        // o título limpo, então isso ajuda a sugerir o certo pra manter).
+        items: [...items].sort((a, b) => {
+          const dt = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          if (dt !== 0) return dt;
+          return a.title.length - b.title.length;
+        })
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+  })();
+
+  const deleteAllButFirstInGroup = async (group: { key: string; items: Chord[] }) => {
+    const [, ...rest] = group.items;
+    if (rest.length === 0) return;
+    setDuplicateActionId(`group:${group.key}`);
+    for (const chord of rest) {
+      await removeChordFromDb(chord.id);
+    }
+    setDuplicateActionId(null);
+  };
+
+  const deleteOneDuplicate = async (id: string) => {
+    setDuplicateActionId(id);
+    await removeChordFromDb(id);
+    setDuplicateActionId(null);
   };
 
   const RECENT_FILTER_MS: Record<'1h' | '24h' | '7d', number> = {
@@ -366,6 +419,19 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             >
               <Upload className="w-4 h-4" />
               IMPORTAR PDF
+            </button>
+          )}
+
+          {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && duplicateGroups.length > 0 && (
+            <button
+              onClick={() => setIsDuplicatesModalOpen(true)}
+              className="relative bg-amber-50 text-amber-600 px-5 py-3 rounded-2xl font-black text-xs flex items-center gap-2 hover:bg-amber-500 hover:text-white transition-all active:scale-95"
+            >
+              <Copy className="w-4 h-4" />
+              DUPLICADAS
+              <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
+                {duplicateGroups.length}
+              </span>
             </button>
           )}
           
@@ -720,6 +786,61 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                 {deleteConfirming ? 'Excluindo...' : 'Sim, Excluir'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isDuplicatesModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                <Copy className="w-5 h-5 text-amber-500" /> Cifras Duplicadas
+              </h3>
+              <button onClick={() => setIsDuplicatesModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-5">
+              Cifras agrupadas por nome parecido (mesmo início de título). Revise e exclua as repetidas — a exclusão é permanente.
+            </p>
+
+            {duplicateGroups.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-8">Nenhuma duplicata encontrada. 🎉</p>
+            ) : (
+              <div className="flex flex-col gap-5">
+                {duplicateGroups.map(group => (
+                  <div key={group.key} className="border border-slate-100 rounded-2xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="font-black text-sm text-slate-700">{group.title} <span className="text-slate-400 font-bold">({group.items.length})</span></p>
+                      <button
+                        onClick={() => deleteAllButFirstInGroup(group)}
+                        disabled={duplicateActionId === `group:${group.key}`}
+                        className="text-[10px] font-black text-amber-600 bg-amber-50 hover:bg-amber-500 hover:text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {duplicateActionId === `group:${group.key}` && <Loader2 className="w-3 h-3 animate-spin" />}
+                        Manter só 1, excluir demais
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {group.items.map((chord, i) => (
+                        <div key={chord.id} className={`flex items-center justify-between gap-2 text-xs px-3 py-2 rounded-xl ${i === 0 ? 'bg-green-50' : 'bg-slate-50'}`}>
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-600 truncate">{chord.title}{i === 0 && <span className="ml-2 text-[9px] text-green-600 font-black uppercase">sugerido p/ manter</span>}</p>
+                            <p className="text-slate-400 text-[10px]">{chord.artist || 'Desconhecido'} · {new Date(chord.created_at).toLocaleDateString('pt-BR')}</p>
+                          </div>
+                          <button
+                            onClick={() => deleteOneDuplicate(chord.id)}
+                            disabled={duplicateActionId === chord.id}
+                            className="shrink-0 p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {duplicateActionId === chord.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
