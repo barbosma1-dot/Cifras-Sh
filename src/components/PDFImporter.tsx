@@ -54,7 +54,10 @@ const GENERIC_YOUTUBE_CATEGORIES = new Set(['missa', 'louvor', 'adoração', 'or
 // (ex.: "Santo dos Santos" tem versões de vários ministérios; sem esse
 // contexto a busca cai facilmente na versão mais popular, não na do PDF).
 function buildYoutubeQuery(title: string, artist?: string, category?: string, pdfFileName?: string): string {
-  const cleanTitle = (title || '').trim();
+  // Corta qualquer trecho de letra/observação colado no título entre
+  // parênteses/traço antes de usar como termo de busca (ver mesma lógica em
+  // ChordEditor.tsx) — evita que um título "sujo" prejudique a precisão.
+  const cleanTitle = (title || '').split(/[(\-–—]/)[0].trim() || (title || '').trim();
   if (!cleanTitle) return '';
 
   const parts = [cleanTitle];
@@ -479,6 +482,7 @@ Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinh
 0. ALINHAMENTO PRÉ-CALCULADO (quando presente): Junto com a imagem de uma página, pode vir também um bloco de texto começando com "--- Página N (texto pré-alinhado por coordenadas...)". Esse bloco foi calculado a partir da posição real de cada palavra no PDF (não é um palpite de IA) e já tem os acordes posicionados CORRETAMENTE. Para essa página, use o bloco de texto como fonte de verdade para o conteúdo e a posição dos acordes — copie as linhas de acorde+letra QUASE literalmente, mantendo os colchetes [Acorde] exatamente onde estão. Use a IMAGEM da mesma página apenas para decidir título, artista, categoria, tom, marcação de Refrão/Fim e limpeza de cabeçalhos/rodapés — NÃO para reposicionar acordes que já vieram prontos no bloco de texto. Se uma página NÃO tiver bloco de texto pré-alinhado correspondente, ela é uma página escaneada/foto — nesse caso siga a regra 3 abaixo normalmente, usando só a imagem, inclusive para o posicionamento dos acordes.
 1. VARREDURA COMPLETA (CRÍTICO): Cada lote pode conter VÁRIAS páginas e VÁRIAS músicas diferentes — inclusive mais de uma música na MESMA página. Percorra TODAS as páginas do lote, do início ao fim, e retorne um objeto para CADA música encontrada. NUNCA pare depois de extrair a primeira música do lote — isso é o erro mais grave que você pode cometer aqui. Antes de responder, confira: "processei a última página deste lote, e há um objeto no array para cada música que vi, sem exceção?".
 2. CONTINUIDADE MULTI-PÁGINA: Se uma música começa em uma página e continua na próxima, MESCLE-AS em um único objeto. Não crie dois registros para a mesma música.
+2b. UMA MÚSICA = UM OBJETO, SEMPRE (ERRO GRAVE E FREQUENTE): Nunca crie mais de um objeto para a mesma música só porque o refrão se repete várias vezes, porque ela tem mais de uma parte (ex.: "1ª voz"/"2ª voz", introdução + corpo), ou porque o título aparece de novo no meio da letra. Todas as repetições do refrão entram DENTRO do mesmo "content" (marcadas com "Refrão:"/"Fim", ver regra abaixo), nunca como uma música separada. O campo "title" deve ser APENAS o nome da música exatamente como impresso no cabeçalho/título da página — NUNCA cole um trecho de letra, do refrão, ou qualquer texto entre parênteses tirado do corpo da música dentro do título (ex.: título correto: "Ossos Secos"; ERRADO: "Ossos Secos (Espírito Santo Desce)"). Se, olhando o PDF inteiro, a mesma música aparecer impressa mais de uma vez (reimpressão, versão em outro tom, etc.), ainda assim devolva só UM objeto para ela — use a versão mais completa/legível.
 3. ALINHAMENTO CHORDPRO (CRÍTICO — ERRO MUITO COMUM): A maioria dos PDFs de origem imprime o acorde numa linha SEPARADA, ACIMA da linha de letra, alinhado pela posição horizontal (coluna) da sílaba onde ele cai — esse é só o jeito de IMPRIMIR, não o formato de saída. Você NUNCA deve reproduzir essas duas linhas separadamente no "content". Sempre que uma linha de acordes estiver posicionada acima de uma linha de LETRA (texto cantável), você deve: (a) olhar a posição horizontal de cada acorde em relação às letras da linha de baixo, (b) FUNDIR as duas linhas em UMA ÚNICA linha de saída, inserindo cada acorde entre colchetes imediatamente antes do caractere/sílaba sobre a qual ele estava posicionado, e (c) descartar a linha de acordes separada — ela não deve sobrar no resultado. Isso vale mesmo que o espaçamento do PDF pareça "impreciso"; use o seu melhor julgamento de qual sílaba cada acorde acompanha.
    Exemplo de ENTRADA (duas linhas, como aparece no PDF):
      C                D                Em   G
@@ -507,7 +511,7 @@ Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinh
 ### FORMATO DE SAÍDA (Obrigatório):
 Retorne um ARRAY JSON de objetos seguindo estritamente este esquema:
 [{
-  "title": "TÍTULO DA MÚSICA (Letras Maiúsculas)",
+  "title": "TÍTULO DA MÚSICA (Letras Maiúsculas) — só o nome, NUNCA um trecho de letra/refrão entre parênteses",
   "artist": "Autor ou Ministério (Ex: Pe. Zezinho, Shalom)",
   "category": "",
   "original_key": "Tom (Ex: G, Am, F#m)",
