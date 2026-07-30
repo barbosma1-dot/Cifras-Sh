@@ -38,23 +38,52 @@ function findYoutubeUrlInText(text: string): string | null {
   return match ? `https://www.youtube.com/watch?v=${match[1]}` : null;
 }
 
+// Categorias litúrgicas "genéricas" que não ajudam a identificar a música —
+// toda cifra tem uma dessas. O que sobra da lista de categorias depois de
+// tirá-las costuma ser o nome do álbum/coletânea/ministério (regra 6b do
+// prompt acima), um critério de busca bem mais preciso que "artista:
+// Desconhecido".
+const GENERIC_YOUTUBE_CATEGORIES = new Set(['missa', 'louvor', 'adoração', 'oração', 'ação de graças', 'outros']);
+
 // Monta a mesma busca já usada com sucesso na edição manual de cifra (ver
 // `searchYoutube` em ChordEditor.tsx): título + artista (quando conhecido) +
-// "letra e cifra". Incluir o artista é o que mais aumenta a precisão — sem
-// ele, títulos comuns (ex. "Digno é o Senhor") costumam trazer o vídeo do
-// ministério/intérprete errado.
-function buildYoutubeQuery(title: string, artist?: string): string {
+// nome do álbum (categoria não-genérica) + nome do PDF de origem + "letra e
+// cifra". O nome do PDF é o critério mais preciso disponível aqui: costuma
+// trazer o nome do hinário/coletânea/ministério impresso no arquivo, o que
+// desempata entre várias versões da mesma música por artistas diferentes
+// (ex.: "Santo dos Santos" tem versões de vários ministérios; sem esse
+// contexto a busca cai facilmente na versão mais popular, não na do PDF).
+function buildYoutubeQuery(title: string, artist?: string, category?: string, pdfFileName?: string): string {
   const cleanTitle = (title || '').trim();
   if (!cleanTitle) return '';
+
+  const parts = [cleanTitle];
+
   const cleanArtist = artist && artist.trim() && artist.trim().toLowerCase() !== 'desconhecido'
     ? artist.trim()
     : '';
-  return `${cleanTitle} ${cleanArtist} letra e cifra`.replace(/\s+/g, ' ').trim();
+  if (cleanArtist) parts.push(cleanArtist);
+
+  if (category) {
+    const albumCategories = category
+      .split(',')
+      .map(c => c.trim())
+      .filter(c => c && !GENERIC_YOUTUBE_CATEGORIES.has(c.toLowerCase()));
+    parts.push(...albumCategories);
+  }
+
+  if (pdfFileName) {
+    const cleanName = pdfFileName.replace(/\.pdf$/i, '').replace(/[_\-.]+/g, ' ').trim();
+    if (cleanName) parts.push(cleanName);
+  }
+
+  parts.push('letra e cifra');
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
-/** Busca no YouTube pelo nome da música + artista e devolve a URL do primeiro resultado (ou null). */
-async function searchYoutubeForSong(title: string, artist?: string): Promise<string | null> {
-  const query = buildYoutubeQuery(title, artist);
+/** Busca no YouTube pelo nome da música + artista/álbum/PDF de origem e devolve a URL do primeiro resultado (ou null). */
+async function searchYoutubeForSong(title: string, artist?: string, category?: string, pdfFileName?: string): Promise<string | null> {
+  const query = buildYoutubeQuery(title, artist, category, pdfFileName);
   if (!query) return null;
   try {
     const res = await fetch(`/api/youtube-search?q=${encodeURIComponent(query)}`);
@@ -567,7 +596,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       const idx = pendingIndexes[k];
       const song = songs[idx];
       setStatus(`Buscando vídeo no YouTube (${k + 1}/${pendingIndexes.length}): ${song.title}...`);
-      const videoUrl = await searchYoutubeForSong(song.title, song.artist);
+      const videoUrl = await searchYoutubeForSong(song.title, song.artist, song.category, file?.name);
       if (videoUrl) {
         setExtractedSongs(prev => {
           if (!prev[idx] || prev[idx].youtube_url) return prev;
@@ -586,7 +615,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
     if (!song) return;
     setSearchingYoutubeIdx(prev => new Set(prev).add(idx));
     try {
-      const videoUrl = await searchYoutubeForSong(song.title, song.artist);
+      const videoUrl = await searchYoutubeForSong(song.title, song.artist, song.category, file?.name);
       if (videoUrl) {
         setExtractedSongs(prev => {
           const next = [...prev];
