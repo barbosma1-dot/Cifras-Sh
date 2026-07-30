@@ -17,6 +17,7 @@ import {
   Copy,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useBackButton } from '../hooks/useBackButton';
 import { Chord, UserProfile } from '../types';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
@@ -54,8 +55,10 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const [recentFilter, setRecentFilter] = useState<'all' | '1h' | '24h' | '7d'>('all');
 
   const [chordToDelete, setChordToDelete] = useState<string | null>(null);
+  useBackButton(!!chordToDelete, () => setChordToDelete(null));
   const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [isDuplicatesModalOpen, setIsDuplicatesModalOpen] = useState(false);
+  useBackButton(isDuplicatesModalOpen, () => setIsDuplicatesModalOpen(false));
   const [duplicateActionId, setDuplicateActionId] = useState<string | null>(null);
 
   const [isAddChordModalOpen, setIsAddChordModalOpen] = useState(false);
