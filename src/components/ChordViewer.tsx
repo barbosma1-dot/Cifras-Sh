@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useBackButton } from '../hooks/useBackButton';
 import { 
   X, 
   Settings2, 
@@ -203,6 +204,7 @@ interface ChordViewerProps {
 }
 
 export default function ChordViewer({ chord, onClose, allChords, onSwitchChord, onEdit }: ChordViewerProps) {
+  useBackButton(true, onClose);
   const [semitones, setSemitones] = useState(0);
   const [useFlats, setUseFlats] = useState(false);
   const [notationSystem, setNotationSystem] = useState<'english' | 'latin'>('english');
