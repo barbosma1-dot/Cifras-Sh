@@ -335,6 +335,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       // sabermos com certeza qual foi a "última música" sem depender de timing.
       let localAllSongs: ExtractedSong[] = [];
       let previousPageLastTitleKey: string | null = null;
+      let previousPageLastTitleRaw: string | null = null;
 
       // Espaçamento mínimo real entre chamadas à IA, calculado para ficar com folga
       // abaixo do limite de requisições por minuto do tier gratuito (evita bater no
@@ -409,7 +410,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
           while (attempt < maxAttempts) {
             await waitForRateLimit();
             try {
-              extracted = await extractWithGemini(currentBatch, currentTextBlocks);
+              extracted = await extractWithGemini(currentBatch, currentTextBlocks, previousPageLastTitleRaw);
               break;
             } catch (err: any) {
               attempt++;
@@ -462,6 +463,9 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
 
             previousPageLastTitleKey = localAllSongs.length > 0
               ? normalizeTitle(localAllSongs[localAllSongs.length - 1].title)
+              : null;
+            previousPageLastTitleRaw = localAllSongs.length > 0
+              ? localAllSongs[localAllSongs.length - 1].title
               : null;
 
             // Atualiza incrementalmente: assim as músicas já extraídas ficam visíveis e
@@ -534,10 +538,13 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
     }
   };
 
-  const extractWithGemini = async (images: string[], textBlocks: string[] = []): Promise<ExtractedSong[]> => {
+  const extractWithGemini = async (images: string[], textBlocks: string[] = [], continuationTitle?: string | null): Promise<ExtractedSong[]> => {
     try {
+      const continuationNote = continuationTitle
+        ? `\n\n### CONTEXTO DE CONTINUIDADE (IMPORTANTE): A última música extraída da página ANTERIOR a esta foi "${continuationTitle}". Se ESTA página NÃO tiver nenhum cabeçalho/título de música novo impresso no topo — ou seja, o conteúdo parece continuar direto de onde a página anterior parou (mais versos, mais do refrão, uma ponte, um final) — então retorne o título desta música EXATAMENTE como "${continuationTitle}" (mesma grafia, sem alterar), para que o sistema consiga juntar as duas partes automaticamente. Só use um título DIFERENTE se esta página claramente mostra o INÍCIO de uma música nova, com um cabeçalho/título novo impresso.`
+        : '';
       const prompt = `Você é um Analista de Cifras Litúrgicas sênior especializado em OCR e transcrição musical de ALTA FIDELIDADE para o formato ChordPro (.chopro).
-Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinhamento dos acordes com as sílabas seja PERFEITO.
+Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinhamento dos acordes com as sílabas seja PERFEITO.${continuationNote}
 
 ### REGRAS DE OURO DE OCR (CRÍTICO):
 0. ALINHAMENTO PRÉ-CALCULADO (quando presente): Junto com a imagem de uma página, pode vir também um bloco de texto começando com "--- Página N (texto pré-alinhado por coordenadas...)". Esse bloco foi calculado a partir da posição real de cada palavra no PDF (não é um palpite de IA) e já tem os acordes posicionados CORRETAMENTE. Para essa página, use o bloco de texto como fonte de verdade para o conteúdo e a posição dos acordes — copie as linhas de acorde+letra QUASE literalmente, mantendo os colchetes [Acorde] exatamente onde estão. Use a IMAGEM da mesma página apenas para decidir título, artista, categoria, tom, marcação de Refrão/Fim e limpeza de cabeçalhos/rodapés — NÃO para reposicionar acordes que já vieram prontos no bloco de texto. Se uma página NÃO tiver bloco de texto pré-alinhado correspondente, ela é uma página escaneada/foto — nesse caso siga a regra 3 abaixo normalmente, usando só a imagem, inclusive para o posicionamento dos acordes.
