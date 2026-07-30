@@ -24,7 +24,18 @@ interface DuplicateMatch {
   artist: string;
 }
 
-const normalizeTitle = (t: string) => (t || '').trim().toLowerCase();
+// Normaliza um título para comparação de duplicatas: sem acento, minúsculo,
+// e SEM qualquer coisa a partir do primeiro "(", "-", "–" ou "—" — porque na
+// prática o mesmo PDF às vezes gera títulos "sujos" com um trecho de letra
+// colado (ex.: "Ossos Secos" vs "Ossos Secos (Espírito Santo Desce)"), e uma
+// comparação de título 100% exato deixava passar isso como música "nova".
+const normalizeTitle = (t: string) => (t || '')
+  .split(/[(\-–—]/)[0]
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .toLowerCase()
+  .replace(/\s+/g, ' ');
 
 // Reconhece links de YouTube em qualquer formato comum que possa aparecer
 // impresso num PDF (site com QR code, rodapé de cifra, etc.): youtube.com/watch?v=,
@@ -651,7 +662,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       for (let i = 0; i < titles.length; i += CHUNK) {
         const chunk = titles.slice(i, i + CHUNK);
         const orFilter = chunk
-          .map(t => `title.ilike.${t.replace(/[%,]/g, '')}`)
+          .map(t => `title.ilike.${t.replace(/[%,*]/g, '')}*`)
           .join(',');
         const { data, error } = await supabase
           .from('chords')
@@ -673,6 +684,15 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
         if (match) map[idx] = match;
       });
       setDuplicates(map);
+      // Padrão seguro: se já existe uma cifra parecida, marca "substituir" por
+      // padrão em vez de deixar desmarcado — evita que o usuário esqueça de
+      // marcar a caixa e acabe criando mais uma duplicata sem querer. Quem
+      // realmente quiser manter as duas como músicas separadas desmarca.
+      setReplaceChoices(prev => {
+        const next = { ...prev };
+        Object.keys(map).forEach(idxStr => { next[Number(idxStr)] = true; });
+        return next;
+      });
     } catch (err) {
       console.error('Falha ao verificar cifras já existentes (seguindo sem aviso de duplicidade):', err);
     }
