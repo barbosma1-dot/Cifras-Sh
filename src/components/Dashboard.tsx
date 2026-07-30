@@ -25,6 +25,7 @@ import MissionView from './MissionView';
 import ProfileView from './ProfileView';
 import AdminSettings from './AdminSettings';
 import ImportBatchesList from './ImportBatchesList';
+import { useBackButton } from '../hooks/useBackButton';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
@@ -89,6 +90,19 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
       // significa que a última tela não será lembrada dessa vez.
     }
   }, [activeTab, selectedChordBookId, selectedMissionId, selectedRepertoireId]);
+
+  // Botão voltar do Android: só sai do app quando já está na aba "Cifras"
+  // sem nenhum caderno/missão/repertório selecionado (a "página inicial").
+  // Fora disso, volta pra lá em vez de fechar o app. Telas em modal (ver
+  // cifra, editar, importar PDF) já lidam com o botão voltar sozinhas — ver
+  // `useBackButton` em ChordViewer/ChordEditor/PDFImporter.
+  const isAwayFromHome = activeTab !== 'chords' || !!selectedChordBookId || !!selectedMissionId || !!selectedRepertoireId;
+  useBackButton(isAwayFromHome, () => {
+    if (selectedChordBookId) setSelectedChordBookId(null);
+    else if (selectedMissionId) setSelectedMissionId(null);
+    else if (selectedRepertoireId) setSelectedRepertoireId(null);
+    else setActiveTab('chords');
+  });
 
   const { isInstallable, install } = usePWAInstall();
   const sidebarRef = useRef<HTMLDivElement>(null);
