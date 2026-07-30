@@ -320,6 +320,20 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       const batchSize = 1;
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+      // Como cada chamada de IA processa UMA página isolada (ver comentário
+      // acima sobre `batchSize = 1`), a IA da página N+1 nunca viu a página N —
+      // então a regra do prompt "mescle música que continua na próxima página"
+      // não tem como funcionar sozinha entre chamadas diferentes. A mesclagem
+      // de continuidade entre páginas acontece AQUI, no app: se a primeira
+      // música extraída da página atual tem o mesmo título (normalizado) da
+      // última música extraída da página anterior, tratamos como a MESMA
+      // música continuando, e concatenamos o conteúdo em vez de criar uma
+      // segunda cifra. `localAllSongs` espelha o state `extractedSongs` de
+      // forma síncrona (o state real só atualiza depois de um render), pra
+      // sabermos com certeza qual foi a "última música" sem depender de timing.
+      let localAllSongs: ExtractedSong[] = [];
+      let previousPageLastTitleKey: string | null = null;
+
       // Espaçamento mínimo real entre chamadas à IA, calculado para ficar com folga
       // abaixo do limite de requisições por minuto do tier gratuito (evita bater no
       // 429 em vez de só reagir a ele depois).
@@ -413,10 +427,44 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
           }
 
           if (extracted && extracted.length > 0) {
+            let toAppend = extracted;
+
+            // Continuação da página anterior: a primeira música desta página
+            // tem o mesmo título (normalizado) da última música da página
+            // anterior — funde no lugar de criar uma segunda cifra. Só faz
+            // sentido comparar com a música mais recente (adjacente), nunca
+            // com músicas de páginas mais distantes.
+            if (previousPageLastTitleKey && localAllSongs.length > 0
+                && normalizeTitle(extracted[0].title) === previousPageLastTitleKey) {
+              const lastIdx = localAllSongs.length - 1;
+              const merged: ExtractedSong = {
+                ...localAllSongs[lastIdx],
+                content: `${localAllSongs[lastIdx].content}\n${extracted[0].content}`.trim(),
+                category: localAllSongs[lastIdx].category || extracted[0].category,
+                youtube_url: localAllSongs[lastIdx].youtube_url || extracted[0].youtube_url,
+              };
+              localAllSongs[lastIdx] = merged;
+              setExtractedSongs(prev => {
+                if (prev.length === 0) return prev;
+                const next = [...prev];
+                next[lastIdx] = merged;
+                return next;
+              });
+              toAppend = extracted.slice(1);
+            }
+
+            if (toAppend.length > 0) {
+              localAllSongs = [...localAllSongs, ...toAppend];
+              setExtractedSongs(prev => [...prev, ...toAppend]);
+            }
+
+            previousPageLastTitleKey = localAllSongs.length > 0
+              ? normalizeTitle(localAllSongs[localAllSongs.length - 1].title)
+              : null;
+
             // Atualiza incrementalmente: assim as músicas já extraídas ficam visíveis e
             // salváveis na hora, e não se perdem se o restante do PDF falhar ou se o
             // navegador for fechado no meio de um documento longo.
-            setExtractedSongs(prev => [...prev, ...extracted]);
             consecutiveFailures = 0;
           }
 
