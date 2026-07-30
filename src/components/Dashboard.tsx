@@ -45,17 +45,50 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ user, profile, setProfile }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState('chords');
+  // Restaura a última aba/tela aberta ao carregar — sem isso, todo Android
+  // que mata o processo do PWA em segundo plano (comportamento normal do
+  // sistema pra economizar memória, não é um "fechar" real do app) faz o
+  // usuário voltar pra tela inicial ao reabrir, mesmo estando "no meio" de
+  // uma tarefa. Guardamos só em localStorage (não em cada tecla digitada em
+  // busca/formulário — isso continua se perdendo, só a ABA/TELA persiste).
+  const LAST_VIEW_KEY = 'cifrash:lastView';
+  const readLastView = (): { tab: string; bookId: string | null; missionId: string | null; repertoireId: string | null } | null => {
+    try {
+      const raw = localStorage.getItem(LAST_VIEW_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+  const lastView = readLastView();
+
+  const [activeTab, setActiveTab] = useState(lastView?.tab || 'chords');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   
   // New States for filtering
-  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
-  const [selectedChordBookId, setSelectedChordBookId] = useState<string | null>(null);
-  const [selectedRepertoireId, setSelectedRepertoireId] = useState<string | null>(null);
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(lastView?.missionId || null);
+  const [selectedChordBookId, setSelectedChordBookId] = useState<string | null>(lastView?.bookId || null);
+  const [selectedRepertoireId, setSelectedRepertoireId] = useState<string | null>(lastView?.repertoireId || null);
   const [triggerNewChord, setTriggerNewChord] = useState(0);
+
+  // Salva a cada mudança de aba/seleção — leve o bastante pra rodar em todo
+  // clique, sem precisar de debounce.
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({
+        tab: activeTab,
+        bookId: selectedChordBookId,
+        missionId: selectedMissionId,
+        repertoireId: selectedRepertoireId,
+      }));
+    } catch {
+      // Storage indisponível (modo privado, cota cheia) — não é crítico, só
+      // significa que a última tela não será lembrada dessa vez.
+    }
+  }, [activeTab, selectedChordBookId, selectedMissionId, selectedRepertoireId]);
 
   const { isInstallable, install } = usePWAInstall();
   const sidebarRef = useRef<HTMLDivElement>(null);
