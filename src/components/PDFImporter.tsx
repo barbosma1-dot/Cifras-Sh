@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { extractPreAlignedPageText } from '../lib/chordproExtractor';
+import { useBackButton } from '../hooks/useBackButton';
 
 // Configuração do worker do PDF.js
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -146,6 +147,7 @@ interface PDFImporterProps {
 const COMMON_CATEGORIES = ['Missa', 'Louvor', 'Adoração', 'Oração', 'Ação de Graças', 'Outros'];
 
 export default function PDFImporter({ onClose, onImportComplete, bookId, missionId, reimportBatchId, reimportFile }: PDFImporterProps) {
+  useBackButton(true, onClose);
   const [file, setFile] = useState<File | null>(reimportFile || null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>('');
