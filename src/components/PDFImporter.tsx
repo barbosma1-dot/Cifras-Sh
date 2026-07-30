@@ -38,6 +38,23 @@ function findYoutubeUrlInText(text: string): string | null {
   return match ? `https://www.youtube.com/watch?v=${match[1]}` : null;
 }
 
+/**
+ * Rede de segurança para a REGRA DE COLCHETE (ver prompt, regras 4 e 9): a IA
+ * às vezes ignora a instrução e deixa a barra de compasso "|" ou o símbolo de
+ * repetição "%" soltos, fora de colchete (ex.: "Intro: | [F/A] [Bb] | [Eb]").
+ * Em vez de depender só do prompt, corrigimos isso aqui de forma determinística:
+ * qualquer "|" ou "%" que apareça como token isolado (cercado por espaço/início/
+ * fim de linha) e que AINDA NÃO esteja dentro de colchetes vira "[|]" / "[%]".
+ * Um "|" ou "%" que já esteja dentro de "[...]" (precedido por "[") não bate no
+ * regex — por isso a função é segura de rodar mais de uma vez sem duplicar.
+ */
+function wrapBareBarSymbols(content: string): string {
+  return content
+    .split('\n')
+    .map(line => line.replace(/(^|\s)([|%])(?=\s|$)/g, '$1[$2]'))
+    .join('\n');
+}
+
 interface PDFImporterProps {
   onClose: () => void;
   onImportComplete: () => void;
@@ -480,6 +497,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       // chamada de IA.
       return songs.map(s => ({
         ...s,
+        content: s.content ? wrapBareBarSymbols(s.content) : s.content,
         youtube_url: s.youtube_url || (s.content ? findYoutubeUrlInText(s.content) || '' : '')
       }));
     } catch (error: any) {
