@@ -109,6 +109,30 @@ async function callGeminiWithKey(apiKey: string, images: string[], prompt: strin
       config: {
         temperature: 0.1,
         responseMimeType: "application/json",
+        // CRÍTICO: sem um responseSchema explícito exigindo um ARRAY, o modo JSON
+        // sozinho ("responseMimeType") não impede o Gemini de devolver um único
+        // objeto solto (em vez de um array com 1 item) quando a página tem só uma
+        // música — e, pior, de "colapsar" silenciosamente para o objeto da primeira
+        // música quando a página tinha mais de uma. safeParseSongs() já sabia tratar
+        // um objeto solto como "[objeto]", mas isso não ajuda se o array nunca
+        // chegou a existir de fato na resposta do modelo. Forçar o schema como array
+        // aqui é o único jeito de garantir, na saída do próprio modelo (não só no
+        // parser depois), que todas as músicas da página apareçam.
+        responseSchema: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              title: { type: "STRING" },
+              artist: { type: "STRING" },
+              category: { type: "STRING" },
+              original_key: { type: "STRING" },
+              content: { type: "STRING" },
+              youtube_url: { type: "STRING" }
+            },
+            required: ["title", "content"]
+          }
+        },
         // Sem isso, um lote com várias músicas longas podia estourar o limite padrão
         // de tokens de saída do modelo e ser cortado no meio — o que ora quebrava o
         // JSON (caindo no rascunho bruto), ora silenciosamente resultava em só a
