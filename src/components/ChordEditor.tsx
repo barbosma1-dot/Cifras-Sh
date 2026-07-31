@@ -511,7 +511,14 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
                 .upload(filePath, file, {
                   cacheControl: '3600',
                   upsert: false,
-                  contentType: file.type || undefined,
+                  // Arquivos .doc antigos costumam chegar do input do celular
+                  // com `file.type` vazio — mandar contentType undefined pro
+                  // Supabase Storage nesse caso pode fazer o bucket (se tiver
+                  // qualquer restrição de MIME configurada) rejeitar o envio
+                  // de um jeito que o navegador reporta como "Failed to
+                  // fetch" em vez de um erro claro. Um fallback genérico
+                  // evita isso.
+                  contentType: file.type || 'application/octet-stream',
                 });
               uploadError = result.error;
             } catch (networkErr: any) {
@@ -607,8 +614,19 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
       console.error('Erro ao salvar cifra:', error);
       let errorMsg = error.message || 'Verifique sua conexão';
 
-      if (errorMsg.startsWith('FAILED_TO_FETCH::') || errorMsg === 'Failed to fetch') {
+      if (errorMsg.startsWith('FAILED_TO_FETCH::')) {
         errorMsg = 'Não foi possível conectar ao Supabase (Failed to fetch). Causas comuns: 1) o projeto Supabase está pausado por inatividade (acesse o painel e reative); 2) as variáveis VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY não estão configuradas no Cloudflare Pages; 3) o domínio do site não está liberado em CORS no Supabase; 4) sua internet caiu no meio do envio.';
+      } else if (errorMsg.includes('Failed to fetch')) {
+        // Esse é o caso específico do print: o PRECHECK (listar o bucket) já
+        // tinha passado — ou seja, o bucket existe e é legível — mas o envio
+        // do ARQUIVO em si falhou como se fosse rede. Quando isso acontece
+        // só com anexos de texto/PDF/doc e não com áudio, o suspeito nº 1 é
+        // uma restrição de tipo de arquivo (MIME) ou tamanho configurada
+        // especificamente no bucket "attachments" no Supabase, que faz a
+        // resposta de erro do Storage vir sem cabeçalho CORS — e aí o
+        // navegador reporta isso genericamente como "Failed to fetch" em vez
+        // de mostrar o motivo real da rejeição.
+        errorMsg = `${errorMsg} — Como esse erro aconteceu ao subir o arquivo em si (a checagem inicial do bucket já tinha passado), o mais provável é que o bucket "attachments" no painel do Supabase (Storage → attachments → editar bucket) tenha uma restrição de "Allowed MIME types" ou "File size limit" que está rejeitando esse arquivo (.doc). Abra o bucket lá e remova essas restrições (ou adicione "application/msword" e "application/octet-stream" à lista permitida), ou tente reenviar o mesmo arquivo salvo como .pdf/.txt.`;
       } else if (errorMsg.startsWith('PRECHECK::')) {
         errorMsg = `Erro real encontrado: ${errorMsg.replace('PRECHECK::', '')}. O bucket "attachments" provavelmente não existe no seu projeto Supabase, ou não está com a política de leitura pública ativada. Vá em Storage no painel do Supabase e confira.`;
       } else if (errorMsg.includes('Bucket not found')) {
