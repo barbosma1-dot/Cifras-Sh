@@ -2,51 +2,85 @@ import { useEffect, useRef } from 'react';
 
 /**
  * Faz o botão físico/gesto de "voltar" do Android fechar uma tela ou modal
- * do APP em vez de sair do PWA — só sai do app quando não há nada "aberto"
- * (ou seja, quando não há nenhum useBackButton ativo no momento).
+ * do APP em vez de sair do PWA — só sai do app quando não há nada "aberto".
  *
- * Como funciona: como o app não usa rotas de URL de verdade (é tudo estado
- * de React), a gente simula uma "pilha" usando o histórico do navegador.
- * Quando `isActive` fica true, empilha UMA entrada de histórico. O botão
- * voltar do Android sempre dispara o evento `popstate` do navegador ANTES de
- * fechar o app — então, se ainda temos uma entrada nossa empilhada, a gente
- * intercepta esse evento e chama `onBack()` (fecha a tela/modal) em vez de
- * deixar o navegador continuar e o Android fechar o app. Quando não há
- * nenhuma tela "aberta" com este hook, não empilhamos nada, e o botão voltar
- * volta a se comportar normalmente (sai do app), exatamente como pedido.
+ * IMPLEMENTAÇÃO (v2): uma pilha ÚNICA e global de handlers, compartilhada por
+ * todos os componentes que usam este hook, com UM SÓ listener de `popstate`
+ * registrado uma vez.
  *
- * Uso: dentro do componente do modal/tela, chame
- *   useBackButton(isOpen, () => setIsOpen(false));
- * — funciona tanto para "tela cheia" (ex.: ChordViewer, edição de cifra)
- * quanto para modais (ex.: Importador de PDF, Duplicadas).
+ * Por que não é "cada tela empilha sua própria entrada de histórico e chama
+ * history.back() ao fechar" (implementação anterior): quando uma tela fecha
+ * E outra abre no mesmo instante (ex.: botão "Editar" dentro da visualização
+ * de cifra — fecha o Viewer e abre o Editor na mesma função) o
+ * `history.back()` do fechamento é ASSÍNCRONO e corria contra o
+ * `pushState()` da tela nova abrindo logo depois. Resultado: o `popstate`
+ * atrasado do back() disparava DEPOIS que o Editor já tinha registrado seu
+ * próprio listener, e era interpretado como "usuário apertou voltar",
+ * fechando o Editor imediatamente após abrir.
+ *
+ * Esta versão nunca chama `history.back()`/`forward()` programaticamente.
+ * Ela só empilha UMA entrada de histórico por vez (quando a pilha lógica sai
+ * de vazia para não-vazia) e, ao fechar uma tela por qualquer motivo que não
+ * seja o botão voltar (clique no X, navegação para outra tela), apenas
+ * remove o handler da pilha em memória — sem tocar no histórico do
+ * navegador. A entrada física de histórico correspondente fica "sobrando"
+ * até o próximo voltar de verdade, o que é inofensivo: ela só garante que
+ * ainda exista uma entrada pra interceptar enquanto a pilha lógica não
+ * estiver vazia.
  */
+type BackHandler = () => void;
+
+const backStack: BackHandler[] = [];
+let guardPushed = false;
+let listenerRegistered = false;
+
+function ensureGuardPushed() {
+  if (!guardPushed) {
+    window.history.pushState({ __appBackGuard: true, __depth: backStack.length }, '');
+    guardPushed = true;
+  }
+}
+
+function ensureListener() {
+  if (listenerRegistered) return;
+  listenerRegistered = true;
+  window.addEventListener('popstate', () => {
+    // A entrada que motivou este popstate foi consumida pelo navegador —
+    // qualquer entrada nossa "sobrando" de fechamentos programáticos
+    // anteriores também já era, então tratamos a pilha lógica como fonte de
+    // verdade a partir daqui.
+    guardPushed = false;
+    const handler = backStack.pop();
+    if (handler) {
+      handler();
+    }
+    // Ainda há telas abertas na pilha lógica: garante uma entrada de
+    // histórico pra interceptar o PRÓXIMO botão voltar também. Se a pilha
+    // ficou vazia, não empilha nada — o próximo voltar sai do app mesmo,
+    // como esperado.
+    if (backStack.length > 0) {
+      ensureGuardPushed();
+    }
+  });
+}
+
 export function useBackButton(isActive: boolean, onBack: () => void) {
-  // Guarda a versão mais recente de onBack sem precisar re-executar o efeito
-  // de pushState toda vez que a função mudar de identidade entre renders.
   const onBackRef = useRef(onBack);
   useEffect(() => { onBackRef.current = onBack; }, [onBack]);
 
   useEffect(() => {
     if (!isActive) return;
 
-    window.history.pushState({ __appBackGuard: true }, '');
-
-    const handlePopState = () => {
-      onBackRef.current();
-    };
-    window.addEventListener('popstate', handlePopState);
+    ensureListener();
+    const handler: BackHandler = () => onBackRef.current();
+    backStack.push(handler);
+    ensureGuardPushed();
 
     return () => {
-      window.removeEventListener('popstate', handlePopState);
-      // Se a tela foi fechada por outro motivo que não o botão voltar (ex.:
-      // clique no "X", clique fora do modal), a entrada que empilhamos ainda
-      // está lá — sem isso, o PRÓXIMO toque no botão voltar só "consumiria"
-      // essa entrada fantasma sem fazer nada visível, e o usuário precisaria
-      // apertar voltar duas vezes. `history.back()` consome essa entrada
-      // programaticamente pra manter a pilha limpa.
-      if (window.history.state?.__appBackGuard) {
-        window.history.back();
-      }
+      const idx = backStack.lastIndexOf(handler);
+      if (idx !== -1) backStack.splice(idx, 1);
+      // Deliberadamente NÃO mexe no histórico do navegador aqui — ver
+      // explicação no topo do arquivo.
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
