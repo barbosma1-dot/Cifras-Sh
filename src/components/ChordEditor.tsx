@@ -3,8 +3,73 @@ import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus, Sear
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
 import axios from 'axios';
+import * as tus from 'tus-js-client';
+import { supabaseUrl } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
 import PDFImporter from './PDFImporter';
+
+// Upload resumível (protocolo TUS) para o Storage do Supabase.
+//
+// Por que trocar o `supabase.storage.upload()` padrão: ele manda o arquivo
+// inteiro em UMA requisição só. Numa rede móvel instável, se a conexão
+// oscilar no meio do envio de um arquivo de alguns MB (áudio, .doc), a
+// requisição inteira falha e tem que recomeçar do zero — o que bate direto
+// com o padrão observado (funciona às vezes, falha com "Failed to fetch" em
+// outras, em arquivos de tipos bem diferentes como .mp3 e .doc, o que afasta
+// a hipótese de ser um tipo de arquivo específico sendo rejeitado).
+//
+// TUS quebra o arquivo em pedaços de 6MB (tamanho exigido pelo Supabase) e
+// consegue RETOMAR de onde parou se a conexão cair no meio de um pedaço, em
+// vez de perder o progresso inteiro — é a recomendação oficial do Supabase
+// pra upload confiável em conexões ruins.
+async function uploadFileResumable(
+  bucket: string,
+  filePath: string,
+  file: File,
+  onProgress?: (pct: number) => void
+): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const accessToken = session?.access_token;
+  if (!supabaseUrl || !accessToken) {
+    throw new Error('Sessão inválida ou Supabase não configurado — não foi possível iniciar o upload resumível.');
+  }
+
+  return new Promise((resolve, reject) => {
+    const upload = new tus.Upload(file, {
+      endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
+      // Reforça a resiliência: o próprio TUS já retenta pedaços que falharem,
+      // com espera crescente, antes de desistir de vez.
+      retryDelays: [0, 1000, 3000, 5000, 10000],
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'x-upsert': 'false',
+      },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      metadata: {
+        bucketName: bucket,
+        objectName: filePath,
+        contentType: file.type || 'application/octet-stream',
+        cacheControl: '3600',
+      },
+      chunkSize: 6 * 1024 * 1024, // Obrigatório ser exatamente 6MB para o endpoint resumível do Supabase.
+      onError: (error) => reject(error),
+      onProgress: (bytesUploaded, bytesTotal) => {
+        if (onProgress && bytesTotal > 0) onProgress(Math.round((bytesUploaded / bytesTotal) * 100));
+      },
+      onSuccess: () => resolve(),
+    });
+
+    upload.findPreviousUploads()
+      .then((previousUploads) => {
+        if (previousUploads.length > 0) {
+          upload.resumeFromPreviousUpload(previousUploads[0]);
+        }
+        upload.start();
+      })
+      .catch(() => upload.start()); // se a checagem de uploads anteriores falhar, tenta do zero mesmo assim
+  });
+}
 
 interface ChordEditorProps {
   chord: Chord | null;
@@ -450,6 +515,11 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
 
     setLoading(true);
 
+    // Guarda em qual bucket a falha aconteceu (se foi um upload de arquivo)
+    // pra mensagem de erro apontar pro bucket certo, em vez de sempre dizer
+    // "attachments" mesmo quando o problema foi no bucket "audio".
+    let failedBucket: string | null = null;
+
     // Limites de tamanho (evita que o upload trave a meio caminho e gere "Failed to fetch")
     const MAX_AUDIO_MB = 45;
     const MAX_ATTACHMENT_MB = 20;
@@ -496,37 +566,41 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
           const fileName = `${Math.random().toString(36).substring(2)}_${cleanName}`;
           const filePath = `${att.type}/${fileName}`;
 
-          // Tenta até 3 vezes com pequena pausa entre tentativas: cobre quedas
-          // momentâneas de conexão (comum em rede móvel) sem incomodar o usuário.
-          const MAX_ATTEMPTS = 3;
+          // Tenta até 2 vezes com o upload RESUMÍVEL (que já tem seu próprio
+          // reforço interno de retentativa por pedaço — ver `uploadFileResumable`).
+          // Se o TUS falhar de um jeito que nem chegue a começar (ex.: sessão
+          // expirada), cai pro método padrão como último recurso.
+          const MAX_ATTEMPTS = 2;
           let uploadError: any = null;
           let lastNetworkErr: any = null;
 
           for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             uploadError = null;
             lastNetworkErr = null;
+            failedBucket = bucket;
             try {
-              const result = await supabase.storage
-                .from(bucket)
-                .upload(filePath, file, {
-                  cacheControl: '3600',
-                  upsert: false,
-                  // Arquivos .doc antigos costumam chegar do input do celular
-                  // com `file.type` vazio — mandar contentType undefined pro
-                  // Supabase Storage nesse caso pode fazer o bucket (se tiver
-                  // qualquer restrição de MIME configurada) rejeitar o envio
-                  // de um jeito que o navegador reporta como "Failed to
-                  // fetch" em vez de um erro claro. Um fallback genérico
-                  // evita isso.
-                  contentType: file.type || 'application/octet-stream',
-                });
-              uploadError = result.error;
-            } catch (networkErr: any) {
-              lastNetworkErr = networkErr;
+              await uploadFileResumable(bucket, filePath, file);
+            } catch (resumableErr: any) {
+              console.warn(`Upload resumível de "${file.name}" falhou (tentativa ${attempt}), tentando método padrão como reforço...`, resumableErr);
+              try {
+                const result = await supabase.storage
+                  .from(bucket)
+                  .upload(filePath, file, {
+                    cacheControl: '3600',
+                    upsert: false,
+                    contentType: file.type || 'application/octet-stream',
+                  });
+                uploadError = result.error;
+              } catch (networkErr: any) {
+                lastNetworkErr = networkErr;
+              }
             }
 
             // Sucesso (sem erro de rede nem erro do Supabase) -> sai do loop de tentativas
-            if (!lastNetworkErr && !uploadError) break;
+            if (!lastNetworkErr && !uploadError) {
+              failedBucket = null;
+              break;
+            }
 
             if (attempt < MAX_ATTEMPTS) {
               console.warn(`Tentativa ${attempt} de enviar "${file.name}" falhou, tentando de novo...`, lastNetworkErr || uploadError);
@@ -617,16 +691,17 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
       if (errorMsg.startsWith('FAILED_TO_FETCH::')) {
         errorMsg = 'Não foi possível conectar ao Supabase (Failed to fetch). Causas comuns: 1) o projeto Supabase está pausado por inatividade (acesse o painel e reative); 2) as variáveis VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY não estão configuradas no Cloudflare Pages; 3) o domínio do site não está liberado em CORS no Supabase; 4) sua internet caiu no meio do envio.';
       } else if (errorMsg.includes('Failed to fetch')) {
-        // Esse é o caso específico do print: o PRECHECK (listar o bucket) já
-        // tinha passado — ou seja, o bucket existe e é legível — mas o envio
-        // do ARQUIVO em si falhou como se fosse rede. Quando isso acontece
-        // só com anexos de texto/PDF/doc e não com áudio, o suspeito nº 1 é
-        // uma restrição de tipo de arquivo (MIME) ou tamanho configurada
-        // especificamente no bucket "attachments" no Supabase, que faz a
-        // resposta de erro do Storage vir sem cabeçalho CORS — e aí o
-        // navegador reporta isso genericamente como "Failed to fetch" em vez
-        // de mostrar o motivo real da rejeição.
-        errorMsg = `${errorMsg} — Como esse erro aconteceu ao subir o arquivo em si (a checagem inicial do bucket já tinha passado), o mais provável é que o bucket "attachments" no painel do Supabase (Storage → attachments → editar bucket) tenha uma restrição de "Allowed MIME types" ou "File size limit" que está rejeitando esse arquivo (.doc). Abra o bucket lá e remova essas restrições (ou adicione "application/msword" e "application/octet-stream" à lista permitida), ou tente reenviar o mesmo arquivo salvo como .pdf/.txt.`;
+        // O PRECHECK (listar o bucket) já tinha passado — ou seja, o bucket
+        // existe e é legível — mas o envio do ARQUIVO em si falhou como se
+        // fosse rede. Isso já aconteceu tanto com anexo de texto/.doc quanto
+        // com áudio .mp3 (um tipo de arquivo universalmente aceito), o que
+        // afasta a hipótese de ser só uma restrição de MIME type de um
+        // bucket específico — aponta mais para o envio do ARQUIVO em si
+        // (o corpo da requisição, maior que uma simples listagem) esbarrando
+        // em rede móvel instável, timeout, ou um proxy/firewall no meio do
+        // caminho que corta requisições grandes.
+        const bucketLabel = failedBucket ? `"${failedBucket}"` : 'de destino';
+        errorMsg = `${errorMsg} — Isso aconteceu ao enviar o ARQUIVO em si pro bucket ${bucketLabel} (a checagem inicial do bucket já tinha passado, então o bucket existe e está acessível). Como já aconteceu tanto com .doc quanto com .mp3, é mais provável ser: 1) rede móvel instável durante o envio (tente em Wi-Fi); 2) o arquivo é grande demais pro tempo que a conexão aguenta sustentar o upload sem cair; 3) menos provável, mas verifique também em Storage → ${failedBucket ? `bucket "${failedBucket}"` : 'o bucket'} → Configuration se há um "File size limit" baixo demais configurado.`;
       } else if (errorMsg.startsWith('PRECHECK::')) {
         errorMsg = `Erro real encontrado: ${errorMsg.replace('PRECHECK::', '')}. O bucket "attachments" provavelmente não existe no seu projeto Supabase, ou não está com a política de leitura pública ativada. Vá em Storage no painel do Supabase e confira.`;
       } else if (errorMsg.includes('Bucket not found')) {
