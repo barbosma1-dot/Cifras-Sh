@@ -15,6 +15,7 @@ import {
   FileDown,
   Upload,
   Copy,
+  Check,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
@@ -65,6 +66,8 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const [isSelectingExisting, setIsSelectingExisting] = useState(false);
   const [allAvailableChords, setAllAvailableChords] = useState<Chord[]>([]);
   const [addingExistingLoading, setAddingExistingLoading] = useState(false);
+  const [selectedExistingIds, setSelectedExistingIds] = useState<Set<string>>(new Set());
+  const [existingSearchTerm, setExistingSearchTerm] = useState('');
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   useEffect(() => {
@@ -107,6 +110,8 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
         const existingIds = new Set(chords.map(c => c.id));
         setAllAvailableChords((data as Chord[]).filter(c => !existingIds.has(c.id)));
       }
+      setSelectedExistingIds(new Set());
+      setExistingSearchTerm('');
     } catch (err) {
       console.error(err);
     }
@@ -140,6 +145,68 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
       setAddingExistingLoading(false);
     }
   }
+
+  function toggleExistingSelection(chordId: string) {
+    setSelectedExistingIds(prev => {
+      const next = new Set(prev);
+      if (next.has(chordId)) next.delete(chordId);
+      else next.add(chordId);
+      return next;
+    });
+  }
+
+  function toggleSelectAllExisting() {
+    setSelectedExistingIds(prev =>
+      prev.size === allAvailableChords.length
+        ? new Set()
+        : new Set(allAvailableChords.map(c => c.id))
+    );
+  }
+
+  /** Adiciona todas as cifras marcadas de uma vez (em vez de uma a uma), num único lote de inserção. */
+  async function addSelectedChordsToBook() {
+    if (!activeBookId || selectedExistingIds.size === 0) return;
+    setAddingExistingLoading(true);
+    try {
+      const rows = Array.from(selectedExistingIds).map(chordId => ({ book_id: activeBookId, chord_id: chordId }));
+      const { error } = await supabase.from('chord_book_items').insert(rows);
+
+      if (error) {
+        if (error.code === '23505') {
+          // Alguma(s) já estava(m) no caderno (condição de corrida ou seleção
+          // desatualizada) — como o Supabase rejeita o lote inteiro nesse caso,
+          // inserimos uma por uma para salvar as que não são duplicadas em vez
+          // de perder a seleção inteira por causa de 1 item repetido.
+          let addedCount = 0;
+          for (const row of rows) {
+            const { error: singleError } = await supabase.from('chord_book_items').insert([row]);
+            if (!singleError) addedCount++;
+          }
+          setNotification({
+            message: addedCount > 0
+              ? `${addedCount} cifra(s) adicionada(s). As demais já estavam neste caderno.`
+              : 'Todas as cifras selecionadas já estavam neste caderno.',
+            type: addedCount > 0 ? 'success' : 'info'
+          });
+        } else {
+          throw error;
+        }
+      } else {
+        setNotification({ message: `${rows.length} cifra(s) adicionada(s) com sucesso!`, type: 'success' });
+      }
+
+      await fetchChords();
+      setIsAddChordModalOpen(false);
+      setIsSelectingExisting(false);
+      setSelectedExistingIds(new Set());
+    } catch (err: any) {
+      console.error(err);
+      setNotification({ message: 'Erro ao adicionar cifras: ' + (err.message || 'Verifique sua conexão'), type: 'error' });
+    } finally {
+      setAddingExistingLoading(false);
+    }
+  }
+
 
   useEffect(() => {
     if (triggerNewChord && triggerNewChord > 0) {
@@ -713,38 +780,59 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
       {isAddChordModalOpen && isSelectingExisting && (
         <div className="fixed inset-0 z-[160] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-[32px] p-8 max-w-lg w-full h-[600px] flex flex-col shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
-            <h3 className="text-2xl font-black text-slate-800 mb-6">Selecionar Cifra</h3>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-2xl font-black text-slate-800">Selecionar Cifras</h3>
+              {allAvailableChords.length > 0 && (
+                <button
+                  onClick={toggleSelectAllExisting}
+                  className="text-xs font-black uppercase tracking-wide text-brand-orange hover:text-orange-700 transition-colors"
+                >
+                  {selectedExistingIds.size === allAvailableChords.length ? 'Desmarcar todas' : 'Selecionar todas'}
+                </button>
+              )}
+            </div>
             
             <div className="relative mb-4">
               <Search className="absolute left-4 top-3 w-4 h-4 text-slate-300" />
               <input 
                 type="text" 
+                value={existingSearchTerm}
                 placeholder="Buscar cifra..."
                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-all"
-                onChange={(e) => {
-                  const val = e.target.value.toLowerCase();
-                  setAllAvailableChords(prev => prev.filter(c => 
-                    c.title.toLowerCase().includes(val) || 
-                    c.artist.toLowerCase().includes(val)
-                  ));
-                }}
+                onChange={(e) => setExistingSearchTerm(e.target.value)}
               />
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              {allAvailableChords.map(chord => (
-                <button
-                  key={chord.id}
-                  onClick={() => addExistingChordToBook(chord.id)}
-                  className="w-full p-4 bg-slate-50 rounded-2xl flex items-center justify-between group hover:bg-brand-orange/5 border border-transparent hover:border-brand-orange/20 transition-all"
-                >
-                  <div className="text-left">
-                    <p className="font-bold text-slate-800 text-sm group-hover:text-brand-orange transition-colors">{chord.title}</p>
-                    <p className="text-[10px] text-slate-400 uppercase font-black">{chord.artist}</p>
-                  </div>
-                  <Plus className="w-4 h-4 text-slate-300 group-hover:text-brand-orange" />
-                </button>
-              ))}
+              {allAvailableChords
+                .filter(c => {
+                  const val = existingSearchTerm.toLowerCase();
+                  return !val || c.title.toLowerCase().includes(val) || c.artist.toLowerCase().includes(val);
+                })
+                .map(chord => {
+                  const checked = selectedExistingIds.has(chord.id);
+                  return (
+                    <button
+                      key={chord.id}
+                      onClick={() => toggleExistingSelection(chord.id)}
+                      className={`w-full p-4 rounded-2xl flex items-center justify-between group border transition-all ${
+                        checked
+                          ? 'bg-brand-orange/10 border-brand-orange/30'
+                          : 'bg-slate-50 border-transparent hover:bg-brand-orange/5 hover:border-brand-orange/20'
+                      }`}
+                    >
+                      <div className="text-left">
+                        <p className="font-bold text-slate-800 text-sm group-hover:text-brand-orange transition-colors">{chord.title}</p>
+                        <p className="text-[10px] text-slate-400 uppercase font-black">{chord.artist}</p>
+                      </div>
+                      <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${
+                        checked ? 'bg-brand-orange border-brand-orange' : 'border-slate-300'
+                      }`}>
+                        {checked && <Check className="w-3.5 h-3.5 text-white" />}
+                      </div>
+                    </button>
+                  );
+                })}
               {allAvailableChords.length === 0 && (
                 <p className="text-center py-10 text-slate-400 italic text-sm">Nenhuma cifra encontrada.</p>
               )}
@@ -756,6 +844,16 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                 className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl"
               >
                 Cancelar
+              </button>
+              <button
+                onClick={addSelectedChordsToBook}
+                disabled={selectedExistingIds.size === 0 || addingExistingLoading}
+                className="flex-1 py-4 bg-brand-orange text-white font-bold rounded-2xl flex items-center justify-center gap-2 disabled:opacity-40 transition-all"
+              >
+                {addingExistingLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                {addingExistingLoading
+                  ? 'Adicionando...'
+                  : `Adicionar${selectedExistingIds.size > 0 ? ` (${selectedExistingIds.size})` : ''}`}
               </button>
             </div>
           </div>
