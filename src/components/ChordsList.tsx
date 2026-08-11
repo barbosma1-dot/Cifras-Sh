@@ -16,6 +16,7 @@ import {
   Upload,
   Copy,
   Check,
+  AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
@@ -43,6 +44,12 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const [isExporting, setIsExporting] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // Diferente de `notification` (que some sozinho em 3s), isso fica visível na tela
+  // até o usuário resolver ou tentar de novo — é o que faltava para não parecer que
+  // "a página ficou vazia do nada, sem erro nenhum": antes, uma falha na busca só
+  // ia para o console (invisível no celular), e o caderno simplesmente aparecia
+  // vazio sem nenhuma pista do motivo.
+  const [chordsFetchError, setChordsFetchError] = useState<string | null>(null);
   // Combobox de categoria com busca própria: com a nova regra de "álbum vira
   // categoria" na importação de PDF, a lista de categorias pode crescer muito
   // (uma por álbum/coletânea), e um <select> nativo fica difícil de navegar
@@ -223,6 +230,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
   async function fetchChords() {
     setLoading(true);
+    setChordsFetchError(null);
     try {
       let query = supabase.from('chords').select('*');
       
@@ -232,7 +240,21 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           .select('chord_id')
           .eq('book_id', activeBookId);
         
-        if (itemError) throw itemError;
+        // Antes, esse erro (ex.: RLS bloqueando a leitura por falta de
+        // permissão, ou uma falha de rede) caía só no catch lá embaixo, que
+        // apenas dava console.error — no celular, isso é 100% invisível: a
+        // tela mostrava o caderno vazio como se realmente não tivesse nada,
+        // sem nenhuma pista de que a busca tinha falhado.
+        if (itemError) {
+          console.error('Erro ao buscar vínculos do caderno:', itemError);
+          setChordsFetchError(
+            `Não foi possível carregar as cifras deste caderno (erro ao consultar vínculos: ${itemError.message}). ` +
+            `Isso costuma ser permissão do Supabase (RLS) ou conexão instável — não é o caderno estar vazio de verdade.`
+          );
+          setChords([]);
+          setLoading(false);
+          return;
+        }
 
         const chordIds = (itemData as any[])?.map(i => i.chord_id) || [];
         if (chordIds.length === 0) {
@@ -242,6 +264,36 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           return;
         }
         query = query.in('id', chordIds);
+
+        const { data, error } = await query.order('title');
+        if (error) throw error;
+        const allChords = (data as Chord[]) || [];
+
+        // Se o caderno tem vínculos (chordIds > 0) mas a busca das cifras em si
+        // devolveu menos itens do que os vínculos — ou zero —, as cifras foram
+        // excluídas por outro caminho (ex.: exclusão direto na tabela 'chords')
+        // deixando vínculos "órfãos" em chord_book_items. Isso também explica
+        // uma lista vazia sem nenhum erro técnico: a query funcionou, só não
+        // achou as cifras que os vínculos apontavam.
+        if (allChords.length === 0) {
+          setChordsFetchError(
+            `Este caderno tem ${chordIds.length} cifra(s) vinculada(s), mas nenhuma foi encontrada na biblioteca. ` +
+            `Provavelmente elas foram excluídas separadamente e os vínculos ficaram órfãos.`
+          );
+        } else if (allChords.length < chordIds.length) {
+          setChordsFetchError(
+            `Atenção: ${chordIds.length - allChords.length} de ${chordIds.length} cifra(s) vinculada(s) a este caderno não foram encontradas (podem ter sido excluídas). Mostrando as ${allChords.length} restantes.`
+          );
+        }
+
+        setChords(allChords);
+        const allCats = allChords.flatMap(c => 
+          c.category ? c.category.split(',').map((cat: string) => cat.trim()) : []
+        );
+        const cats = Array.from(new Set(allCats)).filter((c): c is string => !!c && c.length > 0);
+        setCategories(cats);
+        setLoading(false);
+        return;
       }
 
       const { data, error } = await query.order('title');
@@ -258,7 +310,10 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
       setCategories(cats);
     } catch (err: any) {
       console.error('Error fetching chords:', err);
-      // Optionally show notification if you add it to props or local state
+      setChordsFetchError(
+        `Não foi possível carregar as cifras (${err?.message || 'erro desconhecido'}). Verifique sua conexão e tente novamente.`
+      );
+      setChords([]);
     } finally {
       setLoading(false);
     }
@@ -573,6 +628,21 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           </select>
         </div>
       </div>
+
+      {chordsFetchError && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-5 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-red-700 text-sm font-medium">{chordsFetchError}</p>
+            <button
+              onClick={() => fetchChords()}
+              className="mt-3 text-xs font-black uppercase tracking-wide text-red-600 hover:text-red-800 transition-colors"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center p-20">
