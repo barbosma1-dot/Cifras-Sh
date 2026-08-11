@@ -256,10 +256,30 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           return;
         }
 
-        const chordIds = (itemData as any[])?.map(i => i.chord_id) || [];
+        // UUID v1-v5 válido (aceita maiúsc./minúsc.). Qualquer chord_id fora desse
+        // formato — null, string vazia, ou lixo — quebra a consulta `.in('id', ...)`
+        // lá embaixo com "Bad Request" (400) do PostgREST, porque a coluna 'id' é
+        // do tipo uuid e não aceita um valor não-UUID na lista de comparação. Isso
+        // também explica a tela ficar vazia "do nada, mesmo conectado": não é rede,
+        // é um vínculo órfão/corrompido em chord_book_items derrubando a consulta
+        // inteira, mesmo que só 1 dos vários vínculos esteja ruim.
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const rawChordIds = (itemData as any[])?.map(i => i.chord_id) || [];
+        const chordIds = rawChordIds.filter((id): id is string => typeof id === 'string' && uuidRegex.test(id));
+        const invalidCount = rawChordIds.length - chordIds.length;
+        if (invalidCount > 0) {
+          console.warn(`${invalidCount} vínculo(s) com chord_id inválido/nulo neste caderno foram ignorados para evitar erro na consulta.`);
+        }
         if (chordIds.length === 0) {
           setChords([]);
-          setNotification({ message: 'Este caderno está vazio. Adicione cifras a ele!', type: 'info' });
+          if (invalidCount > 0) {
+            setChordsFetchError(
+              `Este caderno tem ${invalidCount} vínculo(s) corrompido(s) (referência de cifra inválida ou nula), e nenhum vínculo válido. ` +
+              `Provavelmente aconteceu numa importação ou exclusão que não removeu o vínculo direito. Recomendo remover e adicionar a(s) cifra(s) de novo.`
+            );
+          } else {
+            setNotification({ message: 'Este caderno está vazio. Adicione cifras a ele!', type: 'info' });
+          }
           setLoading(false);
           return;
         }
@@ -283,6 +303,10 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
         } else if (allChords.length < chordIds.length) {
           setChordsFetchError(
             `Atenção: ${chordIds.length - allChords.length} de ${chordIds.length} cifra(s) vinculada(s) a este caderno não foram encontradas (podem ter sido excluídas). Mostrando as ${allChords.length} restantes.`
+          );
+        } else if (invalidCount > 0) {
+          setChordsFetchError(
+            `Atenção: ${invalidCount} vínculo(s) corrompido(s) neste caderno foram ignorados. As ${allChords.length} cifra(s) válida(s) estão sendo mostradas normalmente.`
           );
         }
 
@@ -310,8 +334,9 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
       setCategories(cats);
     } catch (err: any) {
       console.error('Error fetching chords:', err);
+      const extra = [err?.code, err?.details, err?.hint].filter(Boolean).join(' | ');
       setChordsFetchError(
-        `Não foi possível carregar as cifras (${err?.message || 'erro desconhecido'}). Verifique sua conexão e tente novamente.`
+        `Não foi possível carregar as cifras (${err?.message || 'erro desconhecido'}${extra ? ` — ${extra}` : ''}). Verifique sua conexão e tente novamente.`
       );
       setChords([]);
     } finally {
