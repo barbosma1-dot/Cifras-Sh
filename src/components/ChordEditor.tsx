@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
-import axios from 'axios';
+import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import * as tus from 'tus-js-client';
 import { supabaseUrl } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
@@ -429,49 +429,20 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     return result.join('\n');
   };
 
-  // Categorias litúrgicas "genéricas" que NÃO ajudam a identificar a música
-  // (toda cifra tem uma dessas) — o que sobra depois de tirá-las da lista de
-  // categorias normalmente é o nome do álbum/coletânea/ministério (ver regra
-  // 6b do prompt de importação de PDF), que é muito mais útil pra achar o
-  // vídeo certo do que "artista: Desconhecido".
-  const GENERIC_CATEGORIES = new Set([
-    'missa', 'louvor', 'adoração', 'oração', 'ação de graças', 'outros'
-  ]);
-
   const searchYoutube = async (title?: string, artist?: string) => {
     const rawTitle = title || form.title;
-    // Alguns títulos vindos de importação antiga têm um trecho de letra colado
-    // entre parênteses/traço (ex.: "Ossos Secos (Espírito Santo Desce)") — isso
-    // some do NOME da música mas não deve ir pra busca do vídeo, senão vira
-    // ruído que desvia o resultado do canal/vídeo oficial.
-    const t = (rawTitle || '').split(/[(\-–—]/)[0].trim() || rawTitle;
+    if (!rawTitle) return;
     const a = artist || form.artist;
-    if (!t) return;
 
     setSearchingYoutube(true);
     try {
-      const queryParts = [t];
-
-      // "Desconhecido" (valor padrão quando a IA/importação não identifica o
-      // artista) não ajuda em nada a busca — pelo contrário, é uma palavra a
-      // mais competindo com o nome real da música. Só inclui o artista se for
-      // um valor de verdade.
-      if (a && a.trim() && a.trim().toLowerCase() !== 'desconhecido') {
-        queryParts.push(a.trim());
-      }
-
-      // Nome do álbum/coletânea: qualquer categoria que não seja uma das
-      // litúrgicas genéricas (ex.: "Cantai a Deus 2020", "Comunidade Shalom").
-      const albumCategories = form.categories.filter(
-        c => c && !GENERIC_CATEGORIES.has(c.trim().toLowerCase())
-      );
-      queryParts.push(...albumCategories);
-
       // Nome do arquivo PDF de origem, se esta cifra veio de uma importação —
       // costuma trazer justamente o nome do hinário/coletânea/ministério
       // impresso no arquivo (ex.: "Cantai_a_Deus_2020_Shalom.pdf"), o critério
       // mais preciso disponível para desempatar entre várias versões da
-      // mesma música de artistas/igrejas diferentes.
+      // mesma música de artistas/igrejas diferentes. Passado como
+      // "pdfFileName" para a mesma lógica de busca usada no PDFImporter.
+      let pdfFileName: string | undefined;
       const batchId = (chord as any)?.import_batch_id;
       if (batchId) {
         try {
@@ -480,24 +451,15 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
             .select('source_file_name')
             .eq('id', batchId)
             .maybeSingle();
-          if (batch?.source_file_name) {
-            const cleanName = batch.source_file_name
-              .replace(/\.pdf$/i, '')
-              .replace(/[_\-.]+/g, ' ')
-              .trim();
-            if (cleanName) queryParts.push(cleanName);
-          }
+          pdfFileName = batch?.source_file_name || undefined;
         } catch (batchErr) {
           console.error('Não foi possível buscar o nome do PDF de origem para refinar a busca:', batchErr);
         }
       }
 
-      queryParts.push('letra e cifra');
-      const query = queryParts.join(' ');
-
-      const { data } = await axios.get(`/api/youtube-search?q=${encodeURIComponent(query)}`);
-      if (data.videoUrl) {
-        setForm(prev => ({ ...prev, youtube_url: data.videoUrl }));
+      const videoUrl = await searchYoutubeForSong(rawTitle, a, form.categories.join(', '), pdfFileName);
+      if (videoUrl) {
+        setForm(prev => ({ ...prev, youtube_url: videoUrl }));
       }
     } catch (error) {
       console.error('Youtube search failed', error);
