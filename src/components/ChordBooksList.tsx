@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BookText, Plus, Share2, Users, Loader2, FileDown, Music, Search, Edit3, ChevronDown, Globe, Lock } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, fetchAllRows } from '../lib/supabase';
 import { UserProfile, ChordBook, Chord, Mission } from '../types';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import ChordEditor from './ChordEditor';
@@ -263,8 +263,11 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
 
   const fetchChordsForSelection = async () => {
     try {
-      const { data } = await supabase.from('chords').select('*').order('title');
-      if (data) setAllAvailableChords(data as Chord[]);
+      const { data, error } = await fetchAllRows<Chord>((from, to) =>
+        supabase.from('chords').select('*').order('title').range(from, to)
+      );
+      if (error) { console.error(error); return; }
+      setAllAvailableChords(data);
     } catch (err) {
       console.error(err);
     }
