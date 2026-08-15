@@ -19,6 +19,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
+import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
 import { Chord, UserProfile } from '../types';
 import ChordViewer from './ChordViewer';
@@ -66,6 +67,10 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   useBackButton(!!chordToDelete, () => setChordToDelete(null));
   const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [isDuplicatesModalOpen, setIsDuplicatesModalOpen] = useState(false);
+  // Botão "Preencher YouTube faltantes": roda a busca em lote para TODAS as
+  // cifras do banco sem youtube_url (não só as carregadas na tela).
+  const [isBulkYoutubeRunning, setIsBulkYoutubeRunning] = useState(false);
+  const [bulkYoutubeStatus, setBulkYoutubeStatus] = useState<string | null>(null);
   useBackButton(isDuplicatesModalOpen, () => setIsDuplicatesModalOpen(false));
   const [duplicateActionId, setDuplicateActionId] = useState<string | null>(null);
 
@@ -454,6 +459,84 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     setDuplicateActionId(null);
   };
 
+  /**
+   * Botão "Preencher YouTube faltantes" (tela de listagem): busca TODAS as
+   * cifras do banco com youtube_url vazio/nulo — não só as carregadas na
+   * tela — e roda a mesma busca já usada na importação de PDF
+   * (`searchYoutubeForSong`, de src/lib/youtubeSearch.ts) uma por uma, com o
+   * mesmo intervalo de 600ms entre chamadas para não estourar o rate limit
+   * do endpoint. Diferente da revisão de importação, aqui não existe uma
+   * tela de conferência antes de salvar — cada resultado encontrado já vai
+   * direto para um UPDATE no Supabase. Cifras que já têm link não são
+   * tocadas (nem entram na busca) e erros numa música pulam para a próxima
+   * sem travar o lote inteiro.
+   */
+  const fillMissingYoutubeLinksBulk = async () => {
+    if (isBulkYoutubeRunning) return;
+    setIsBulkYoutubeRunning(true);
+    setBulkYoutubeStatus('Buscando cifras sem link do YouTube...');
+    try {
+      const { data: pending, error } = await fetchAllRows<Chord>((from, to) =>
+        supabase
+          .from('chords')
+          .select('id, title, artist, category')
+          .or('youtube_url.is.null,youtube_url.eq.')
+          .order('title')
+          .range(from, to)
+      );
+
+      if (error) {
+        setNotification({ message: 'Erro ao buscar cifras sem YouTube: ' + error.message, type: 'error' });
+        return;
+      }
+
+      if (pending.length === 0) {
+        setNotification({ message: 'Todas as cifras já têm link do YouTube preenchido!', type: 'info' });
+        return;
+      }
+
+      const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+      let filled = 0;
+      let notFound = 0;
+      const failed: string[] = [];
+
+      for (let i = 0; i < pending.length; i++) {
+        const song = pending[i] as any;
+        setBulkYoutubeStatus(`Buscando (${i + 1}/${pending.length}): ${song.title}...`);
+        try {
+          const videoUrl = await searchYoutubeForSong(song.title, song.artist, song.category);
+          if (videoUrl) {
+            const { error: updateError } = await supabase
+              .from('chords')
+              .update({ youtube_url: videoUrl })
+              .eq('id', song.id);
+            if (updateError) throw updateError;
+            filled++;
+            // Reflete na tela sem precisar recarregar a lista inteira.
+            setChords(prev => prev.map(c => (c.id === song.id ? { ...c, youtube_url: videoUrl } : c)));
+          } else {
+            notFound++;
+          }
+        } catch (err: any) {
+          console.error(`Falha ao buscar/salvar YouTube para "${song.title}":`, err);
+          failed.push(song.title);
+        }
+        if (i < pending.length - 1) await delay(600);
+      }
+
+      const failedNote = failed.length > 0
+        ? ` Falharam: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? ` e mais ${failed.length - 5}` : ''}.`
+        : '';
+      setNotification({
+        message: `YouTube preenchido: ${filled} encontrada(s), ${notFound} sem resultado.${failedNote}`,
+        type: filled > 0 ? 'success' : 'info',
+      });
+    } finally {
+      setBulkYoutubeStatus(null);
+      setIsBulkYoutubeRunning(false);
+    }
+  };
+
   const RECENT_FILTER_MS: Record<'1h' | '24h' | '7d', number> = {
     '1h': 60 * 60 * 1000,
     '24h': 24 * 60 * 60 * 1000,
@@ -595,6 +678,17 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             </button>
           )}
           
+          {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+            <button
+              onClick={fillMissingYoutubeLinksBulk}
+              disabled={isBulkYoutubeRunning}
+              className="bg-red-50 text-red-600 px-5 py-3 rounded-2xl font-black text-xs flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-50 disabled:hover:text-red-600"
+            >
+              {isBulkYoutubeRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Youtube className="w-4 h-4" />}
+              PREENCHER YOUTUBE FALTANTES
+            </button>
+          )}
+
           <div className="relative" ref={categoryDropdownRef}>
             <button
               type="button"
@@ -663,6 +757,13 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           </select>
         </div>
       </div>
+
+      {bulkYoutubeStatus && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-center gap-3">
+          <Loader2 className="w-4 h-4 text-red-500 shrink-0 animate-spin" />
+          <p className="text-red-700 text-xs font-bold">{bulkYoutubeStatus}</p>
+        </div>
+      )}
 
       {chordsFetchError && (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-5 flex items-start gap-3">
