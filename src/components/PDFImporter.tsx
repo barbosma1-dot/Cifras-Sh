@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { extractPreAlignedPageText } from '../lib/chordproExtractor';
+import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
 
 // Configuração do worker do PDF.js
@@ -48,67 +49,6 @@ const YOUTUBE_URL_RE =
 function findYoutubeUrlInText(text: string): string | null {
   const match = text.match(YOUTUBE_URL_RE);
   return match ? `https://www.youtube.com/watch?v=${match[1]}` : null;
-}
-
-// Categorias litúrgicas "genéricas" que não ajudam a identificar a música —
-// toda cifra tem uma dessas. O que sobra da lista de categorias depois de
-// tirá-las costuma ser o nome do álbum/coletânea/ministério (regra 6b do
-// prompt acima), um critério de busca bem mais preciso que "artista:
-// Desconhecido".
-const GENERIC_YOUTUBE_CATEGORIES = new Set(['missa', 'louvor', 'adoração', 'oração', 'ação de graças', 'outros']);
-
-// Monta a mesma busca já usada com sucesso na edição manual de cifra (ver
-// `searchYoutube` em ChordEditor.tsx): título + artista (quando conhecido) +
-// nome do álbum (categoria não-genérica) + nome do PDF de origem + "letra e
-// cifra". O nome do PDF é o critério mais preciso disponível aqui: costuma
-// trazer o nome do hinário/coletânea/ministério impresso no arquivo, o que
-// desempata entre várias versões da mesma música por artistas diferentes
-// (ex.: "Santo dos Santos" tem versões de vários ministérios; sem esse
-// contexto a busca cai facilmente na versão mais popular, não na do PDF).
-function buildYoutubeQuery(title: string, artist?: string, category?: string, pdfFileName?: string): string {
-  // Corta qualquer trecho de letra/observação colado no título entre
-  // parênteses/traço antes de usar como termo de busca (ver mesma lógica em
-  // ChordEditor.tsx) — evita que um título "sujo" prejudique a precisão.
-  const cleanTitle = (title || '').split(/[(\-–—]/)[0].trim() || (title || '').trim();
-  if (!cleanTitle) return '';
-
-  const parts = [cleanTitle];
-
-  const cleanArtist = artist && artist.trim() && artist.trim().toLowerCase() !== 'desconhecido'
-    ? artist.trim()
-    : '';
-  if (cleanArtist) parts.push(cleanArtist);
-
-  if (category) {
-    const albumCategories = category
-      .split(',')
-      .map(c => c.trim())
-      .filter(c => c && !GENERIC_YOUTUBE_CATEGORIES.has(c.toLowerCase()));
-    parts.push(...albumCategories);
-  }
-
-  if (pdfFileName) {
-    const cleanName = pdfFileName.replace(/\.pdf$/i, '').replace(/[_\-.]+/g, ' ').trim();
-    if (cleanName) parts.push(cleanName);
-  }
-
-  parts.push('letra e cifra');
-  return parts.join(' ').replace(/\s+/g, ' ').trim();
-}
-
-/** Busca no YouTube pelo nome da música + artista/álbum/PDF de origem e devolve a URL do primeiro resultado (ou null). */
-async function searchYoutubeForSong(title: string, artist?: string, category?: string, pdfFileName?: string): Promise<string | null> {
-  const query = buildYoutubeQuery(title, artist, category, pdfFileName);
-  if (!query) return null;
-  try {
-    const res = await fetch(`/api/youtube-search?q=${encodeURIComponent(query)}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.videoUrl || null;
-  } catch (err) {
-    console.error('Erro ao buscar vídeo no YouTube:', err);
-    return null;
-  }
 }
 
 /**
