@@ -18,7 +18,7 @@ import {
   Check,
   AlertTriangle,
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, fetchAllRows } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
 import { Chord, UserProfile } from '../types';
 import ChordViewer from './ChordViewer';
@@ -111,12 +111,13 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
   async function fetchAllAvailableChords() {
     try {
-      const { data } = await supabase.from('chords').select('*').order('title');
-      if (data) {
-        // Filter out chords already in the notebook
-        const existingIds = new Set(chords.map(c => c.id));
-        setAllAvailableChords((data as Chord[]).filter(c => !existingIds.has(c.id)));
-      }
+      const { data, error } = await fetchAllRows<Chord>((from, to) =>
+        supabase.from('chords').select('*').order('title').range(from, to)
+      );
+      if (error) { console.error(error); return; }
+      // Filter out chords already in the notebook
+      const existingIds = new Set(chords.map(c => c.id));
+      setAllAvailableChords(data.filter(c => !existingIds.has(c.id)));
       setSelectedExistingIds(new Set());
       setExistingSearchTerm('');
     } catch (err) {
@@ -232,8 +233,6 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     setLoading(true);
     setChordsFetchError(null);
     try {
-      let query = supabase.from('chords').select('*');
-      
       if (activeBookId) {
         const { data: itemData, error: itemError } = await supabase
           .from('chord_book_items')
@@ -283,11 +282,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           setLoading(false);
           return;
         }
-        query = query.in('id', chordIds);
-
-        const { data, error } = await query.order('title');
+        const { data, error } = await fetchAllRows<Chord>((from, to) =>
+          supabase.from('chords').select('*').in('id', chordIds).order('title').range(from, to)
+        );
         if (error) throw error;
-        const allChords = (data as Chord[]) || [];
+        const allChords = data;
 
         // Se o caderno tem vínculos (chordIds > 0) mas a busca das cifras em si
         // devolveu menos itens do que os vínculos — ou zero —, as cifras foram
@@ -320,10 +319,12 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
         return;
       }
 
-      const { data, error } = await query.order('title');
-      
+      const { data, error } = await fetchAllRows<Chord>((from, to) =>
+        supabase.from('chords').select('*').order('title').range(from, to)
+      );
+
       if (error) throw error;
-      const allChords = (data as Chord[]) || [];
+      const allChords = data;
       setChords(allChords);
       
       // Extract unique categories
