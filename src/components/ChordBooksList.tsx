@@ -216,14 +216,19 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
         return;
       }
 
-      const { data: chords } = await supabase
-        .from('chords')
-        .select('*')
-        .in('id', chordIds)
-        .order('title');
-      
-      if (chords) {
-        await exportChordsToPDF(chords as Chord[], book.name);
+      // Evita `.in('id', chordIds)` com um caderno grande: centenas de UUIDs
+      // na URL de GET podem passar do limite aceito pela rede e voltar como
+      // "Bad Request" (400). Busca a tabela inteira (paginada) e filtra no
+      // app pelos ids do caderno — funciona com qualquer tamanho de caderno.
+      const chordIdSet = new Set(chordIds);
+      const { data: allChords, error } = await fetchAllRows<Chord>((from, to) =>
+        supabase.from('chords').select('*').order('title').range(from, to)
+      );
+      if (error) throw error;
+      const chords = allChords.filter(c => chordIdSet.has(c.id));
+
+      if (chords.length > 0) {
+        await exportChordsToPDF(chords, book.name);
       }
     } catch (err) {
       console.error(err);
