@@ -33,7 +33,7 @@ import {
   Trash,
   WifiOff
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, fetchAllRows } from '../lib/supabase';
 import { UserProfile, Repertoire, Chord, RepertoireAttendance, AttendanceStatus } from '../types';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -369,13 +369,12 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
   async function fetchLibrary() {
     try {
-      const { data, error } = await supabase
-        .from('chords')
-        .select('*')
-        .order('title', { ascending: true });
-      
+      const { data, error } = await fetchAllRows<Chord>((from, to) =>
+        supabase.from('chords').select('*').order('title', { ascending: true }).range(from, to)
+      );
+
       if (error) throw error;
-      setAvailableChords(data as Chord[]);
+      setAvailableChords(data);
     } catch (err) {
       console.error('Erro ao buscar biblioteca:', err);
     }
