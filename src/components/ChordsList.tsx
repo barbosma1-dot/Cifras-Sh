@@ -282,11 +282,20 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           setLoading(false);
           return;
         }
+        // Antes, isso usava `.in('id', chordIds)` — com um caderno que tem
+        // muitas cifras vinculadas (centenas), isso monta uma URL de GET com
+        // centenas de UUIDs (~37 caracteres cada), que passa do limite de
+        // tamanho de URL aceito pela rede/Supabase e volta como "Bad Request"
+        // (400) — foi exatamente o que aconteceu com o caderno "Cantai a
+        // Deus". Buscando a tabela inteira (já paginada, sem esse limite) e
+        // filtrando no app pelos ids do caderno, evita o problema por
+        // completo, e funciona com caderno de qualquer tamanho.
+        const chordIdSet = new Set(chordIds);
         const { data, error } = await fetchAllRows<Chord>((from, to) =>
-          supabase.from('chords').select('*').in('id', chordIds).order('title').range(from, to)
+          supabase.from('chords').select('*').order('title').range(from, to)
         );
         if (error) throw error;
-        const allChords = data;
+        const allChords = data.filter(c => chordIdSet.has(c.id));
 
         // Se o caderno tem vínculos (chordIds > 0) mas a busca das cifras em si
         // devolveu menos itens do que os vínculos — ou zero —, as cifras foram
