@@ -13,7 +13,8 @@ import {
   Loader2,
   X,
   WifiOff,
-  CheckCircle
+  CheckCircle,
+  Trash2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, Repertoire, Mission } from '../types';
@@ -21,7 +22,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import RepertoireDetail from './RepertoireDetail';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { listOfflineRepertoires } from '../lib/offlineDb';
+import { listOfflineRepertoires, removeOfflineRepertoire } from '../lib/offlineDb';
 import { withTimeout } from '../lib/withTimeout';
 
 export default function RepertoireList({ profile, initialMissionId, initialRepertoireId }: { profile: UserProfile | null, initialMissionId?: string | null, initialRepertoireId?: string | null }) {
@@ -41,6 +42,10 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedRepertoire, setSelectedRepertoire] = useState<Repertoire | null>(null);
+  // Confirmação antes de excluir um repertório (mesmo padrão usado para
+  // excluir cifra em ChordsList.tsx: modal com "Cancelar" / "Sim, Excluir").
+  const [repertoireToDelete, setRepertoireToDelete] = useState<Repertoire | null>(null);
+  const [deletingRepertoire, setDeletingRepertoire] = useState(false);
   
   // Active filter for mission
   const [activeMissionFilter, setActiveMissionFilter] = useState<string | null>(initialMissionId || null);
@@ -247,6 +252,38 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
     }
   };
 
+  /**
+   * Exclui um repertório já feito (ex.: para limpar duplicatas criadas por
+   * engano, como as várias "Repertório Brag" seguidas). Também remove a
+   * cópia offline salva localmente para esse repertório, se houver — senão
+   * ela ficaria "fantasma" no dispositivo, referenciando um id que não
+   * existe mais no banco.
+   */
+  const deleteRepertoire = async (repertoire: Repertoire) => {
+    setDeletingRepertoire(true);
+    try {
+      const { error } = await supabase.from('repertoires').delete().eq('id', repertoire.id);
+      if (error) throw error;
+
+      try {
+        await removeOfflineRepertoire(repertoire.id);
+      } catch (offlineErr) {
+        // Não crítico: o repertório já foi excluído do banco, que é o que
+        // importa. Só loga caso a limpeza da cópia offline falhe.
+        console.error('Repertório excluído, mas falhou ao limpar cópia offline:', offlineErr);
+      }
+
+      setNotification({ message: 'Repertório excluído com sucesso!', type: 'success' });
+      setRepertoireToDelete(null);
+      fetchData();
+    } catch (err: any) {
+      console.error(err);
+      setNotification({ message: 'Erro ao excluir repertório: ' + err.message, type: 'error' });
+    } finally {
+      setDeletingRepertoire(false);
+    }
+  };
+
   if (selectedRepertoire) {
     return (
       <RepertoireDetail 
@@ -435,6 +472,13 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setRepertoireToDelete(item)}
+                        className="p-2 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"
+                        title="Excluir repertório"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                       <button 
                         onClick={() => setSelectedRepertoire(item)}
                         className="p-2 bg-brand-blue/5 text-brand-blue rounded-lg group-hover:bg-brand-blue group-hover:text-white transition-all"
@@ -566,6 +610,37 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
           notification.type === 'success' ? 'bg-emerald-500 text-white border-emerald-400' : 'bg-red-500 text-white border-red-400'
         }`}>
           {notification.message}
+        </div>
+      )}
+
+      {repertoireToDelete && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-red-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
+              <Trash2 className="w-8 h-8 text-red-500" />
+            </div>
+            <h3 className="text-xl font-black text-slate-800 mb-2">Excluir Repertório?</h3>
+            <p className="text-slate-500 text-sm leading-relaxed mb-8">
+              Tem certeza que deseja excluir "{repertoireToDelete.name}"? Esta ação é permanente — as cifras em si não são apagadas, só este repertório e a lista de músicas dele.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setRepertoireToDelete(null)}
+                disabled={deletingRepertoire}
+                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => deleteRepertoire(repertoireToDelete)}
+                disabled={deletingRepertoire}
+                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {deletingRepertoire && <Loader2 className="w-4 h-4 animate-spin" />}
+                {deletingRepertoire ? 'Excluindo...' : 'Sim, Excluir'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
