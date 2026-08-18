@@ -133,6 +133,27 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
     }
   };
 
+  /** Exclui este repertório já feito e volta para a lista. */
+  const handleDeleteRepertoire = async () => {
+    setDeletingRepertoire(true);
+    try {
+      const { error } = await supabase.from('repertoires').delete().eq('id', repertoire.id);
+      if (error) throw error;
+      try {
+        await removeOfflineRepertoire(repertoire.id);
+      } catch (offlineErr) {
+        console.error('Repertório excluído, mas falhou ao limpar cópia offline:', offlineErr);
+      }
+      onBack();
+    } catch (err: any) {
+      console.error(err);
+      setNotification({ message: 'Erro ao excluir repertório: ' + err.message, type: 'error' });
+      setIsDeleteConfirmOpen(false);
+    } finally {
+      setDeletingRepertoire(false);
+    }
+  };
+
   useEffect(() => {
     if (notification) {
       const timer = setTimeout(() => setNotification(null), 3000);
@@ -220,6 +241,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   }
 
   const [isEditingBaseInfo, setIsEditingBaseInfo] = useState(false);
+  // Excluir este repertório (mesmo padrão de confirmação usado em outras
+  // exclusões do app: modal com "Cancelar" / "Sim, Excluir").
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [deletingRepertoire, setDeletingRepertoire] = useState(false);
   const [editForm, setEditForm] = useState({
     name: repertoire.name,
     type: repertoire.type,
@@ -755,8 +780,8 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                {idx + 1}
                             </div>
                             <div className="flex-1 overflow-hidden">
-                                <p className="font-bold text-slate-700 text-[10px] group-hover/item:text-brand-blue transition-colors truncate">{item.title}</p>
-                                <p className="text-[7px] text-slate-400 font-medium uppercase truncate leading-none">{item.artist}</p>
+                                <p className="font-bold text-slate-700 text-[14px] leading-none group-hover/item:text-brand-blue transition-colors truncate">{item.title}</p>
+                                <p className="text-[7px] text-slate-400 font-medium uppercase truncate leading-none mt-0.5">{item.artist}</p>
                              </div>
                             <div className="flex items-center gap-1.5 transition-opacity opacity-100">
                                <Eye className="w-3 h-3 text-slate-300" />
@@ -863,6 +888,17 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                      </span>
                      <ExternalLink className="w-4 h-4 opacity-30" />
                    </button>
+                   {!isGuest && (
+                     <button 
+                       onClick={() => setIsDeleteConfirmOpen(true)}
+                       className="w-full p-4 bg-red-50 text-red-500 font-bold rounded-2xl text-left flex items-center justify-between hover:bg-red-500 hover:text-white transition-colors"
+                     >
+                       <span className="flex items-center gap-2">
+                         <Trash2 className="w-4 h-4" />
+                         Excluir Repertório
+                       </span>
+                     </button>
+                   )}
                 </div>
 
                 {(repertoire.type === 'Missa' || repertoire.type === 'Laudes') && (
@@ -1067,6 +1103,37 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
             fetchLibrary();
           }}
         />
+      )}
+
+      {isDeleteConfirmOpen && (
+        <div className="fixed inset-0 z-[160] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-red-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
+              <Trash2 className="w-8 h-8 text-red-500" />
+            </div>
+            <h3 className="text-xl font-black text-slate-800 mb-2">Excluir Repertório?</h3>
+            <p className="text-slate-500 text-sm leading-relaxed mb-8">
+              Tem certeza que deseja excluir "{repertoire.name}"? Esta ação é permanente — as cifras em si não são apagadas, só este repertório e a lista de músicas dele.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setIsDeleteConfirmOpen(false)}
+                disabled={deletingRepertoire}
+                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteRepertoire}
+                disabled={deletingRepertoire}
+                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {deletingRepertoire && <Loader2 className="w-4 h-4 animate-spin" />}
+                {deletingRepertoire ? 'Excluindo...' : 'Sim, Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Notificações */}
