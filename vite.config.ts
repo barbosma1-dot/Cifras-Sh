@@ -18,7 +18,54 @@ export default defineConfig(({mode}) => {
           enabled: false
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024 // 5MB
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
+          // Páginas litúrgicas externas (abertas em app via LiturgyViewer,
+          // não em nova aba — só assim passam pelo service worker). Conteúdo
+          // muda todo dia, então NetworkFirst: busca a versão de hoje quando
+          // há internet (e atualiza o cache com ela); só cai para a última
+          // cópia vista quando a rede falha/está offline. Um CacheFirst
+          // "congelaria" no primeiro dia cacheado e nunca mais atualizaria.
+          runtimeCaching: [
+            {
+              urlPattern: /^https:\/\/liturgia\.cancaonova\.com\//,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'liturgia-cache',
+                expiration: {
+                  maxEntries: 15,
+                  maxAgeSeconds: 7 * 24 * 60 * 60 // 7 dias
+                },
+                networkTimeoutSeconds: 8,
+                cacheableResponse: { statuses: [0, 200] }
+              }
+            },
+            {
+              urlPattern: /^https:\/\/www\.catolicoorante\.com\.br\//,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'liturgia-cache',
+                expiration: {
+                  maxEntries: 15,
+                  maxAgeSeconds: 7 * 24 * 60 * 60
+                },
+                networkTimeoutSeconds: 8,
+                cacheableResponse: { statuses: [0, 200] }
+              }
+            },
+            {
+              urlPattern: /^https:\/\/www\.paulus\.com\.br\/portal\/liturgia-diaria-das-horas\//,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'liturgia-cache',
+                expiration: {
+                  maxEntries: 15,
+                  maxAgeSeconds: 7 * 24 * 60 * 60
+                },
+                networkTimeoutSeconds: 8,
+                cacheableResponse: { statuses: [0, 200] }
+              }
+            }
+          ]
         },
         manifest: {
           name: 'Cifra SH',
