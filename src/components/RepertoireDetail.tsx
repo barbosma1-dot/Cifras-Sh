@@ -913,7 +913,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                     {repertoire.type === 'Missa' && (
                       <>
                         <button
-                          onClick={() => setOpenLiturgyResource({ title: 'Liturgia Diária', url: 'https://liturgia.cancaonova.com/pb/' })}
+                          onClick={() => setOpenLiturgyResource({ title: 'Liturgia Diária', url: 'https://www.catolicoorante.com.br/liturgia_diaria.php' })}
                           className="w-full p-4 bg-brand-orange/5 text-brand-orange font-bold rounded-2xl text-left flex items-center justify-between hover:bg-brand-orange/10 transition-colors"
                         >
                           <span className="flex items-center gap-2">
