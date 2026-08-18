@@ -40,6 +40,7 @@ import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
+import LiturgyViewer from './LiturgyViewer';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import {
@@ -245,6 +246,11 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   // exclusões do app: modal com "Cancelar" / "Sim, Excluir").
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deletingRepertoire, setDeletingRepertoire] = useState(false);
+  // Qual recurso litúrgico está aberto no visualizador em app (LiturgyViewer)
+  // — null quando fechado. Cobre os três: Liturgia Diária, Orações
+  // Eucarísticas e Laudes (Ofício). Abrir dentro do app (em vez de nova aba)
+  // é o que permite ao service worker cachear a página para uso offline.
+  const [openLiturgyResource, setOpenLiturgyResource] = useState<{ title: string; url: string } | null>(null);
   const [editForm, setEditForm] = useState({
     name: repertoire.name,
     type: repertoire.type,
@@ -906,10 +912,8 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                     <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Recursos Litúrgicos</p>
                     {repertoire.type === 'Missa' && (
                       <>
-                        <a 
-                          href="https://liturgia.cancaonova.com/pb/" 
-                          target="_blank" 
-                          rel="noreferrer"
+                        <button
+                          onClick={() => setOpenLiturgyResource({ title: 'Liturgia Diária', url: 'https://liturgia.cancaonova.com/pb/' })}
                           className="w-full p-4 bg-brand-orange/5 text-brand-orange font-bold rounded-2xl text-left flex items-center justify-between hover:bg-brand-orange/10 transition-colors"
                         >
                           <span className="flex items-center gap-2">
@@ -917,11 +921,9 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                             Liturgia Diária
                           </span>
                           <ExternalLink className="w-4 h-4 opacity-50" />
-                        </a>
-                        <a 
-                          href="https://www.catolicoorante.com.br/oeucaristicas.html" 
-                          target="_blank" 
-                          rel="noreferrer"
+                        </button>
+                        <button
+                          onClick={() => setOpenLiturgyResource({ title: 'Orações Eucarísticas', url: 'https://www.catolicoorante.com.br/oeucaristicas.html' })}
                           className="w-full p-4 bg-brand-blue/5 text-brand-blue font-bold rounded-2xl text-left flex items-center justify-between hover:bg-brand-blue/10 transition-colors"
                         >
                           <span className="flex items-center gap-2">
@@ -929,15 +931,13 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                             Orações Eucarísticas
                           </span>
                           <ExternalLink className="w-4 h-4 opacity-50" />
-                        </a>
+                        </button>
                       </>
                     )}
 
                     {repertoire.type === 'Laudes' && (
-                      <a 
-                        href="https://www.paulus.com.br/portal/liturgia-diaria-das-horas/" 
-                        target="_blank" 
-                        rel="noreferrer"
+                      <button
+                        onClick={() => setOpenLiturgyResource({ title: 'Laudes (Ofício)', url: 'https://www.paulus.com.br/portal/liturgia-diaria-das-horas/' })}
                         className="w-full p-4 bg-brand-blue/5 text-brand-blue font-bold rounded-2xl text-left flex items-center justify-between hover:bg-brand-blue/10 transition-colors"
                       >
                         <span className="flex items-center gap-2">
@@ -945,7 +945,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                           Laudes (Ofício)
                         </span>
                         <ExternalLink className="w-4 h-4 opacity-50" />
-                      </a>
+                      </button>
                     )}
                   </div>
                 )}
@@ -1102,6 +1102,14 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
             fetchRepertoireItems();
             fetchLibrary();
           }}
+        />
+      )}
+
+      {openLiturgyResource && (
+        <LiturgyViewer
+          title={openLiturgyResource.title}
+          url={openLiturgyResource.url}
+          onClose={() => setOpenLiturgyResource(null)}
         />
       )}
 
