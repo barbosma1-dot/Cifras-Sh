@@ -41,6 +41,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
 import LiturgyViewer from './LiturgyViewer';
+import LiturgyTextViewer from './LiturgyTextViewer';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import {
@@ -251,6 +252,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   // Eucarísticas e Laudes (Ofício). Abrir dentro do app (em vez de nova aba)
   // é o que permite ao service worker cachear a página para uso offline.
   const [openLiturgyResource, setOpenLiturgyResource] = useState<{ title: string; url: string } | null>(null);
+  // Liturgia Diária virou uma tela separada (texto limpo, sem iframe) — ver
+  // LiturgyTextViewer.tsx. Orações Eucarísticas e Laudes continuam no
+  // visualizador antigo (iframe), que funciona bem para essas duas.
+  const [isLiturgyTextOpen, setIsLiturgyTextOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: repertoire.name,
     type: repertoire.type,
@@ -913,7 +918,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                     {repertoire.type === 'Missa' && (
                       <>
                         <button
-                          onClick={() => setOpenLiturgyResource({ title: 'Liturgia Diária', url: 'https://www.catolicoorante.com.br/liturgia_diaria.php' })}
+                          onClick={() => setIsLiturgyTextOpen(true)}
                           className="w-full p-4 bg-brand-orange/5 text-brand-orange font-bold rounded-2xl text-left flex items-center justify-between hover:bg-brand-orange/10 transition-colors"
                         >
                           <span className="flex items-center gap-2">
@@ -1111,6 +1116,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
           url={openLiturgyResource.url}
           onClose={() => setOpenLiturgyResource(null)}
         />
+      )}
+
+      {isLiturgyTextOpen && (
+        <LiturgyTextViewer onClose={() => setIsLiturgyTextOpen(false)} />
       )}
 
       {isDeleteConfirmOpen && (
