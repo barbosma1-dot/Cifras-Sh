@@ -10,6 +10,22 @@ interface LiturgyViewerProps {
 
 const LITURGY_CACHE_NAME = 'liturgia-cache'; // precisa bater com o cacheName em vite.config.ts
 
+// Abaixo disso, o conteúdo salvo quase certamente não é a página real (é
+// mais provável ser uma página de erro, um redirecionamento vazio, ou uma
+// tela de consentimento de cookies) — usamos isso para não dar o selo verde
+// de "Salvo offline" para um salvamento que na prática não serve pra nada.
+const MIN_VALID_CACHE_SIZE_BYTES = 2000;
+
+/** Lê o tamanho em bytes de uma resposta em cache. Funciona mesmo para respostas "opacas" (no-cors) — não dá para ler o conteúdo nem o status delas, mas o tamanho do blob ainda é acessível, e é o único sinal que temos para desconfiar de um salvamento "vazio". */
+async function getCachedResponseSize(response: Response): Promise<number> {
+  try {
+    const blob = await response.clone().blob();
+    return blob.size;
+  } catch {
+    return -1; // não deu para medir — trata como "não sabemos", não como erro
+  }
+}
+
 /**
  * Mostra uma página litúrgica externa (Liturgia Diária, Orações Eucarísticas
  * etc.) DENTRO do app, num iframe, em vez de abrir em nova aba.
@@ -35,7 +51,7 @@ const LITURGY_CACHE_NAME = 'liturgia-cache'; // precisa bater com o cacheName em
  */
 export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProps) {
   const isOnline = useOnlineStatus();
-  const [saveState, setSaveState] = useState<'idle' | 'checking' | 'saving' | 'saved' | 'error' | 'unsupported'>('checking');
+  const [saveState, setSaveState] = useState<'idle' | 'checking' | 'saving' | 'saved' | 'suspect' | 'error' | 'unsupported'>('checking');
 
   const checkIfCached = async () => {
     if (!('caches' in window)) {
@@ -45,7 +61,18 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
     try {
       const cache = await caches.open(LITURGY_CACHE_NAME);
       const match = await cache.match(url, { ignoreVary: true });
-      setSaveState(match ? 'saved' : 'idle');
+      if (!match) {
+        setSaveState('idle');
+        return;
+      }
+      const size = await getCachedResponseSize(match);
+      // Antes, só checávamos SE existia alguma coisa em cache para essa URL — mas
+      // com pedidos "no-cors" (necessários porque o site externo pode não liberar
+      // CORS), a resposta é "opaca": não dá pra ver o status HTTP real, então uma
+      // página de erro (404, redirecionamento vazio, tela de bloqueio) podia ser
+      // guardada e contada como sucesso, mostrando "Salvo offline" mesmo sem ter
+      // salvo nada útil — exatamente o que parecia estar acontecendo aqui.
+      setSaveState(size >= 0 && size < MIN_VALID_CACHE_SIZE_BYTES ? 'suspect' : 'saved');
     } catch {
       setSaveState('idle');
     }
@@ -73,7 +100,7 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
       // Dá um instante para o service worker terminar de gravar no Cache
       // Storage antes de checar — a gravação acontece de forma assíncrona
       // dentro do evento 'fetch' do SW.
-      await new Promise(resolve => setTimeout(resolve, 400));
+      await new Promise(resolve => setTimeout(resolve, 700));
       await checkIfCached();
     } catch (err) {
       console.error('Falha ao salvar página litúrgica para offline:', err);
@@ -97,15 +124,19 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleSaveOffline}
-              disabled={saveState === 'saving' || saveState === 'checking' || saveState === 'unsupported' || (!isOnline && saveState !== 'saved')}
+              disabled={saveState === 'saving' || saveState === 'checking' || saveState === 'unsupported' || (!isOnline && saveState !== 'saved' && saveState !== 'suspect')}
               title={
                 saveState === 'saved'
                   ? 'Disponível offline — clique para atualizar a cópia salva'
+                  : saveState === 'suspect'
+                  ? 'O que foi salvo parece pequeno demais para ser a página real (pode ser uma tela de erro). Clique para salvar de novo.'
                   : 'Salvar esta página para uso offline'
               }
               className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-[10px] font-bold px-2.5 disabled:opacity-40 ${
                 saveState === 'saved'
                   ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                  : saveState === 'suspect'
+                  ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
                   : saveState === 'error'
                   ? 'bg-red-50 text-red-500 hover:bg-red-100'
                   : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
@@ -115,7 +146,7 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : saveState === 'saved' ? (
                 <CheckCircle2 className="w-3.5 h-3.5" />
-              ) : saveState === 'error' ? (
+              ) : saveState === 'suspect' || saveState === 'error' ? (
                 <AlertTriangle className="w-3.5 h-3.5" />
               ) : (
                 <Download className="w-3.5 h-3.5" />
@@ -123,6 +154,7 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
               {saveState === 'saving' && 'Salvando...'}
               {saveState === 'checking' && 'Verificando...'}
               {saveState === 'saved' && 'Salvo offline'}
+              {saveState === 'suspect' && 'Salvo, mas suspeito'}
               {saveState === 'error' && 'Falhou, tentar de novo'}
               {saveState === 'idle' && 'Salvar offline'}
               {saveState === 'unsupported' && 'Sem suporte'}
@@ -149,6 +181,21 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
         {saveState === 'idle' && !isOnline && (
           <div className="px-5 py-3 bg-amber-50 border-b border-amber-100 text-[11px] text-amber-700 font-bold">
             Esta página ainda não tem cópia salva. Abra com internet e toque em "Salvar offline" antes de precisar dela sem rede.
+          </div>
+        )}
+
+        {saveState === 'suspect' && (
+          <div className="px-5 py-3 bg-amber-50 border-b border-amber-100 text-[11px] text-amber-700 font-bold">
+            O que está salvo parece pequeno demais para ser a página real — provavelmente uma tela de erro ou redirecionamento foi salva por engano.
+            {isOnline
+              ? ' Toque em "Salvo, mas suspeito" para tentar salvar de novo.'
+              : ' Isso só pode ser corrigido com internet.'}
+          </div>
+        )}
+
+        {!isOnline && (saveState === 'idle' || saveState === 'suspect') && (
+          <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 text-[11px] text-slate-500">
+            Se a área abaixo aparecer em branco com o dinossauro do Chrome, é porque esta página não tem uma cópia offline válida ainda — não é um problema no seu aparelho.
           </div>
         )}
 
