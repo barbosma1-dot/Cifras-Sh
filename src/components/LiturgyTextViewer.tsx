@@ -131,12 +131,6 @@ export default function LiturgyTextViewer({ onClose, date }: LiturgyTextViewerPr
                 Sem internet — mostrando o texto salvo.
               </p>
             )}
-            {saved?.dateMismatch && (
-              <p className="flex items-center gap-1 text-[10px] font-bold text-amber-600 mt-0.5">
-                <AlertTriangle className="w-3 h-3 shrink-0" />
-                O site mostrou outra data — pode não ser exatamente {dateLabel}.
-              </p>
-            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -186,6 +180,18 @@ export default function LiturgyTextViewer({ onClose, date }: LiturgyTextViewerPr
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-6">
+          {saved?.dateMismatch && !loading && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-5 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-amber-800 text-sm font-bold">Este texto pode não ser de {dateLabel}</p>
+                <p className="text-amber-700 text-xs mt-1">
+                  O site de origem devolveu {saved.resolvedDate ? `o dia ${new Date(saved.resolvedDate + 'T12:00:00').toLocaleDateString('pt-BR')}` : 'outra data'} em vez da data pedida — isso é uma instabilidade do site, não do app.
+                  Toque em "Atualizar" pra tentar de novo, ou confira no botão de abrir no navegador.
+                </p>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="flex justify-center pt-16">
               <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
