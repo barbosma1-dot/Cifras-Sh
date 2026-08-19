@@ -41,7 +41,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
 import LiturgyViewer from './LiturgyViewer';
-import LiturgyTextViewer from './LiturgyTextViewer';
+import LiturgyTextViewer, { fetchAndSaveLiturgy, loadSavedLiturgy } from './LiturgyTextViewer';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import {
@@ -256,6 +256,34 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   // LiturgyTextViewer.tsx. Orações Eucarísticas e Laudes continuam no
   // visualizador antigo (iframe), que funciona bem para essas duas.
   const [isLiturgyTextOpen, setIsLiturgyTextOpen] = useState(false);
+
+  // Data do repertório em AAAA-MM-DD (fuso LOCAL, não UTC — `toISOString()`
+  // pode "voltar" um dia dependendo do horário/fuso, o que faria salvar a
+  // liturgia do dia errado). `repertoire.date` normalmente vem como
+  // timestamp ISO do banco.
+  const repertoireDateKey = (() => {
+    const d = new Date(repertoire.date);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+
+  // Salva a Liturgia Diária do dia deste repertório automaticamente, assim
+  // que a tela abre — sem precisar que a pessoa toque em nada. Assim, quando
+  // ela abrir o app já sem internet (ex.: dentro da igreja, no dia do
+  // repertório), o texto já está lá. Só busca se ainda não tiver essa data
+  // salva (evita gastar dados de novo à toa) e se estiver online agora.
+  useEffect(() => {
+    if (!repertoireDateKey) return;
+    if (loadSavedLiturgy(repertoireDateKey)) return; // já salvo, nada a fazer
+    if (!navigator.onLine) return;
+    fetchAndSaveLiturgy(repertoireDateKey).catch(err => {
+      // Silencioso de propósito: isso é um "pré-carregamento" em segundo
+      // plano, não uma ação que a pessoa pediu diretamente — se falhar (site
+      // fora do ar, sem rede momentânea), ela ainda pode tentar manualmente
+      // depois abrindo o visualizador, que mostra o erro normalmente.
+      console.warn('Pré-carregamento automático da liturgia do repertório falhou:', err);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repertoireDateKey]);
   const [editForm, setEditForm] = useState({
     name: repertoire.name,
     type: repertoire.type,
@@ -1119,7 +1147,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
       )}
 
       {isLiturgyTextOpen && (
-        <LiturgyTextViewer onClose={() => setIsLiturgyTextOpen(false)} />
+        <LiturgyTextViewer onClose={() => setIsLiturgyTextOpen(false)} date={repertoireDateKey} />
       )}
 
       {isDeleteConfirmOpen && (
