@@ -53,18 +53,13 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
   const isOnline = useOnlineStatus();
   const [saveState, setSaveState] = useState<'idle' | 'checking' | 'saving' | 'saved' | 'suspect' | 'error' | 'unsupported'>('checking');
 
-  const checkIfCached = async () => {
-    if (!('caches' in window)) {
-      setSaveState('unsupported');
-      return;
-    }
+  /** Lê o estado atual do cache sem mexer no state do componente — usado tanto na checagem inicial quanto (repetidamente) durante o salvamento. */
+  const getCacheState = async (): Promise<'idle' | 'saved' | 'suspect' | 'unsupported'> => {
+    if (!('caches' in window)) return 'unsupported';
     try {
       const cache = await caches.open(LITURGY_CACHE_NAME);
       const match = await cache.match(url, { ignoreVary: true });
-      if (!match) {
-        setSaveState('idle');
-        return;
-      }
+      if (!match) return 'idle';
       const size = await getCachedResponseSize(match);
       // Antes, só checávamos SE existia alguma coisa em cache para essa URL — mas
       // com pedidos "no-cors" (necessários porque o site externo pode não liberar
@@ -72,16 +67,43 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
       // página de erro (404, redirecionamento vazio, tela de bloqueio) podia ser
       // guardada e contada como sucesso, mostrando "Salvo offline" mesmo sem ter
       // salvo nada útil — exatamente o que parecia estar acontecendo aqui.
-      setSaveState(size >= 0 && size < MIN_VALID_CACHE_SIZE_BYTES ? 'suspect' : 'saved');
+      return size >= 0 && size < MIN_VALID_CACHE_SIZE_BYTES ? 'suspect' : 'saved';
     } catch {
-      setSaveState('idle');
+      return 'idle';
     }
+  };
+
+  const checkIfCached = async () => {
+    setSaveState(await getCacheState());
   };
 
   useEffect(() => {
     checkIfCached();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
+
+  /** Faz um fetch (pra cachear via service worker) e devolve o estado resultante. */
+  const fetchAndCheck = async (): Promise<'idle' | 'saved' | 'suspect' | 'unsupported'> => {
+    // no-cors: aceita resposta "opaca" (não conseguimos ler o conteúdo por
+    // causa de CORS, mas o service worker ainda intercepta e guarda a
+    // resposta no cache — é exatamente o que a regra `cacheableResponse:
+    // { statuses: [0, 200] }` do vite.config.ts está preparada para
+    // aceitar). cache: 'reload' força buscar uma cópia nova da rede agora,
+    // em vez de aceitar algo que já esteja no cache do navegador comum.
+    //
+    // credentials: 'include' manda os cookies desse domínio externo junto
+    // (por padrão o fetch cross-origin NÃO manda) — importante porque um
+    // salvamento "suspeito" (resposta pequena demais) muitas vezes é uma
+    // tela de bloqueio/desafio de proteção anti-bot que só libera o
+    // conteúdo de verdade depois que um cookie de sessão é aceito, cookie
+    // esse que a navegação normal do iframe já pode ter recebido.
+    await fetch(url, { mode: 'no-cors', cache: 'reload', credentials: 'include' });
+    // Dá um instante para o service worker terminar de gravar no Cache
+    // Storage antes de checar — a gravação acontece de forma assíncrona
+    // dentro do evento 'fetch' do SW.
+    await new Promise(resolve => setTimeout(resolve, 700));
+    return getCacheState();
+  };
 
   const handleSaveOffline = async () => {
     if (!isOnline) {
@@ -90,18 +112,16 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
     }
     setSaveState('saving');
     try {
-      // no-cors: aceita resposta "opaca" (não conseguimos ler o conteúdo por
-      // causa de CORS, mas o service worker ainda intercepta e guarda a
-      // resposta no cache — é exatamente o que a regra `cacheableResponse:
-      // { statuses: [0, 200] }` do vite.config.ts está preparada para
-      // aceitar). cache: 'reload' força buscar uma cópia nova da rede agora,
-      // em vez de aceitar algo que já esteja no cache do navegador comum.
-      await fetch(url, { mode: 'no-cors', cache: 'reload' });
-      // Dá um instante para o service worker terminar de gravar no Cache
-      // Storage antes de checar — a gravação acontece de forma assíncrona
-      // dentro do evento 'fetch' do SW.
-      await new Promise(resolve => setTimeout(resolve, 700));
-      await checkIfCached();
+      let state = await fetchAndCheck();
+      // Se a 1ª tentativa veio "suspeita", tenta mais uma vez antes de
+      // desistir: alguns sites com proteção anti-bot respondem com uma
+      // página pequena de desafio/redirecionamento na 1ª requisição sem
+      // cookie válido, e só entregam o conteúdo de verdade numa 2ª
+      // requisição — já com o cookie que essa 1ª resposta setou.
+      if (state === 'suspect') {
+        state = await fetchAndCheck();
+      }
+      setSaveState(state);
     } catch (err) {
       console.error('Falha ao salvar página litúrgica para offline:', err);
       setSaveState('error');
