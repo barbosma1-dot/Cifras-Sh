@@ -29,74 +29,54 @@ export const onRequestGet = async (context: any) => {
   const sourceUrl = `https://sagradaliturgia.com.br/liturgia_diaria.php${requestedDate ? `?date=${requestedDate}` : ''}`;
 
   try {
-    const response = await fetch(sourceUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9',
-        'Referer': 'https://sagradaliturgia.com.br/'
+    // O site de origem se mostrou instável para datas alguns dias no futuro:
+    // em testes, a MESMA URL com o mesmo ?date= devolveu dias diferentes (e
+    // errados) em pedidos consecutivos — sinal de cache/CDN dele servindo
+    // versões antigas por engano, não um problema determinístico que uma
+    // tentativa só resolveria. Por isso tentamos algumas vezes, sempre com
+    // um parâmetro extra pra tentar furar cache, até bater a data certa (ou
+    // esgotar as tentativas — nesse caso devolvemos o que veio, com o aviso
+    // de "dateMismatch" pro app mostrar).
+    const MAX_ATTEMPTS = requestedDate ? 3 : 1;
+    let text = '';
+    let title = 'Liturgia Diária';
+    let resolvedDate: string | null = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const attemptUrl = requestedDate
+        ? `${sourceUrl}&_=${Date.now()}${attempt}` // cache-buster muda a cada tentativa
+        : sourceUrl;
+
+      const response = await fetch(attemptUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9',
+          'Referer': 'https://sagradaliturgia.com.br/',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        }
+      });
+
+      if (!response.ok) {
+        if (attempt === MAX_ATTEMPTS) {
+          return new Response(JSON.stringify({
+            error: `O site da liturgia respondeu com erro (${response.status}). Tente novamente em alguns minutos.`
+          }), { status: 502, headers: { "Content-Type": "application/json" } });
+        }
+        continue;
       }
-    });
 
-    if (!response.ok) {
-      return new Response(JSON.stringify({
-        error: `O site da liturgia respondeu com erro (${response.status}). Tente novamente em alguns minutos.`
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      const html = await response.text();
+      const parsed = parseLiturgyHtml(html);
+      text = parsed.text;
+      title = parsed.title;
+      resolvedDate = extractDateFromText(text);
+
+      if (!requestedDate || resolvedDate === requestedDate) break; // acertou (ou não tínhamos data pedida) — para de tentar
+      // Errou a data: tenta de novo (se ainda houver tentativas), senão segue
+      // com o que veio mesmo assim (melhor mostrar algo com aviso do que nada).
     }
-
-    const html = await response.text();
-    const $ = cheerio.load(html);
-
-    // Remove tudo que não é o texto da liturgia em si: scripts, estilos,
-    // anúncios, menus, cabeçalho/rodapé, e especificamente o painel de
-    // "Escolher outra data" (calendário/formulário — id "leftpanel1", âncora
-    // usada pelo próprio link "Escolher outra data" na página).
-    $('script, style, noscript, iframe, ins, nav, header, footer, form').remove();
-    $('#leftpanel1, .leftpanel, .calendar, .datepicker').remove();
-    $('[id*="ad" i], [class*="ad-" i], [class*="-ad" i], [class*="banner" i], [class*="cookie" i], [class*="menu" i], [class*="nav" i], [class*="social" i], [class*="share" i], [class*="comment" i], [class*="publicidade" i], [class*="anuncio" i]').remove();
-    // Links de navegação entre dias ("Voltar"/"Próximo") não são conteúdo da
-    // liturgia — removidos pelo texto do link, não só por classe/id, porque
-    // esse site parece não usar classes previsíveis para eles.
-    $('a').each((_, el) => {
-      const t = $(el).text().trim().toLowerCase();
-      if (['voltar', 'próximo', 'proximo', 'escolher outra data', 'escolher data'].includes(t)) {
-        $(el).remove();
-      }
-    });
-
-    const candidateSelectors = ['main', '#content', '.content', '#liturgia', '.liturgia', 'article', '.container'];
-    let container = null;
-    for (const sel of candidateSelectors) {
-      const el = $(sel);
-      if (el.length > 0 && el.text().trim().length > 200) {
-        container = el.first();
-        break;
-      }
-    }
-    const root = container || $('body');
-
-    const blocks: string[] = [];
-    root.find('h1, h2, h3, h4, p, li, div').each((_, el) => {
-      const txt = $(el).clone().children('h1,h2,h3,h4,p,li,div').remove().end().text().trim();
-      if (txt) blocks.push(txt);
-    });
-
-    let text = blocks.join('\n\n');
-    if (!text || text.length < 100) {
-      text = root.text();
-    }
-    text = text
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .replace(/^\s+|\s+$/g, '');
-
-    const junkLines = new Set(['voltar', 'próximo', 'proximo', 'compartilhar', 'whatsapp', 'facebook', 'twitter', 'telegram', 'copiar link', 'escolher outra data', 'escolher data:', 'escolher data']);
-    text = text
-      .split('\n')
-      .filter(line => !junkLines.has(line.trim().toLowerCase()))
-      .join('\n');
-
-    const title = $('title').first().text().trim() || 'Liturgia Diária';
 
     if (!text || text.length < 80) {
       return new Response(JSON.stringify({
@@ -104,10 +84,6 @@ export const onRequestGet = async (context: any) => {
       }), { status: 502, headers: { "Content-Type": "application/json" } });
     }
 
-    // Confere se a data que veio no texto bate com a data pedida — ver
-    // explicação no topo do arquivo sobre o site às vezes devolver outro dia
-    // silenciosamente.
-    const resolvedDate = extractDateFromText(text);
     const dateMismatch = !!(requestedDate && resolvedDate && resolvedDate !== requestedDate);
 
     return new Response(JSON.stringify({
@@ -127,6 +103,59 @@ export const onRequestGet = async (context: any) => {
     }), { status: 500, headers: { "Content-Type": "application/json" } });
   }
 };
+
+// Limpa o HTML bruto (remove lixo de navegação/anúncio/menu) e extrai o
+// texto da liturgia + título. Separado em função própria porque agora
+// precisa rodar uma vez por tentativa dentro do loop de retentativa acima.
+function parseLiturgyHtml(html: string): { text: string; title: string } {
+  const $ = cheerio.load(html);
+
+  $('script, style, noscript, iframe, ins, nav, header, footer, form').remove();
+  $('#leftpanel1, .leftpanel, .calendar, .datepicker').remove();
+  $('[id*="ad" i], [class*="ad-" i], [class*="-ad" i], [class*="banner" i], [class*="cookie" i], [class*="menu" i], [class*="nav" i], [class*="social" i], [class*="share" i], [class*="comment" i], [class*="publicidade" i], [class*="anuncio" i]').remove();
+  $('a').each((_, el) => {
+    const t = $(el).text().trim().toLowerCase();
+    if (['voltar', 'próximo', 'proximo', 'escolher outra data', 'escolher data'].includes(t)) {
+      $(el).remove();
+    }
+  });
+
+  const candidateSelectors = ['main', '#content', '.content', '#liturgia', '.liturgia', 'article', '.container'];
+  let container = null;
+  for (const sel of candidateSelectors) {
+    const el = $(sel);
+    if (el.length > 0 && el.text().trim().length > 200) {
+      container = el.first();
+      break;
+    }
+  }
+  const root = container || $('body');
+
+  const blocks: string[] = [];
+  root.find('h1, h2, h3, h4, p, li, div').each((_, el) => {
+    const txt = $(el).clone().children('h1,h2,h3,h4,p,li,div').remove().end().text().trim();
+    if (txt) blocks.push(txt);
+  });
+
+  let text = blocks.join('\n\n');
+  if (!text || text.length < 100) {
+    text = root.text();
+  }
+  text = text
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\s+|\s+$/g, '');
+
+  const junkLines = new Set(['voltar', 'próximo', 'proximo', 'compartilhar', 'whatsapp', 'facebook', 'twitter', 'telegram', 'copiar link', 'escolher outra data', 'escolher data:', 'escolher data']);
+  text = text
+    .split('\n')
+    .filter(line => !junkLines.has(line.trim().toLowerCase()))
+    .join('\n');
+
+  const title = $('title').first().text().trim() || 'Liturgia Diária';
+
+  return { text, title };
+}
 
 // Procura no texto extraído um cabeçalho de data no formato do site
 // ("Terça-feira, 18 de Agosto de 2026") e devolve em AAAA-MM-DD, ou null se
