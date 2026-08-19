@@ -4,20 +4,22 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 
 interface LiturgyTextViewerProps {
   onClose: () => void;
+  // Data (AAAA-MM-DD) da liturgia a mostrar/salvar. Se omitido, usa hoje —
+  // mantém o comportamento antigo pra quem abre sem vir de um repertório
+  // com data específica.
+  date?: string;
 }
 
-const STORAGE_KEY = 'liturgia-diaria-texto-salvo';
+const STORAGE_PREFIX = 'liturgia-diaria-texto-salvo';
 
 interface SavedLiturgy {
   title: string;
   text: string;
   source: string;
   fetchedAt: string;
-  // Guardamos a data (YYYY-MM-DD, fuso local) em que foi buscado, só para
-  // avisar a pessoa se está vendo o texto de um dia diferente de hoje —
-  // não bloqueamos nada por isso, porque sem internet é melhor mostrar uma
-  // liturgia "velha" do que nenhuma.
-  savedForDate: string;
+  requestedDate: string | null;
+  resolvedDate: string | null;
+  dateMismatch?: boolean;
 }
 
 function todayKey(): string {
@@ -25,87 +27,87 @@ function todayKey(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Cada data vira uma chave própria de localStorage — assim salvar a liturgia
+// do dia de um repertório futuro não sobrescreve a de "hoje" (ou de outro
+// repertório), e várias datas podem ficar guardadas offline ao mesmo tempo.
+function storageKeyFor(dateKey: string): string {
+  return `${STORAGE_PREFIX}:${dateKey}`;
+}
+
+/** Busca (se online) e guarda em localStorage a liturgia de uma data específica. Usada tanto pelo visualizador quanto para salvar em segundo plano ao abrir um repertório. */
+export async function fetchAndSaveLiturgy(dateKey: string): Promise<SavedLiturgy> {
+  const res = await fetch(`/api/liturgy?date=${dateKey}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
+  const record: SavedLiturgy = {
+    title: data.title,
+    text: data.text,
+    source: data.source,
+    fetchedAt: data.fetchedAt,
+    requestedDate: data.requestedDate,
+    resolvedDate: data.resolvedDate,
+    dateMismatch: data.dateMismatch,
+  };
+  localStorage.setItem(storageKeyFor(dateKey), JSON.stringify(record));
+  return record;
+}
+
+export function loadSavedLiturgy(dateKey: string): SavedLiturgy | null {
+  try {
+    const raw = localStorage.getItem(storageKeyFor(dateKey));
+    return raw ? (JSON.parse(raw) as SavedLiturgy) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Mostra a Liturgia Diária como TEXTO LIMPO (sem anúncios, sem navegação
- * para outros dias, sem propaganda), buscado e filtrado no servidor
- * (functions/api/liturgy.ts) e guardado em localStorage.
- *
- * Por que texto em vez de iframe: a página original injeta um anúncio de
- * vídeo em tela cheia e não se comportava de forma confiável com o cache do
- * service worker (às vezes salvava uma versão pequena/errada em vez da
- * página real). Guardar só o texto, já limpo, resolve os dois problemas de
- * uma vez — e de quebra atende ao pedido de salvar só o conteúdo do dia,
- * sem os "anexos" (menu de outros dias, anúncios etc.).
+ * para outros dias) de uma DATA ESPECÍFICA — por padrão hoje, mas pode ser a
+ * data de um repertório (passado ou futuro). Buscado e filtrado no servidor
+ * (functions/api/liturgy.ts) e guardado em localStorage, por data.
  */
-export default function LiturgyTextViewer({ onClose }: LiturgyTextViewerProps) {
+export default function LiturgyTextViewer({ onClose, date }: LiturgyTextViewerProps) {
+  const dateKey = date || todayKey();
+  const isToday = dateKey === todayKey();
   const isOnline = useOnlineStatus();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedLiturgy | null>(null);
 
-  const loadFromStorage = (): SavedLiturgy | null => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as SavedLiturgy) : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const fetchAndSave = async () => {
-    try {
-      const res = await fetch('/api/liturgy');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
-      const record: SavedLiturgy = {
-        title: data.title,
-        text: data.text,
-        source: data.source,
-        fetchedAt: data.fetchedAt,
-        savedForDate: todayKey()
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(record));
-      setSaved(record);
-      setError(null);
-    } catch (err: any) {
-      console.error('Erro ao buscar/salvar liturgia:', err);
-      throw err;
-    }
-  };
-
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const cached = loadFromStorage();
+      setError(null);
+      const cached = loadSavedLiturgy(dateKey);
       if (cached) setSaved(cached);
 
-      // Se já temos o texto de HOJE salvo, não precisa buscar de novo — evita
-      // gastar dados/tempo à toa. Se for de outro dia (ou não houver nada
-      // salvo ainda) e estivermos online, busca uma versão atualizada.
-      const needsRefresh = !cached || cached.savedForDate !== todayKey();
-      if (needsRefresh && isOnline) {
+      // Já temos essa data salva -> não busca de novo à toa (dias passados
+      // não mudam; hoje já buscamos uma vez). Só refaz se não tiver nada
+      // salvo ainda e estivermos online.
+      if (!cached && isOnline) {
         try {
-          await fetchAndSave();
+          const record = await fetchAndSaveLiturgy(dateKey);
+          setSaved(record);
         } catch (err: any) {
-          if (!cached) setError(err?.message || 'Não foi possível buscar a liturgia de hoje.');
-          // Se já tinha algo salvo (de outro dia), mantém mostrando aquilo em
-          // vez de deixar a tela vazia por causa de uma falha ao atualizar.
+          setError(err?.message || 'Não foi possível buscar a liturgia desta data.');
         }
       } else if (!cached && !isOnline) {
-        setError('Sem internet e nenhuma liturgia salva ainda. Conecte-se à internet pelo menos uma vez para salvar o texto do dia.');
+        setError('Sem internet e nenhuma liturgia salva para esta data ainda. Conecte-se à internet pelo menos uma vez para salvar o texto.');
       }
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [dateKey]);
 
   const handleRefresh = async () => {
     if (!isOnline) return;
     setRefreshing(true);
     setError(null);
     try {
-      await fetchAndSave();
+      const record = await fetchAndSaveLiturgy(dateKey);
+      setSaved(record);
     } catch (err: any) {
       setError(err?.message || 'Não foi possível atualizar a liturgia agora.');
     } finally {
@@ -113,24 +115,26 @@ export default function LiturgyTextViewer({ onClose }: LiturgyTextViewerProps) {
     }
   };
 
-  const isStale = saved && saved.savedForDate !== todayKey();
+  const dateLabel = new Date(dateKey + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-2xl sm:rounded-3xl rounded-t-3xl shadow-2xl border border-slate-100 h-[90vh] sm:h-[85vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0 gap-3">
           <div className="min-w-0">
-            <h3 className="font-black text-slate-800 text-sm truncate">Liturgia Diária</h3>
+            <h3 className="font-black text-slate-800 text-sm truncate">
+              Liturgia Diária {!isToday && <span className="font-bold text-slate-400">— {dateLabel}</span>}
+            </h3>
             {!isOnline && (
               <p className="flex items-center gap-1 text-[10px] font-bold text-amber-600 mt-0.5">
                 <WifiOff className="w-3 h-3 shrink-0" />
                 Sem internet — mostrando o texto salvo.
               </p>
             )}
-            {isOnline && isStale && (
+            {saved?.dateMismatch && (
               <p className="flex items-center gap-1 text-[10px] font-bold text-amber-600 mt-0.5">
                 <AlertTriangle className="w-3 h-3 shrink-0" />
-                Texto salvo de outro dia — atualize.
+                O site mostrou outra data — pode não ser exatamente {dateLabel}.
               </p>
             )}
           </div>
@@ -138,21 +142,21 @@ export default function LiturgyTextViewer({ onClose }: LiturgyTextViewerProps) {
             <button
               onClick={handleRefresh}
               disabled={refreshing || loading || !isOnline}
-              title={isOnline ? 'Buscar a versão de hoje e salvar' : 'Precisa de internet para atualizar'}
+              title={isOnline ? 'Buscar e salvar novamente' : 'Precisa de internet para atualizar'}
               className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-[10px] font-bold px-2.5 disabled:opacity-40 ${
-                saved && !isStale
+                saved && !saved.dateMismatch
                   ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
                   : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
               }`}
             >
               {refreshing ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : saved && !isStale ? (
+              ) : saved && !saved.dateMismatch ? (
                 <CheckCircle2 className="w-3.5 h-3.5" />
               ) : (
                 <Download className="w-3.5 h-3.5" />
               )}
-              {refreshing ? 'Atualizando...' : saved && !isStale ? 'Salvo de hoje' : 'Salvar de hoje'}
+              {refreshing ? 'Atualizando...' : saved && !saved.dateMismatch ? 'Salvo offline' : 'Salvar offline'}
             </button>
             <button
               onClick={handleRefresh}
@@ -163,7 +167,7 @@ export default function LiturgyTextViewer({ onClose }: LiturgyTextViewerProps) {
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
             <a
-              href="https://www.catolicoorante.com.br/liturgia_diaria.php"
+              href={`https://sagradaliturgia.com.br/liturgia_diaria.php?date=${dateKey}`}
               target="_blank"
               rel="noreferrer"
               title="Abrir a página original no navegador"
@@ -213,7 +217,7 @@ export default function LiturgyTextViewer({ onClose }: LiturgyTextViewerProps) {
                 {saved.text}
               </div>
               <p className="text-[10px] text-slate-300 mt-8 pt-4 border-t border-slate-50">
-                Fonte: Católico Orante — texto extraído em {new Date(saved.fetchedAt).toLocaleString('pt-BR')}
+                Fonte: Sagrada Liturgia — texto extraído em {new Date(saved.fetchedAt).toLocaleString('pt-BR')}
               </p>
             </>
           ) : null}
