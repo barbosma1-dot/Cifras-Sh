@@ -10,22 +10,6 @@ interface LiturgyViewerProps {
 
 const LITURGY_CACHE_NAME = 'liturgia-cache'; // precisa bater com o cacheName em vite.config.ts
 
-// Abaixo disso, o conteúdo salvo quase certamente não é a página real (é
-// mais provável ser uma página de erro, um redirecionamento vazio, ou uma
-// tela de consentimento de cookies) — usamos isso para não dar o selo verde
-// de "Salvo offline" para um salvamento que na prática não serve pra nada.
-const MIN_VALID_CACHE_SIZE_BYTES = 2000;
-
-/** Lê o tamanho em bytes de uma resposta em cache. Funciona mesmo para respostas "opacas" (no-cors) — não dá para ler o conteúdo nem o status delas, mas o tamanho do blob ainda é acessível, e é o único sinal que temos para desconfiar de um salvamento "vazio". */
-async function getCachedResponseSize(response: Response): Promise<number> {
-  try {
-    const blob = await response.clone().blob();
-    return blob.size;
-  } catch {
-    return -1; // não deu para medir — trata como "não sabemos", não como erro
-  }
-}
-
 /**
  * Mostra uma página litúrgica externa (Liturgia Diária, Orações Eucarísticas
  * etc.) DENTRO do app, num iframe, em vez de abrir em nova aba.
@@ -48,62 +32,42 @@ async function getCachedResponseSize(response: Response): Promise<number> {
  * o botão continua funcionando como forma de "baixar para depois", mesmo
  * que a pré-visualização aqui dentro não apareça — nesse caso, use o
  * botão de abrir no navegador (ícone ao lado do X) para ver o conteúdo.
+ *
+ * IMPORTANTE sobre a checagem "salvou direito?": como todos os sites
+ * litúrgicos configurados (Canção Nova, Católico Orante, Paulus) são de
+ * outro domínio, a resposta buscada em modo "no-cors" é sempre "opaca" —
+ * o navegador não deixa o JavaScript enxergar nem o conteúdo, nem o status
+ * HTTP real, nem o tamanho real dela (isso é uma proteção contra vazamento
+ * de dados entre sites, não um detalhe nosso). Chegamos a tentar usar
+ * `blob().size` de uma resposta em cache como pista indireta de "isso é
+ * grande o suficiente pra ser a página real, não uma tela de erro vazia" —
+ * mas para respostas opacas esse tamanho lido pelo JS normalmente vem como
+ * 0, então essa checagem marcava TODO salvamento como "suspeito", mesmo
+ * quando o conteúdo salvo estava perfeito. Por isso não existe mais estado
+ * "suspeito" aqui: se o `fetch` não lançou erro, tratamos como salvo.
  */
 export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProps) {
   const isOnline = useOnlineStatus();
-  const [saveState, setSaveState] = useState<'idle' | 'checking' | 'saving' | 'saved' | 'suspect' | 'error' | 'unsupported'>('checking');
+  const [saveState, setSaveState] = useState<'idle' | 'checking' | 'saving' | 'saved' | 'error' | 'unsupported'>('checking');
 
-  /** Lê o estado atual do cache sem mexer no state do componente — usado tanto na checagem inicial quanto (repetidamente) durante o salvamento. */
-  const getCacheState = async (): Promise<'idle' | 'saved' | 'suspect' | 'unsupported'> => {
-    if (!('caches' in window)) return 'unsupported';
+  const checkIfCached = async () => {
+    if (!('caches' in window)) {
+      setSaveState('unsupported');
+      return;
+    }
     try {
       const cache = await caches.open(LITURGY_CACHE_NAME);
       const match = await cache.match(url, { ignoreVary: true });
-      if (!match) return 'idle';
-      const size = await getCachedResponseSize(match);
-      // Antes, só checávamos SE existia alguma coisa em cache para essa URL — mas
-      // com pedidos "no-cors" (necessários porque o site externo pode não liberar
-      // CORS), a resposta é "opaca": não dá pra ver o status HTTP real, então uma
-      // página de erro (404, redirecionamento vazio, tela de bloqueio) podia ser
-      // guardada e contada como sucesso, mostrando "Salvo offline" mesmo sem ter
-      // salvo nada útil — exatamente o que parecia estar acontecendo aqui.
-      return size >= 0 && size < MIN_VALID_CACHE_SIZE_BYTES ? 'suspect' : 'saved';
+      setSaveState(match ? 'saved' : 'idle');
     } catch {
-      return 'idle';
+      setSaveState('idle');
     }
-  };
-
-  const checkIfCached = async () => {
-    setSaveState(await getCacheState());
   };
 
   useEffect(() => {
     checkIfCached();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
-
-  /** Faz um fetch (pra cachear via service worker) e devolve o estado resultante. */
-  const fetchAndCheck = async (): Promise<'idle' | 'saved' | 'suspect' | 'unsupported'> => {
-    // no-cors: aceita resposta "opaca" (não conseguimos ler o conteúdo por
-    // causa de CORS, mas o service worker ainda intercepta e guarda a
-    // resposta no cache — é exatamente o que a regra `cacheableResponse:
-    // { statuses: [0, 200] }` do vite.config.ts está preparada para
-    // aceitar). cache: 'reload' força buscar uma cópia nova da rede agora,
-    // em vez de aceitar algo que já esteja no cache do navegador comum.
-    //
-    // credentials: 'include' manda os cookies desse domínio externo junto
-    // (por padrão o fetch cross-origin NÃO manda) — importante porque um
-    // salvamento "suspeito" (resposta pequena demais) muitas vezes é uma
-    // tela de bloqueio/desafio de proteção anti-bot que só libera o
-    // conteúdo de verdade depois que um cookie de sessão é aceito, cookie
-    // esse que a navegação normal do iframe já pode ter recebido.
-    await fetch(url, { mode: 'no-cors', cache: 'reload', credentials: 'include' });
-    // Dá um instante para o service worker terminar de gravar no Cache
-    // Storage antes de checar — a gravação acontece de forma assíncrona
-    // dentro do evento 'fetch' do SW.
-    await new Promise(resolve => setTimeout(resolve, 700));
-    return getCacheState();
-  };
 
   const handleSaveOffline = async () => {
     if (!isOnline) {
@@ -112,16 +76,18 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
     }
     setSaveState('saving');
     try {
-      let state = await fetchAndCheck();
-      // Se a 1ª tentativa veio "suspeita", tenta mais uma vez antes de
-      // desistir: alguns sites com proteção anti-bot respondem com uma
-      // página pequena de desafio/redirecionamento na 1ª requisição sem
-      // cookie válido, e só entregam o conteúdo de verdade numa 2ª
-      // requisição — já com o cookie que essa 1ª resposta setou.
-      if (state === 'suspect') {
-        state = await fetchAndCheck();
-      }
-      setSaveState(state);
+      // no-cors: aceita resposta "opaca" (não conseguimos ler o conteúdo por
+      // causa de CORS, mas o service worker ainda intercepta e guarda a
+      // resposta no cache — é exatamente o que a regra `cacheableResponse:
+      // { statuses: [0, 200] }` do vite.config.ts está preparada para
+      // aceitar). cache: 'reload' força buscar uma cópia nova da rede agora,
+      // em vez de aceitar algo que já esteja no cache do navegador comum.
+      await fetch(url, { mode: 'no-cors', cache: 'reload' });
+      // Dá um instante para o service worker terminar de gravar no Cache
+      // Storage antes de checar — a gravação acontece de forma assíncrona
+      // dentro do evento 'fetch' do SW.
+      await new Promise(resolve => setTimeout(resolve, 700));
+      await checkIfCached();
     } catch (err) {
       console.error('Falha ao salvar página litúrgica para offline:', err);
       setSaveState('error');
@@ -144,19 +110,15 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleSaveOffline}
-              disabled={saveState === 'saving' || saveState === 'checking' || saveState === 'unsupported' || (!isOnline && saveState !== 'saved' && saveState !== 'suspect')}
+              disabled={saveState === 'saving' || saveState === 'checking' || saveState === 'unsupported' || (!isOnline && saveState !== 'saved')}
               title={
                 saveState === 'saved'
                   ? 'Disponível offline — clique para atualizar a cópia salva'
-                  : saveState === 'suspect'
-                  ? 'O que foi salvo parece pequeno demais para ser a página real (pode ser uma tela de erro). Clique para salvar de novo.'
                   : 'Salvar esta página para uso offline'
               }
               className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-[10px] font-bold px-2.5 disabled:opacity-40 ${
                 saveState === 'saved'
                   ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
-                  : saveState === 'suspect'
-                  ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
                   : saveState === 'error'
                   ? 'bg-red-50 text-red-500 hover:bg-red-100'
                   : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
@@ -166,7 +128,7 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : saveState === 'saved' ? (
                 <CheckCircle2 className="w-3.5 h-3.5" />
-              ) : saveState === 'suspect' || saveState === 'error' ? (
+              ) : saveState === 'error' ? (
                 <AlertTriangle className="w-3.5 h-3.5" />
               ) : (
                 <Download className="w-3.5 h-3.5" />
@@ -174,7 +136,6 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
               {saveState === 'saving' && 'Salvando...'}
               {saveState === 'checking' && 'Verificando...'}
               {saveState === 'saved' && 'Salvo offline'}
-              {saveState === 'suspect' && 'Salvo, mas suspeito'}
               {saveState === 'error' && 'Falhou, tentar de novo'}
               {saveState === 'idle' && 'Salvar offline'}
               {saveState === 'unsupported' && 'Sem suporte'}
@@ -204,16 +165,7 @@ export default function LiturgyViewer({ title, url, onClose }: LiturgyViewerProp
           </div>
         )}
 
-        {saveState === 'suspect' && (
-          <div className="px-5 py-3 bg-amber-50 border-b border-amber-100 text-[11px] text-amber-700 font-bold">
-            O que está salvo parece pequeno demais para ser a página real — provavelmente uma tela de erro ou redirecionamento foi salva por engano.
-            {isOnline
-              ? ' Toque em "Salvo, mas suspeito" para tentar salvar de novo.'
-              : ' Isso só pode ser corrigido com internet.'}
-          </div>
-        )}
-
-        {!isOnline && (saveState === 'idle' || saveState === 'suspect') && (
+        {!isOnline && saveState === 'idle' && (
           <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 text-[11px] text-slate-500">
             Se a área abaixo aparecer em branco com o dinossauro do Chrome, é porque esta página não tem uma cópia offline válida ainda — não é um problema no seu aparelho.
           </div>
