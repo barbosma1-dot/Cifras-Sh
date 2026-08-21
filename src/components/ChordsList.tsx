@@ -406,41 +406,107 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     return content.replace(/\[.*?\]/g, ' ');
   };
 
-  // Chave usada para agrupar "a mesma música" nos casos vistos na prática:
-  // cifras vindas de importação de PDF às vezes saem com um trecho de letra
-  // colado no título (ex.: "Ossos Secos" e "Ossos Secos (Espírito Santo
-  // Desce)"), então uma comparação de título EXATO deixa passar essas como
-  // não-duplicadas. Aqui: 1) tira tudo a partir do primeiro "(" ou "-", 2)
-  // normaliza acento/maiúscula, 3) tira espaço extra. "Ossos Secos" e
-  // "Ossos Secos (Espírito Santo Desce)" caem na mesma chave "ossos secos".
+  // Só o título parecido não basta pra provar que é a MESMA música — "HOJE"
+  // de um ministério e "HOJE" de outro podem ser cifras completamente
+  // diferentes com o mesmo nome. Por isso, além de agrupar por título,
+  // comparamos o CONTEÚDO (letra, sem os acordes entre colchetes) de cada
+  // par dentro do grupo, usando coeficiente de Dice sobre bigramas de
+  // caracteres — rápido de calcular e tolerante a pequenas diferenças de
+  // digitação/pontuação entre duas cópias da mesma letra.
+  const charBigrams = (text: string): Set<string> => {
+    const clean = normalizedSearch(text).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const grams = new Set<string>();
+    for (let i = 0; i < clean.length - 1; i++) grams.add(clean.slice(i, i + 2));
+    return grams;
+  };
+
+  const contentSimilarity = (a: string, b: string): number => {
+    const A = charBigrams(a);
+    const B = charBigrams(b);
+    if (A.size === 0 || B.size === 0) return 1; // sem conteúdo pra comparar -> não descarta, deixa o título decidir
+    let shared = 0;
+    for (const g of A) if (B.has(g)) shared++;
+    return (2 * shared) / (A.size + B.size);
+  };
+
+  // Letra/acorde é considerado "a mesma música" a partir de 55% de
+  // similaridade — abaixo disso, tratamos como coincidência de nome.
+  const CONTENT_SIMILARITY_THRESHOLD = 0.55;
+
+  // Chave usada para pré-agrupar candidatos por título (mesmo critério de
+  // antes: cifras vindas de importação de PDF às vezes saem com um trecho de
+  // letra colado no título, então tiramos tudo a partir do primeiro "(" ou
+  // "-", normalizamos acento/maiúscula). Isso só decide QUEM entra na
+  // comparação de conteúdo abaixo — sozinho, título parecido não confirma
+  // duplicata.
   const duplicateGroupKey = (title: string): string => {
     const beforeParen = (title || '').split(/[(\-–—]/)[0];
     return normalizedSearch(beforeParen).replace(/\s+/g, ' ').trim();
   };
 
-  const duplicateGroups: { key: string; title: string; items: Chord[] }[] = (() => {
-    const map = new Map<string, Chord[]>();
+  type ChordGroup = { key: string; title: string; items: Chord[] };
+
+  // Dentro de cada grupo por título, separa em subgrupos (union-find
+  // simples) por similaridade de conteúdo — assim "HOJE" com 3 letras
+  // diferentes vira 3 subgrupos de 1 item cada (não aparece como
+  // duplicata), e só entra na lista quem realmente tem letra parecida.
+  const splitByContentSimilarity = (items: Chord[]): Chord[][] => {
+    const parent = items.map((_, i) => i);
+    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const union = (i: number, j: number) => { const a = find(i), b = find(j); if (a !== b) parent[a] = b; };
+    const contents = items.map(c => stripChords(c.content || ''));
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (contentSimilarity(contents[i], contents[j]) >= CONTENT_SIMILARITY_THRESHOLD) union(i, j);
+      }
+    }
+    const clusters = new Map<number, Chord[]>();
+    items.forEach((c, i) => {
+      const root = find(i);
+      if (!clusters.has(root)) clusters.set(root, []);
+      clusters.get(root)!.push(c);
+    });
+    return Array.from(clusters.values());
+  };
+
+  const { duplicateGroups, sameNameDifferentSongGroups } = (() => {
+    const byTitle = new Map<string, Chord[]>();
     for (const c of chords) {
       const key = duplicateGroupKey(c.title);
       if (!key) continue;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(c);
+      if (!byTitle.has(key)) byTitle.set(key, []);
+      byTitle.get(key)!.push(c);
     }
-    return Array.from(map.entries())
-      .filter(([, items]) => items.length > 1)
-      .map(([key, items]) => ({
-        key,
-        title: items[0].title,
+
+    const real: ChordGroup[] = [];
+    const sameNameOnly: ChordGroup[] = [];
+
+    for (const [key, items] of byTitle.entries()) {
+      if (items.length < 2) continue;
+      const clusters = splitByContentSimilarity(items);
+      clusters.forEach((clusterItems, idx) => {
+        if (clusterItems.length < 2) return; // sozinho no subgrupo -> não é duplicata de ninguém
         // Mais recente primeiro — e entre empates, título mais curto primeiro
         // (o título "poluído" com trecho de letra tende a ser mais longo que
         // o título limpo, então isso ajuda a sugerir o certo pra manter).
-        items: [...items].sort((a, b) => {
+        const sorted = [...clusterItems].sort((a, b) => {
           const dt = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
           if (dt !== 0) return dt;
           return a.title.length - b.title.length;
-        })
-      }))
-      .sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+        });
+        real.push({ key: `${key}#${idx}`, title: sorted[0].title, items: sorted });
+      });
+      // Se o grupo por título tinha mais de um item mas NENHUM par ficou
+      // junto por conteúdo, é só coincidência de nome — mostra à parte,
+      // sem sugestão de exclusão em massa.
+      if (clusters.every(cl => cl.length < 2) && items.length > 1) {
+        sameNameOnly.push({ key, title: items[0].title, items });
+      }
+    }
+
+    real.sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+    sameNameOnly.sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+    return { duplicateGroups: real, sameNameDifferentSongGroups: sameNameOnly };
   })();
 
   const deleteAllButFirstInGroup = async (group: { key: string; items: Chord[] }) => {
@@ -1107,7 +1173,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               <button onClick={() => setIsDuplicatesModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
             </div>
             <p className="text-xs text-slate-400 mb-5">
-              Cifras agrupadas por nome parecido (mesmo início de título). Revise e exclua as repetidas — a exclusão é permanente.
+              Agrupadas por nome E letra parecidos (não só o título) — reduz o risco de sugerir excluir músicas diferentes que só coincidem no nome. Revise e exclua as repetidas — a exclusão é permanente.
             </p>
 
             {duplicateGroups.length === 0 ? (
@@ -1146,6 +1212,27 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {sameNameDifferentSongGroups.length > 0 && (
+              <div className="mt-6 pt-5 border-t border-slate-100">
+                <p className="text-[11px] font-black text-slate-400 uppercase mb-1">
+                  Mesmo nome, música diferente ({sameNameDifferentSongGroups.length})
+                </p>
+                <p className="text-[11px] text-slate-400 mb-3">
+                  Título parecido, mas a letra não bate o suficiente para considerar duplicata — provavelmente arranjos diferentes de ministérios diferentes. Nada aqui é excluído automaticamente.
+                </p>
+                <div className="flex flex-col gap-2">
+                  {sameNameDifferentSongGroups.map(group => (
+                    <div key={group.key} className="text-xs px-3 py-2 rounded-xl bg-slate-50">
+                      <p className="font-bold text-slate-500">{group.title} <span className="text-slate-400 font-normal">({group.items.length})</span></p>
+                      <p className="text-slate-400 text-[10px] truncate">
+                        {group.items.map(c => c.artist || 'Desconhecido').join(' · ')}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
