@@ -3,6 +3,7 @@ import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus, Sear
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
+import { compressAudioFile } from '../lib/audioCompress';
 import * as tus from 'tus-js-client';
 import { supabaseUrl } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
@@ -132,9 +133,28 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
   });
 
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
+  // Marca quais anexos (por nome de arquivo local) estão sendo comprimidos
+  // no navegador antes do upload — só usado pra mostrar "Comprimindo..." no
+  // lugar do player, evita mandar pro Storage o arquivo bruto sem necessidade.
+  const [compressingNames, setCompressingNames] = useState<Set<string>>(new Set());
 
-  const handleAddAttachment = (type: 'audio' | 'text', file: File) => {
+  const handleAddAttachment = async (type: 'audio' | 'text', file: File) => {
     const nameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+    let finalFile = file;
+
+    if (type === 'audio') {
+      setCompressingNames(prev => new Set(prev).add(file.name));
+      try {
+        // Modo mais econômico: mono, 22050Hz, Opus a 24kbps (ver
+        // src/lib/audioCompress.ts) — cai pro arquivo original sem erro se o
+        // navegador não suportar ou se o resultado comprimido não ficar
+        // menor que o original.
+        finalFile = await compressAudioFile(file);
+      } finally {
+        setCompressingNames(prev => { const next = new Set(prev); next.delete(file.name); return next; });
+      }
+    }
+
     setAttachments(prev => [
       ...prev,
       {
@@ -142,7 +162,7 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
         url: '',
         type,
         isNew: true,
-        file
+        file: finalFile
       }
     ]);
   };
@@ -919,6 +939,13 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+
+                  {compressingNames.size > 0 && (
+                    <div className="flex items-center gap-2 text-[11px] font-bold text-emerald-600 italic pl-1">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Comprimindo áudio no navegador (modo econômico) antes de enviar...
                     </div>
                   )}
 
