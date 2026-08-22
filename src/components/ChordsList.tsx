@@ -423,7 +423,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const contentSimilarity = (a: string, b: string): number => {
     const A = charBigrams(a);
     const B = charBigrams(b);
-    if (A.size === 0 || B.size === 0) return 1; // sem conteúdo pra comparar -> não descarta, deixa o título decidir
+    if (A.size === 0 || B.size === 0) return 0; // sem conteúdo pra comparar -> não pode confirmar que é a mesma letra
     let shared = 0;
     for (const g of A) if (B.has(g)) shared++;
     return (2 * shared) / (A.size + B.size);
@@ -440,8 +440,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   // comparação de conteúdo abaixo — sozinho, título parecido não confirma
   // duplicata.
   const duplicateGroupKey = (title: string): string => {
-    const beforeParen = (title || '').split(/[(\-–—]/)[0];
-    return normalizedSearch(beforeParen).replace(/\s+/g, ' ').trim();
+    return normalizedSearch(title || '').replace(/\s+/g, ' ').trim();
   };
 
   type ChordGroup = { key: string; title: string; items: Chord[] };
