@@ -959,7 +959,12 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
                       multiple
                       onChange={e => {
                         if (e.target.files) {
-                          Array.from(e.target.files).forEach((f: any) => handleAddAttachment('audio', f as File));
+                          // Um de cada vez — comprimir vários áudios ao
+                          // mesmo tempo sobrecarregava o navegador.
+                          const files = Array.from(e.target.files) as File[];
+                          (async () => {
+                            for (const f of files) await handleAddAttachment('audio', f);
+                          })();
                         }
                       }} 
                     />
