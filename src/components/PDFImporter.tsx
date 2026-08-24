@@ -84,7 +84,7 @@ interface PDFImporterProps {
 
 // Categorias mais comuns, exibidas como atalhos (chips) para marcar cada
 // música individualmente sem precisar digitar tudo na mão.
-const COMMON_CATEGORIES = ['Missa', 'Louvor', 'Adoração', 'Oração', 'Ação de Graças', 'Outros'];
+const COMMON_CATEGORIES = ['Missa', 'Louvor', 'Adoração', 'Oração', 'Ação de Graças', 'Leitura', 'Outros'];
 
 export default function PDFImporter({ onClose, onImportComplete, bookId, missionId, reimportBatchId, reimportFile }: PDFImporterProps) {
   useBackButton(true, onClose);
@@ -110,6 +110,11 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   const [numPages, setNumPages] = useState<number | null>(null);
   const [startPage, setStartPage] = useState<number>(1);
   const [endPage, setEndPage] = useState<number>(1);
+  // Modo opcional (desligado por padrão): quando ativo, além das cifras, a IA
+  // também extrai textos litúrgicos sem acorde (Leitura breve, Responsório
+  // breve, Preces, antífonas etc.) como objetos próprios com category="Leitura".
+  // Não afeta em nada o comportamento padrão de importação de cifras.
+  const [includeLiturgicalTexts, setIncludeLiturgicalTexts] = useState<boolean>(false);
   // Id do lote no banco (import_batches). Criado/atualizado em
   // `ensureImportBatch`, usado por `importAll` para casar músicas
   // reimportadas com as que já existiam do mesmo lote.
@@ -515,6 +520,7 @@ Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinh
 7. ESTRUTURA: Marque o início do refrão com uma linha contendo apenas "Refrão:" e feche o bloco com uma linha contendo apenas "Fim" logo após a última linha do refrão. NÃO use {soc}/{eoc} nem tags como [REFRÃO] — o app só reconhece o padrão "Refrão:" / "Fim". Para outras seções, use rótulos simples em linha própria, como "Intro", "Estrofe", "Ponte", "Solo".
 8. PÁGINAS SEM MÚSICA: Se a página for um índice, sumário, lista de CDs/álbuns, capa ou contracapa (sem NENHUM acorde e sem NENHUMA letra), IGNORE-A completamente — não crie nenhum objeto para ela. Uma página com acordes mas sem letra (regra 9) NÃO se enquadra aqui — ela tem música e deve ser extraída.
 9. CIFRA SEM LETRA (GRADE DE ACORDES POR COMPASSO): Algumas músicas são notadas apenas como sequência de acordes por compasso, sem nenhuma letra impressa (comum em cifras de banda/instrumental) — ex.: "D/F# | % | G | Gm |" ou "-a- F | C | Am | G |". Isso É uma música válida e DEVE ser extraída como as demais, mesmo sem letra nenhuma. Não tente inventar sílabas nem forçar o formato colchete-sobre-sílaba da regra 3 (que só se aplica quando há letra). Em vez disso, preserve fielmente cada linha de compasso tal como está no PDF — mas SEMPRE aplicando a REGRA DE COLCHETE da regra 4 acima: cada acorde, cada barra "|" e cada "%" vai dentro do seu próprio colchete (nunca solto), e acordes ligados por hífen ficam agrupados num único colchete. Preserve os rótulos de seção como estão (ex.: "-Intro-", "-a1-", "-chorus-", "-c bridge-", "-fim-"). Nunca pule uma música só porque ela não tem letra.
+${includeLiturgicalTexts ? `10. REGRA 10 (SÓ NESTE MODO): Se a página tiver um bloco de texto com cabeçalho litúrgico explícito (ex.: "Leitura breve", "Responsório breve", "Preces", "Cântico evangélico, ant.", antífonas) e NENHUM acorde, extraia esse bloco como um objeto PRÓPRIO, separado das cifras, com: title = o cabeçalho + referência bíblica se houver (ex.: "Leitura breve — Tb 4,14b-15a"); content = o texto corrido tal como impresso, SEM colchetes de acorde, preservando parágrafos; category = "Leitura" (única exceção à regra 6b); original_key = ""; youtube_url = "". NÃO extraia parágrafos puramente explicativos/rubricas sobre como rezar o Ofício (texto que descreve o rito, sem ser ele mesmo uma oração) — ignore-os como na regra 8.` : ''}
 
 ### FORMATO DE SAÍDA (Obrigatório):
 Retorne um ARRAY JSON de objetos seguindo estritamente este esquema:
@@ -599,7 +605,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
    */
   const fillMissingYoutubeLinks = async (songs: ExtractedSong[]) => {
     const pendingIndexes = songs
-      .map((s, i) => (!s.youtube_url && s.title ? i : -1))
+      .map((s, i) => (!s.youtube_url && s.title && s.category !== 'Leitura' ? i : -1))
       .filter(i => i >= 0);
     if (pendingIndexes.length === 0) return;
 
@@ -895,6 +901,24 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 <button onClick={() => setFile(null)} className="text-slate-300 hover:text-red-500 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 w-full max-w-md">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeLiturgicalTexts}
+                    onChange={(e) => setIncludeLiturgicalTexts(e.target.checked)}
+                    className="mt-0.5 accent-brand-orange"
+                  />
+                  <span className="text-[11px] font-bold text-slate-500 leading-snug">
+                    Incluir leituras/textos litúrgicos (Ofício, Missa)
+                    <br />
+                    <span className="text-slate-400 font-normal">
+                      Extrai também Leitura breve, Responsório breve, Preces e antífonas como itens separados, sem acorde.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               {numPages && numPages > 10 && (
