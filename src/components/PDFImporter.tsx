@@ -68,6 +68,68 @@ function wrapBareBarSymbols(content: string): string {
     .join('\n');
 }
 
+/**
+ * Rede de segurança para a REGRA 0/0b (ver prompt): a IA às vezes duplica um
+ * trecho de letra dentro da MESMA música — normalmente porque leu o mesmo
+ * verso duas vezes (uma vinda do bloco de texto pré-alinhado, outra vinda da
+ * imagem; ou por reler a mesma região da imagem duas vezes), gerando duas
+ * cópias praticamente idênticas do verso seguidas uma da outra, cada uma com
+ * acordes ligeiramente diferentes. Isso também pode acontecer na emenda
+ * entre o fim do conteúdo de uma página e o início da próxima (ver merge de
+ * continuidade em `processPDF`).
+ *
+ * Em vez de confiar só no prompt, detectamos aqui de forma determinística:
+ * percorremos as linhas em busca de dois blocos de 2 a 6 linhas SEGUIDAS cujo
+ * texto (ignorando colchetes de acorde, acentuação, maiúsculas e pontuação)
+ * seja idêntico — sinal de que o mesmo verso foi transcrito duas vezes em
+ * seguida. Quando isso acontece, mantemos só uma cópia (a que tiver mais
+ * acordes marcados, por ser a transcrição mais completa) e descartamos a
+ * outra. Blocos curtos demais (menos de ~15 caracteres de letra) são
+ * ignorados de propósito, para não mexer em repetições curtas e legítimas de
+ * acordes instrumentais (ex.: um trecho de "Intro" reaproveitado).
+ */
+function dedupeRepeatedLyricLines(content: string): string {
+  const lines = content.split('\n');
+  const plainOf = (line: string) => line
+    .replace(/\[[^\]]*\]/g, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  const chordCount = (block: string[]) => (block.join('').match(/\[/g) || []).length;
+
+  const result: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    let matched = false;
+    // Tenta janelas maiores primeiro (até 6 linhas), pra pegar trechos de
+    // vários versos duplicados de uma vez, não só linha a linha.
+    const maxWin = Math.min(6, Math.floor((lines.length - i) / 2));
+    for (let win = maxWin; win >= 2; win--) {
+      const blockA = lines.slice(i, i + win);
+      const blockB = lines.slice(i + win, i + win * 2);
+      const plainA = blockA.map(plainOf).join('|');
+      const plainB = blockB.map(plainOf).join('|');
+      const lettersOnly = plainA.replace(/[^a-z]/g, '');
+      if (lettersOnly.length >= 15 && plainA === plainB) {
+        // Mantém a cópia com mais acordes marcados (mais completa); em
+        // empate, mantém a primeira.
+        const keep = chordCount(blockB) > chordCount(blockA) ? blockB : blockA;
+        result.push(...keep);
+        i += win * 2;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      result.push(lines[i]);
+      i++;
+    }
+  }
+  return result.join('\n');
+}
+
 interface PDFImporterProps {
   onClose: () => void;
   onImportComplete: () => void;
@@ -387,7 +449,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               const lastIdx = localAllSongs.length - 1;
               const merged: ExtractedSong = {
                 ...localAllSongs[lastIdx],
-                content: `${localAllSongs[lastIdx].content}\n${extracted[0].content}`.trim(),
+                content: dedupeRepeatedLyricLines(`${localAllSongs[lastIdx].content}\n${extracted[0].content}`.trim()),
                 category: localAllSongs[lastIdx].category || extracted[0].category,
                 youtube_url: localAllSongs[lastIdx].youtube_url || extracted[0].youtube_url,
               };
@@ -486,13 +548,14 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   const extractWithGemini = async (images: string[], textBlocks: string[] = [], continuationTitle?: string | null): Promise<ExtractedSong[]> => {
     try {
       const continuationNote = continuationTitle
-        ? `\n\n### CONTEXTO DE CONTINUIDADE (IMPORTANTE): A última música extraída da página ANTERIOR a esta foi "${continuationTitle}". Se ESTA página NÃO tiver nenhum cabeçalho/título de música novo impresso no topo — ou seja, o conteúdo parece continuar direto de onde a página anterior parou (mais versos, mais do refrão, uma ponte, um final) — então retorne o título desta música EXATAMENTE como "${continuationTitle}" (mesma grafia, sem alterar), para que o sistema consiga juntar as duas partes automaticamente. Só use um título DIFERENTE se esta página claramente mostra o INÍCIO de uma música nova, com um cabeçalho/título novo impresso.`
+        ? `\n\n### CONTEXTO DE CONTINUIDADE (IMPORTANTE): A última música extraída da página ANTERIOR a esta foi "${continuationTitle}". Se ESTA página NÃO tiver nenhum cabeçalho/título de música novo impresso no topo — ou seja, o conteúdo parece continuar direto de onde a página anterior parou (mais versos, mais do refrão, uma ponte, um final) — então retorne o título desta música EXATAMENTE como "${continuationTitle}" (mesma grafia, sem alterar), para que o sistema consiga juntar as duas partes automaticamente. Nesse caso, o "content" desta página deve conter APENAS os versos/trechos NOVOS impressos NESTA página — nunca repita do zero o início da música (a primeira estrofe, a antífona de abertura, etc.), pois o sistema já vai concatenar isso ao que foi extraído da página anterior; repetir o começo aqui criaria um trecho duplicado na cifra final. Só use um título DIFERENTE se esta página claramente mostra o INÍCIO de uma música nova, com um cabeçalho/título novo impresso.`
         : '';
       const prompt = `Você é um Analista de Cifras Litúrgicas sênior especializado em OCR e transcrição musical de ALTA FIDELIDADE para o formato ChordPro (.chopro).
 Sua missão é extrair músicas com PRECISÃO CIRÚRGICA, garantindo que o alinhamento dos acordes com as sílabas seja PERFEITO.${continuationNote}
 
 ### REGRAS DE OURO DE OCR (CRÍTICO):
-0. ALINHAMENTO PRÉ-CALCULADO (quando presente): Junto com a imagem de uma página, pode vir também um bloco de texto começando com "--- Página N (texto pré-alinhado por coordenadas...)". Esse bloco foi calculado a partir da posição real de cada palavra no PDF (não é um palpite de IA) e já tem os acordes posicionados CORRETAMENTE. Para essa página, use o bloco de texto como fonte de verdade para o conteúdo e a posição dos acordes — copie as linhas de acorde+letra QUASE literalmente, mantendo os colchetes [Acorde] exatamente onde estão. Use a IMAGEM da mesma página apenas para decidir título, artista, categoria, tom, marcação de Refrão/Fim e limpeza de cabeçalhos/rodapés — NÃO para reposicionar acordes que já vieram prontos no bloco de texto. Se uma página NÃO tiver bloco de texto pré-alinhado correspondente, ela é uma página escaneada/foto — nesse caso siga a regra 3 abaixo normalmente, usando só a imagem, inclusive para o posicionamento dos acordes.
+0. ALINHAMENTO PRÉ-CALCULADO (quando presente): Junto com a imagem de uma página, pode vir também um bloco de texto começando com "--- Página N (texto pré-alinhado por coordenadas...)". Esse bloco foi calculado a partir da posição real de cada palavra no PDF (não é um palpite de IA) e já tem os acordes posicionados CORRETAMENTE. Para essa página, use o bloco de texto como ÚNICA fonte de verdade para o conteúdo e a posição dos acordes — copie as linhas de acorde+letra QUASE literalmente, mantendo os colchetes [Acorde] exatamente onde estão. Use a IMAGEM da mesma página APENAS para decidir título, artista, categoria, tom, marcação de Refrão/Fim e limpeza de cabeçalhos/rodapés — NUNCA para reposicionar acordes que já vieram prontos no bloco de texto, e NUNCA para adicionar de novo, ler de novo ou "confirmar" letra/acordes que já vieram no bloco de texto. Isso significa que cada verso deste tipo de página deve aparecer no "content" final EXATAMENTE UMA VEZ — se você também enxergar essa letra na imagem, IGNORE o que a imagem mostra para esse trecho, não a transcreva uma segunda vez (mesmo com acordes diferentes). Se uma página NÃO tiver bloco de texto pré-alinhado correspondente, ela é uma página escaneada/foto — nesse caso siga a regra 3 abaixo normalmente, usando só a imagem, inclusive para o posicionamento dos acordes.
+0b. PROIBIDO REPETIR O MESMO VERSO (ERRO GRAVE E FREQUENTE): Cada linha de letra impressa na página deve aparecer no "content" da música UMA ÚNICA VEZ. Antes de devolver a resposta, releia o "content" de cada música e confira se algum trecho de letra (duas ou mais linhas seguidas) aparece duplicado — ainda que com acordes diferentes entre as duas cópias. Isso costuma acontecer quando você "transcreve de novo" um verso que já tinha colocado no content (por ter visto o mesmo texto tanto no bloco pré-alinhado quanto na imagem, ou por reler a mesma região da imagem duas vezes). Se encontrar uma repetição desse tipo, REMOVA a cópia extra e mantenha só uma ocorrência do verso — a única repetição legítima e esperada é a do refrão marcado explicitamente com "Refrão:"/"Fim" (regra 7), nunca um verso solto reaparecendo fora desse padrão.
 1. VARREDURA COMPLETA (CRÍTICO): Cada lote pode conter VÁRIAS páginas e VÁRIAS músicas diferentes — inclusive mais de uma música na MESMA página. Percorra TODAS as páginas do lote, do início ao fim, e retorne um objeto para CADA música encontrada. NUNCA pare depois de extrair a primeira música do lote — isso é o erro mais grave que você pode cometer aqui. Antes de responder, confira: "processei a última página deste lote, e há um objeto no array para cada música que vi, sem exceção?".
 2. CONTINUIDADE MULTI-PÁGINA: Se uma música começa em uma página e continua na próxima, MESCLE-AS em um único objeto. Não crie dois registros para a mesma música.
 2b. UMA MÚSICA = UM OBJETO, SEMPRE (ERRO GRAVE E FREQUENTE): Nunca crie mais de um objeto para a mesma música só porque o refrão se repete várias vezes, porque ela tem mais de uma parte (ex.: "1ª voz"/"2ª voz", introdução + corpo), ou porque o título aparece de novo no meio da letra. Todas as repetições do refrão entram DENTRO do mesmo "content" (marcadas com "Refrão:"/"Fim", ver regra abaixo), nunca como uma música separada. O campo "title" deve ser APENAS o nome da música exatamente como impresso no cabeçalho/título da página — NUNCA cole um trecho de letra, do refrão, ou qualquer texto entre parênteses tirado do corpo da música dentro do título (ex.: título correto: "Ossos Secos"; ERRADO: "Ossos Secos (Espírito Santo Desce)"). Se, olhando o PDF inteiro, a mesma música aparecer impressa mais de uma vez (reimpressão, versão em outro tom, etc.), ainda assim devolva só UM objeto para ela — use a versão mais completa/legível.
@@ -581,7 +644,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       // chamada de IA.
       return songs.map(s => ({
         ...s,
-        content: s.content ? wrapBareBarSymbols(s.content) : s.content,
+        content: s.content ? dedupeRepeatedLyricLines(wrapBareBarSymbols(s.content)) : s.content,
         youtube_url: s.youtube_url || (s.content ? findYoutubeUrlInText(s.content) || '' : '')
       }));
     } catch (error: any) {
