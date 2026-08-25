@@ -26,6 +26,7 @@ import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
 import PDFImporter from './PDFImporter';
 import { exportChordsToPDF } from '../lib/pdfExport';
+import { removeStorageFilesByUrl } from '../lib/storageCleanup';
 
 export default function ChordsList({ profile, initialBookId, triggerNewChord }: { 
   profile: UserProfile | null, 
@@ -361,6 +362,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
   async function removeChordFromDb(id: string): Promise<boolean> {
     try {
+      // Pega os anexos ANTES de apagar a linha — depois de apagada, não tem
+      // mais como saber quais arquivos do Storage pertenciam a essa cifra.
+      const chordLocal = chords.find(c => c.id === id);
+      const attachmentUrls = (chordLocal?.attachments || []).map(a => a.url).filter(Boolean);
+
       await supabase.from('chord_book_items').delete().eq('chord_id', id);
       await supabase.from('repertoire_items').delete().eq('chord_id', id);
 
@@ -375,6 +381,16 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
       }
 
       setChords(prev => prev.filter(c => c.id !== id));
+
+      // Limpeza do Storage só acontece DEPOIS da exclusão no banco ter sido
+      // confirmada, e é melhor esforço (não trava nem reverte a exclusão se
+      // falhar) — ver comentário em removeStorageFilesByUrl.
+      if (attachmentUrls.length > 0) {
+        removeStorageFilesByUrl(attachmentUrls).catch(err =>
+          console.error('Falha ao limpar anexos do Storage após excluir cifra:', err)
+        );
+      }
+
       return true;
     } catch (err: any) {
       console.error('Erro crítico na exclusão:', err);
