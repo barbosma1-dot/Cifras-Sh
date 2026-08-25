@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
@@ -8,6 +8,7 @@ import * as tus from 'tus-js-client';
 import { supabaseUrl } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
 import PDFImporter from './PDFImporter';
+import { removeStorageFilesByUrl } from '../lib/storageCleanup';
 
 // Upload resumível (protocolo TUS) para o Storage do Supabase.
 //
@@ -167,8 +168,20 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     ]);
   };
 
+  // Guarda as URLs dos anexos que JÁ existiam no Storage (isNew !== true) e
+  // foram removidos nesta sessão de edição — para apagar o arquivo do
+  // Storage só depois que o salvamento no banco tiver sucesso (ver
+  // handleSubmit). Um ref porque isso não precisa re-renderizar nada.
+  const removedAttachmentUrlsRef = useRef<string[]>([]);
+
   const handleRemoveAttachment = (index: number) => {
-    setAttachments(prev => prev.filter((_, idx) => idx !== index));
+    setAttachments(prev => {
+      const att = prev[index];
+      if (att && !att.isNew && att.url) {
+        removedAttachmentUrlsRef.current.push(att.url);
+      }
+      return prev.filter((_, idx) => idx !== index);
+    });
   };
 
   const handleRenameAttachment = (index: number, newName: string) => {
@@ -670,7 +683,19 @@ ${form.content}`;
             .insert([{ book_id: bookId, chord_id: data.id }]);
         }
       }
-      
+
+      // Só agora que a cifra foi salva com a nova lista de anexos é seguro
+      // apagar do Storage os arquivos que o usuário removeu/substituiu no
+      // editor — apagar ANTES e o salvamento falhar deixaria o anexo antigo
+      // órfão de arquivo (URL ainda no banco, arquivo já apagado). Melhor
+      // esforço: não bloqueia o fechamento da tela se a limpeza falhar.
+      if (removedAttachmentUrlsRef.current.length > 0) {
+        removeStorageFilesByUrl(removedAttachmentUrlsRef.current).catch(err =>
+          console.error('Falha ao limpar anexos substituídos/removidos do Storage:', err)
+        );
+        removedAttachmentUrlsRef.current = [];
+      }
+
       setNotification({ message: 'Cifra salva com sucesso!', type: 'success' });
       setTimeout(() => onClose(), 1000);
     } catch (error: any) {
