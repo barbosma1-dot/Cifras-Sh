@@ -272,37 +272,44 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     setConvertingAI(true);
     
     try {
-      const prompt = `Você é um Analista Musical de ELITE especializado em arquitetura ChordPro. 
-      Sua missão é converter a cifra abaixo para o formato ChordPro (.chopro) com fidelidade absoluta ao tempo e à harmonia.
+      const prompt = `Você é um Analista de Cifras Litúrgicas sênior especializado em transcrição musical de ALTA FIDELIDADE para o formato ChordPro (.chopro).
+Sua missão é converter a cifra abaixo com PRECISÃO CIRÚRGICA, garantindo que o alinhamento dos acordes com as sílabas seja PERFEITO.
 
-      CONCEITOS FUNDAMENTAIS:
-      1. ALINHAMENTO VERTICAL (O MAIS IMPORTANTE): Se um acorde está sobre a letra 'a' da palavra 'Amor', ele deve ficar '[D]Amor'.
-      2. LINHAS INSTRUMENTAIS: Linhas como Intro, Solo, Instrumental que não possuem letra abaixo devem ter seus acordes envolvidos por [] e manter um espaçamento largo (mínimo 8 espaços) para facilitar a leitura.
-      3. TABLATURAS: Remova linhas de tablaturas puras (que usam ---, |---, etc.) para manter o foco nos acordes.
+### REGRAS DE OURO (CRÍTICO):
+1. ALINHAMENTO CHORDPRO (CRÍTICO — ERRO MUITO COMUM): O texto de origem normalmente traz o acorde numa linha SEPARADA, ACIMA da linha de letra, alinhado pela posição horizontal (coluna) da sílaba onde ele cai — esse é só o jeito de ESCREVER, não o formato de saída. Você NUNCA deve reproduzir essas duas linhas separadamente no resultado. Sempre que uma linha de acordes estiver posicionada acima de uma linha de LETRA (texto cantável), você deve: (a) olhar a posição horizontal de cada acorde em relação às letras da linha de baixo, (b) FUNDIR as duas linhas em UMA ÚNICA linha de saída, inserindo cada acorde entre colchetes imediatamente antes do caractere/sílaba sobre a qual ele estava posicionado, e (c) descartar a linha de acordes separada — ela não deve sobrar no resultado. Isso vale mesmo que o espaçamento pareça "impreciso"; use o seu melhor julgamento de qual sílaba cada acorde acompanha.
+   Exemplo de ENTRADA (duas linhas, como normalmente é colado):
+     G          D/F#
+     O Senhor é o meu pastor
+   Exemplo de SAÍDA CORRETA (uma linha só, ChordPro):
+     [G]O Senhor é o [D/F#]meu pastor
+   Exemplo de SAÍDA ERRADA (proibido — são duas linhas, uma delas só com acordes soltos):
+     [G]          [D/F#]
+     O Senhor é o meu pastor
+2. LINHAS INSTRUMENTAIS (Intro/Solo/Ponte sem letra nenhuma): a regra 1 NÃO se aplica aqui — quando a linha de acordes NÃO tem nenhuma letra cantável embaixo (só uma sequência de acordes, como um trecho de intro/solo), mantenha-a como uma linha própria, só com os acordes, preservando o espaçamento visual para representar o tempo rítmico. Use espaços múltiplos entre acordes.
+   REGRA DE COLCHETE (CRÍTICO — ERRO COMUM): TODO elemento da linha vai dentro do seu PRÓPRIO colchete, incluindo as barras de compasso "|" e o símbolo de repetição "%" — não deixe "|" nem "%" soltos fora de colchete. Acordes ligados por hífen na mesma progressão rítmica (ex.: "D/F# - G - A") ficam AGRUPADOS dentro do MESMO colchete, sem o hífen sobrando fora.
+   Exemplo de ENTRADA:
+     Intro: G  D/F#  Em  C
+   Exemplo de SAÍDA CORRETA:
+     Intro: [G]        [D/F#]        [Em]        [C]
+   Exemplo de ENTRADA (com barras de compasso):
+     D | % | D/C | % | D/F# - G - A | G/B | A |
+   Exemplo de SAÍDA CORRETA:
+     [D] [|] [%] [|] [D/C] [|] [%] [|] [D/F#-G-A] [|] [G/B] [|] [A] [|]
+   Exemplo de SAÍDA ERRADA (proibido — barras "|" fora de colchete):
+     [D] | [%] | [D/C] | [%] | [D/F#] - [G] - [A] | [G/B] | [A] |
+3. LIMPEZA: Remova linhas de tablaturas puras (que usam ---, |---, etc.), números de página e anotações manuais que não fazem parte da cifra.
+4. ESTRUTURA: Marque o início do refrão com uma linha contendo apenas "Refrão:" e feche o bloco com uma linha contendo apenas "Fim" logo após a última linha do refrão. NÃO use {soc}/{eoc} nem tags como [REFRÃO] — o app só reconhece o padrão "Refrão:" / "Fim". Para outras seções, use rótulos simples em linha própria, como "Intro", "Estrofe", "Ponte", "Solo".
+5. CIFRA SEM LETRA (GRADE DE ACORDES POR COMPASSO): Se a cifra inteira for apenas uma sequência de acordes por compasso, sem nenhuma letra (comum em cifras de banda/instrumental) — ex.: "D/F# | % | G | Gm |" ou "-a- F | C | Am | G |" — preserve fielmente cada linha de compasso tal como está, mas SEMPRE aplicando a REGRA DE COLCHETE da regra 2 acima. Preserve os rótulos de seção como estão (ex.: "-Intro-", "-a1-", "-chorus-", "-c bridge-", "-fim-").
 
-      EXEMPLO DE CONVERSÃO (INPUT):
-      Intro: G  D/F#  Em  C
-      
-          G          D/F#
-      O Senhor é o meu pastor
-      Em          C
-      Nada me faltará
+DIFERENCIAÇÃO DE LINHAS:
+- LINHAS DE ACORDES: Compostas por letras A-G, números, #, b, e extensões (m, 7, sus4, add9).
+- LINHAS DE LETRA: Contêm artigos, preposições e palavras comuns em português.
 
-      EXEMPLO DE CONVERSÃO (OUTPUT):
-      Intro: [G]        [D/F#]        [Em]        [C]
+RETORNO:
+Retorne APENAS o conteúdo convertido final. Sem explicações ou markdown.
 
-      [G]O Senhor é o [D/F#]meu pastor
-      [Em]Nada me fal[C]tará
-
-      DIFERENCIAÇÃO DE LINHAS:
-      - LINHAS DE ACORDES: Compostas por letras A-G, números, #, b, e extensões (m, 7, sus4, add9).
-      - LINHAS DE LETRA: Contêm artigos, preposições e palavras comuns em português.
-
-      RETORNO:
-      Retorne APENAS o conteúdo convertido final. Sem explicações ou markdown.
-
-      CIFRA PARA CONVERSÃO:
-      ${form.content}`;
+CIFRA PARA CONVERSÃO:
+${form.content}`;
 
       const response = await fetch('/api/ai-proxy', {
         method: 'POST',
