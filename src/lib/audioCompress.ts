@@ -1,4 +1,7 @@
-import lamejs from 'lamejs';
+// Usa o fork "@breezystack/lamejs" em vez do pacote "lamejs" original: o
+// original tem um bug de empacotamento ESM que quebra o Mp3Encoder com o
+// erro "MPEGMode is not defined" em bundlers como o Vite.
+import * as lamejs from '@breezystack/lamejs';
 
 /**
  * Compressão de áudio no navegador, antes do upload para o Supabase Storage.
@@ -194,7 +197,7 @@ export async function compressAudioFile(file: File): Promise<File> {
     return result;
   } catch (err) {
     console.error('Falha ao comprimir áudio no navegador — enviando o arquivo original sem compressão:', err);
-    alert(`Não foi possível comprimir "${file.name}": ${(err as Error)?.message || err}`);
+    alert(`Não foi possível comprimir "${file.name}" neste navegador. Se o arquivo for grande, exporte-o como MP3 antes de enviar.`);
     return file;
   }
 }
