@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { BookText, Plus, Share2, Users, Loader2, FileDown, Music, Search, Edit3, ChevronDown, Globe, Lock, CloudCheck, CloudOff } from 'lucide-react';
+import { BookText, Plus, Share2, Users, Loader2, FileDown, Music, Search, Edit3, ChevronDown, Globe, Lock, CloudCheck, CloudOff, WifiOff } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
 import { UserProfile, ChordBook, Chord, Mission } from '../types';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import ChordEditor from './ChordEditor';
-import { saveChordBookOffline, removeOfflineChordBook, isChordBookOffline } from '../lib/offlineDb';
+import { saveChordBookOffline, removeOfflineChordBook, isChordBookOffline, listOfflineChordBooks } from '../lib/offlineDb';
 
 interface ChordBooksListProps {
   profile: UserProfile | null;
@@ -40,6 +40,7 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
   // e PDFs continuam exigindo internet, mesmo com o caderno marcado como offline) ---
   const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
   const [togglingOfflineId, setTogglingOfflineId] = useState<string | null>(null);
+  const [usingOfflineBooks, setUsingOfflineBooks] = useState(false);
 
   useEffect(() => {
     if (books.length === 0) return;
@@ -130,6 +131,11 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
   async function fetchBooks() {
     setLoading(true);
     try {
+      // Sem rede: nem tenta o Supabase, vai direto pro cache offline.
+      if (!navigator.onLine) {
+        throw new Error('offline');
+      }
+
       const userId = profile?.id || (profile as any)?.uid;
       if (!userId) {
         setLoading(false);
@@ -176,8 +182,27 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
       } else {
         setBooks([]);
       }
+      setUsingOfflineBooks(false);
     } catch (err: any) {
       console.error('Error in fetchBooks:', err);
+
+      // Fallback: mostra os cadernos que já foram salvos para uso offline,
+      // em vez de deixar a tela vazia quando não há rede.
+      try {
+        const offlineBooks = await listOfflineChordBooks();
+        if (offlineBooks.length > 0) {
+          setBooks(offlineBooks.map(r => ({ ...(r.chordBook as any), missionIds: [] })));
+          setUsingOfflineBooks(true);
+          setNotification({ message: 'Sem conexão. Exibindo cadernos salvos offline.', type: 'error' });
+          setLoading(false);
+          return;
+        }
+      } catch (offlineErr) {
+        console.error('Erro ao ler cadernos offline:', offlineErr);
+      }
+
+      setUsingOfflineBooks(false);
+      setBooks([]);
       setNotification({ 
         message: 'Falha ao buscar cadernos: ' + (err.message || 'Erro de conexão'), 
         type: 'error' 
@@ -542,6 +567,13 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
       {loading ? (
         <div className="flex justify-center p-20"><Loader2 className="animate-spin text-brand-blue" /></div>
       ) : (
+        <>
+        {usingOfflineBooks && (
+          <div className="flex items-center gap-2 bg-amber-50 text-amber-700 border border-amber-200 px-4 py-3 rounded-2xl text-sm font-bold mb-4">
+            <WifiOff className="w-4 h-4 flex-shrink-0" />
+            Sem conexão. Exibindo os cadernos salvos offline (ações como editar, adicionar cifra ou exportar PDF exigem internet).
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {books.map((book) => (
             <div 
@@ -649,6 +681,7 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
             </div>
           )}
         </div>
+        </>
       )}
 
       {/* Modais de Adição de Cifra */}
