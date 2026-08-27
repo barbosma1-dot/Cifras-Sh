@@ -62,6 +62,88 @@ async function encodeMp3(pcm: Int16Array, sampleRate: number, kbps: number): Pro
 }
 
 /**
+ * Lê um WAV manualmente, byte a byte, sem depender do decodeAudioData do
+ * navegador — que falha em alguns WAVs exportados de DAW (ex.: formato
+ * "extensible", float 32-bit, ou 24-bit), mesmo sendo um WAV válido.
+ * Suporta PCM inteiro (8/16/24/32 bits) e IEEE float (32 bits), mono ou
+ * multicanal (inclusive o cabeçalho "extensible" usado por muitos DAWs).
+ */
+function parseWavManually(arrayBuffer: ArrayBuffer, ctx: BaseAudioContext): AudioBuffer {
+  const view = new DataView(arrayBuffer);
+  if (view.getUint32(0, false) !== 0x52494646 /* 'RIFF' */ || view.getUint32(8, false) !== 0x57415645 /* 'WAVE' */) {
+    throw new Error('Não é um arquivo WAV válido (cabeçalho RIFF/WAVE ausente).');
+  }
+
+  let offset = 12;
+  let fmt: { audioFormat: number; numChannels: number; sampleRate: number; bitsPerSample: number } | null = null;
+  let dataOffset = -1;
+  let dataLength = 0;
+
+  while (offset + 8 <= view.byteLength) {
+    const chunkId = view.getUint32(offset, false);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const chunkBodyOffset = offset + 8;
+
+    if (chunkId === 0x666d7420 /* 'fmt ' */) {
+      let audioFormat = view.getUint16(chunkBodyOffset, true);
+      const numChannels = view.getUint16(chunkBodyOffset + 2, true);
+      const sampleRate = view.getUint32(chunkBodyOffset + 4, true);
+      const bitsPerSample = view.getUint16(chunkBodyOffset + 14, true);
+      // Formato "extensible" (comum em exports de DAW): o formato real vem
+      // nos 2 primeiros bytes do GUID de subformato, 24 bytes após o começo do fmt.
+      if (audioFormat === 0xfffe && chunkSize >= 40) {
+        audioFormat = view.getUint16(chunkBodyOffset + 24, true);
+      }
+      fmt = { audioFormat, numChannels, sampleRate, bitsPerSample };
+    } else if (chunkId === 0x64617461 /* 'data' */) {
+      dataOffset = chunkBodyOffset;
+      dataLength = Math.min(chunkSize, view.byteLength - chunkBodyOffset);
+    }
+
+    offset = chunkBodyOffset + chunkSize + (chunkSize % 2); // chunks são alinhados em bytes pares
+  }
+
+  if (!fmt || dataOffset === -1) {
+    throw new Error('WAV sem chunk "fmt " ou "data" reconhecível.');
+  }
+
+  const { audioFormat, numChannels, sampleRate, bitsPerSample } = fmt;
+  const bytesPerSample = bitsPerSample / 8;
+  const frameCount = Math.floor(dataLength / (bytesPerSample * numChannels));
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let ch = 0; ch < numChannels; ch++) {
+    const channelData = buffer.getChannelData(ch);
+    let readOffset = dataOffset + ch * bytesPerSample;
+    for (let i = 0; i < frameCount; i++) {
+      let sample: number;
+      if (audioFormat === 3 && bitsPerSample === 32) {
+        sample = view.getFloat32(readOffset, true);
+      } else if (bitsPerSample === 8) {
+        sample = (view.getUint8(readOffset) - 128) / 128;
+      } else if (bitsPerSample === 16) {
+        sample = view.getInt16(readOffset, true) / 32768;
+      } else if (bitsPerSample === 24) {
+        const b0 = view.getUint8(readOffset);
+        const b1 = view.getUint8(readOffset + 1);
+        const b2 = view.getUint8(readOffset + 2);
+        let v = (b2 << 16) | (b1 << 8) | b0;
+        if (v & 0x800000) v -= 0x1000000;
+        sample = v / 8388608;
+      } else if (bitsPerSample === 32) {
+        sample = view.getInt32(readOffset, true) / 2147483648;
+      } else {
+        throw new Error(`Profundidade de bits WAV não suportada: ${bitsPerSample}`);
+      }
+      channelData[i] = sample;
+      readOffset += bytesPerSample * numChannels;
+    }
+  }
+
+  return buffer;
+}
+
+/**
  * Recebe um File de áudio qualquer e devolve uma versão comprimida (MP3,
  * mono, baixa taxa de bits) como novo File — ou o arquivo original, sem
  * alterar, se o navegador não suportar a técnica ou algo der errado no meio
@@ -74,7 +156,17 @@ export async function compressAudioFile(file: File): Promise<File> {
     const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
     const decodeCtx = new AudioContextCtor();
     const arrayBuffer = await file.arrayBuffer();
-    const decoded: AudioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
+
+    let decoded: AudioBuffer;
+    try {
+      decoded = await decodeCtx.decodeAudioData(arrayBuffer.slice(0));
+    } catch (decodeErr) {
+      // Fallback: alguns WAVs de DAW (extensible/float/24-bit) o navegador
+      // recusa decodificar mesmo sendo válidos — lemos manualmente.
+      const looksLikeWav = file.type.includes('wav') || /\.wav$/i.test(file.name);
+      if (!looksLikeWav) throw decodeErr;
+      decoded = parseWavManually(arrayBuffer, decodeCtx);
+    }
     await decodeCtx.close();
 
     // OfflineAudioContext com 1 canal de destino já faz o downmix
@@ -102,7 +194,7 @@ export async function compressAudioFile(file: File): Promise<File> {
     return result;
   } catch (err) {
     console.error('Falha ao comprimir áudio no navegador — enviando o arquivo original sem compressão:', err);
-    alert(`Não foi possível comprimir "${file.name}" neste navegador (formato de áudio não suportado pela compressão automática). Se o arquivo for grande, exporte-o como MP3 antes de enviar.`);
+    alert(`Não foi possível comprimir "${file.name}" neste navegador. Se o arquivo for grande, exporte-o como MP3 antes de enviar.`);
     return file;
   }
 }
