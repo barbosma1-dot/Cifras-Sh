@@ -17,16 +17,27 @@ import {
   Copy,
   Check,
   AlertTriangle,
+  Download,
+  WifiOff,
+  CheckCircle,
+  Trash,
 } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { Chord, UserProfile } from '../types';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
 import PDFImporter from './PDFImporter';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import { removeStorageFilesByUrl } from '../lib/storageCleanup';
+import {
+  saveChordBookOffline,
+  getOfflineChordBook,
+  removeOfflineChordBook,
+  isChordBookOffline,
+} from '../lib/offlineDb';
 
 export default function ChordsList({ profile, initialBookId, triggerNewChord }: { 
   profile: UserProfile | null, 
@@ -82,6 +93,49 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const [selectedExistingIds, setSelectedExistingIds] = useState<Set<string>>(new Set());
   const [existingSearchTerm, setExistingSearchTerm] = useState('');
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // --- Uso offline (só o texto das cifras — áudios e PDFs continuam exigindo internet) ---
+  const isOnline = useOnlineStatus();
+  const [isSavedOffline, setIsSavedOffline] = useState(false);
+  const [savingOffline, setSavingOffline] = useState(false);
+  const [usingOfflineData, setUsingOfflineData] = useState(false);
+
+  useEffect(() => {
+    if (activeBookId) {
+      isChordBookOffline(activeBookId).then(setIsSavedOffline);
+    } else {
+      setIsSavedOffline(false);
+    }
+  }, [activeBookId]);
+
+  const handleSaveOffline = async () => {
+    if (!activeBookId) return;
+    if (chords.length === 0) {
+      setNotification({ message: 'Adicione cifras ao caderno antes de salvar offline.', type: 'error' });
+      return;
+    }
+    setSavingOffline(true);
+    try {
+      await saveChordBookOffline({ id: activeBookId, name: bookTitle || 'Caderno' } as any, chords);
+      setIsSavedOffline(true);
+      setNotification({ message: 'Caderno salvo para uso offline! (áudios e PDFs continuam exigindo internet)', type: 'success' });
+    } catch (err: any) {
+      setNotification({ message: 'Erro ao salvar offline: ' + err.message, type: 'error' });
+    } finally {
+      setSavingOffline(false);
+    }
+  };
+
+  const handleRemoveOffline = async () => {
+    if (!activeBookId) return;
+    try {
+      await removeOfflineChordBook(activeBookId);
+      setIsSavedOffline(false);
+      setNotification({ message: 'Removido do armazenamento offline.', type: 'success' });
+    } catch (err: any) {
+      setNotification({ message: 'Erro ao remover cópia offline: ' + err.message, type: 'error' });
+    }
+  };
 
   useEffect(() => {
     if (notification) {
@@ -240,6 +294,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     setChordsFetchError(null);
     try {
       if (activeBookId) {
+        // Sem rede: nem tenta o Supabase, vai direto pro cache offline do caderno.
+        if (!navigator.onLine) {
+          throw new Error('offline');
+        }
+
         const { data: itemData, error: itemError } = await supabase
           .from('chord_book_items')
           .select('chord_id')
@@ -325,12 +384,21 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
         }
 
         setChords(allChords);
+        setUsingOfflineData(false);
         const allCats = allChords.flatMap(c => 
           c.category ? c.category.split(',').map((cat: string) => cat.trim()) : []
         );
         const cats = Array.from(new Set(allCats)).filter((c): c is string => !!c && c.length > 0);
         setCategories(cats);
         setLoading(false);
+
+        // Se este caderno já tinha sido baixado antes, mantém a cópia offline
+        // atualizada (sempre sem áudios/PDFs — só o texto das cifras).
+        isChordBookOffline(activeBookId).then((already) => {
+          if (already) {
+            saveChordBookOffline({ id: activeBookId, name: bookTitle || 'Caderno' } as any, allChords).catch(() => {});
+          }
+        });
         return;
       }
 
@@ -350,6 +418,32 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
       setCategories(cats);
     } catch (err: any) {
       console.error('Error fetching chords:', err);
+
+      // Se for um caderno específico, tenta cair na cópia salva offline antes
+      // de desistir (áudios/PDFs não estarão disponíveis nessa cópia).
+      if (activeBookId) {
+        const offlineData = await getOfflineChordBook(activeBookId);
+        if (offlineData) {
+          setChords(offlineData.chords as Chord[]);
+          setBookTitle(offlineData.chordBook.name);
+          setUsingOfflineData(true);
+          const allCats = offlineData.chords.flatMap(c =>
+            c.category ? c.category.split(',').map((cat: string) => cat.trim()) : []
+          );
+          setCategories(Array.from(new Set(allCats)).filter((c): c is string => !!c && c.length > 0));
+          setNotification({ message: 'Sem conexão. Exibindo o caderno salvo offline (sem áudios/PDFs).', type: 'error' });
+          setLoading(false);
+          return;
+        }
+        setUsingOfflineData(false);
+        if (!navigator.onLine) {
+          setNotification({ message: 'Sem conexão e este caderno não foi salvo para uso offline.', type: 'error' });
+          setChords([]);
+          setLoading(false);
+          return;
+        }
+      }
+
       const extra = [err?.code, err?.details, err?.hint].filter(Boolean).join(' | ');
       setChordsFetchError(
         `Não foi possível carregar as cifras (${err?.message || 'erro desconhecido'}${extra ? ` — ${extra}` : ''}). Verifique sua conexão e tente novamente.`
@@ -688,6 +782,28 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
              </div>
           </div>
           <div className="flex gap-3">
+            {isSavedOffline ? (
+              <button
+                onClick={handleRemoveOffline}
+                className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100 text-xs font-black flex items-center gap-2 hover:bg-red-50 hover:text-red-500 hover:border-red-100 transition-all group"
+                title="Salvo offline — clique para remover"
+              >
+                <CheckCircle className="w-4 h-4 group-hover:hidden" />
+                <Trash className="w-4 h-4 hidden group-hover:block" />
+                <span className="group-hover:hidden">SALVO OFFLINE</span>
+                <span className="hidden group-hover:inline">REMOVER</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleSaveOffline}
+                disabled={savingOffline || chords.length === 0}
+                className="px-4 py-2 bg-white text-slate-500 border border-slate-200 rounded-xl text-xs font-black flex items-center gap-2 hover:text-brand-blue hover:border-brand-blue transition-all disabled:opacity-40"
+                title="Salvar cifras deste caderno para uso offline (áudios e PDFs continuam exigindo internet)"
+              >
+                {savingOffline ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                SALVAR OFFLINE
+              </button>
+            )}
             <button 
               onClick={async () => {
                 setIsExporting(true);
@@ -710,6 +826,14 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               FECHAR CADERNO
             </button>
           </div>
+          {(!isOnline || usingOfflineData) && (
+            <div className="w-full flex items-center gap-2 bg-amber-50 text-amber-700 border border-amber-200 px-4 py-3 rounded-2xl text-sm font-bold">
+              <WifiOff className="w-4 h-4 flex-shrink-0" />
+              {usingOfflineData
+                ? 'Você está offline. Exibindo a última versão salva deste caderno (áudios e PDFs não ficam disponíveis offline).'
+                : 'Sem conexão com a internet.'}
+            </div>
+          )}
           <div className="w-full mt-2">
             <button 
               onClick={() => setIsAddChordModalOpen(true)}
