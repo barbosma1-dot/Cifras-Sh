@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { BookText, Plus, Share2, Users, Loader2, FileDown, Music, Search, Edit3, ChevronDown, Globe, Lock } from 'lucide-react';
+import { BookText, Plus, Share2, Users, Loader2, FileDown, Music, Search, Edit3, ChevronDown, Globe, Lock, CloudCheck, CloudOff } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
 import { UserProfile, ChordBook, Chord, Mission } from '../types';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import ChordEditor from './ChordEditor';
+import { saveChordBookOffline, removeOfflineChordBook, isChordBookOffline } from '../lib/offlineDb';
 
 interface ChordBooksListProps {
   profile: UserProfile | null;
@@ -34,6 +35,66 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
   const [allAvailableChords, setAllAvailableChords] = useState<Chord[]>([]);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [searchChord, setSearchChord] = useState('');
+
+  // --- Status offline por caderno (só o texto das cifras fica salvo — áudios
+  // e PDFs continuam exigindo internet, mesmo com o caderno marcado como offline) ---
+  const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
+  const [togglingOfflineId, setTogglingOfflineId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (books.length === 0) return;
+    let cancelled = false;
+    Promise.all(books.map(async (b) => ({ id: b.id, saved: await isChordBookOffline(b.id) })))
+      .then((results) => {
+        if (cancelled) return;
+        setOfflineBookIds(new Set(results.filter(r => r.saved).map(r => r.id)));
+      });
+    return () => { cancelled = true; };
+  }, [books]);
+
+  async function fetchChordsForBook(bookId: string): Promise<Chord[]> {
+    const { data: itemData, error: itemError } = await supabase
+      .from('chord_book_items')
+      .select('chord_id')
+      .eq('book_id', bookId);
+    if (itemError) throw itemError;
+    const chordIds = ((itemData as any[]) || []).map(i => i.chord_id).filter(Boolean);
+    if (chordIds.length === 0) return [];
+    const chordIdSet = new Set(chordIds);
+    const { data, error } = await fetchAllRows<Chord>((from, to) =>
+      supabase.from('chords').select('*').order('title').range(from, to)
+    );
+    if (error) throw error;
+    return data.filter(c => chordIdSet.has(c.id));
+  }
+
+  async function toggleOfflineForBook(book: ChordBook) {
+    setTogglingOfflineId(book.id);
+    try {
+      if (offlineBookIds.has(book.id)) {
+        await removeOfflineChordBook(book.id);
+        setOfflineBookIds(prev => {
+          const next = new Set(prev);
+          next.delete(book.id);
+          return next;
+        });
+        setNotification({ message: 'Removido do armazenamento offline.', type: 'success' });
+      } else {
+        const chords = await fetchChordsForBook(book.id);
+        if (chords.length === 0) {
+          setNotification({ message: 'Este caderno está vazio — adicione cifras antes de salvar offline.', type: 'error' });
+          return;
+        }
+        await saveChordBookOffline(book, chords);
+        setOfflineBookIds(prev => new Set(prev).add(book.id));
+        setNotification({ message: 'Caderno salvo para uso offline! (áudios e PDFs continuam exigindo internet)', type: 'success' });
+      }
+    } catch (err: any) {
+      setNotification({ message: 'Erro ao atualizar status offline: ' + (err.message || 'Verifique sua conexão'), type: 'error' });
+    } finally {
+      setTogglingOfflineId(null);
+    }
+  }
 
   useEffect(() => {
     fetchBooks();
@@ -487,8 +548,16 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
               key={book.id}
               className="bg-white p-5 rounded-2xl border border-slate-100 hover:border-brand-blue/30 transition-all cursor-pointer group shadow-sm flex flex-col"
             >
-              <div className="w-10 h-10 bg-brand-blue/5 rounded-xl flex items-center justify-center text-brand-blue mb-4 group-hover:bg-brand-blue group-hover:text-white transition-all">
+              <div className="w-10 h-10 bg-brand-blue/5 rounded-xl flex items-center justify-center text-brand-blue mb-4 group-hover:bg-brand-blue group-hover:text-white transition-all relative">
                 <BookText className="w-5 h-5" />
+                {offlineBookIds.has(book.id) && (
+                  <span
+                    className="absolute -bottom-1.5 -right-1.5 w-5 h-5 bg-emerald-500 text-white rounded-full flex items-center justify-center border-2 border-white"
+                    title="Salvo offline"
+                  >
+                    <CloudCheck className="w-3 h-3" />
+                  </span>
+                )}
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-1 truncate">{book.name}</h3>
               <p className="text-[11px] text-slate-400 mb-4 flex items-center gap-1.5 font-medium">
@@ -525,6 +594,27 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
                     title="Adicionar Cifra"
                   >
                     <Plus className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleOfflineForBook(book);
+                    }}
+                    disabled={togglingOfflineId === book.id}
+                    className={`p-2 border rounded-lg transition-colors disabled:opacity-50 ${
+                      offlineBookIds.has(book.id)
+                        ? 'border-emerald-200 text-emerald-600 hover:bg-red-50 hover:text-red-500 hover:border-red-100'
+                        : 'border-slate-100 text-slate-300 hover:text-brand-blue hover:bg-slate-50'
+                    }`}
+                    title={offlineBookIds.has(book.id) ? 'Salvo offline — clique para remover' : 'Salvar cifras deste caderno para uso offline'}
+                  >
+                    {togglingOfflineId === book.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : offlineBookIds.has(book.id) ? (
+                      <CloudCheck className="w-4 h-4" />
+                    ) : (
+                      <CloudOff className="w-4 h-4" />
+                    )}
                   </button>
                   <button 
                     onClick={(e) => {
