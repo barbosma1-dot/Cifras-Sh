@@ -194,7 +194,7 @@ export async function compressAudioFile(file: File): Promise<File> {
     return result;
   } catch (err) {
     console.error('Falha ao comprimir áudio no navegador — enviando o arquivo original sem compressão:', err);
-    alert(`Não foi possível comprimir "${file.name}" neste navegador. Se o arquivo for grande, exporte-o como MP3 antes de enviar.`);
+    alert(`Não foi possível comprimir "${file.name}": ${(err as Error)?.message || err}`);
     return file;
   }
 }
