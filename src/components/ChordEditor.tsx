@@ -183,6 +183,14 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
   const audioInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
 
+  // Chave que muda a cada uso — força o React a desmontar e criar um <input>
+  // NOVO a cada seleção, em vez de reaproveitar o mesmo elemento DOM. Em
+  // alguns Android, reciclar o mesmo <input type="file"> trava depois do
+  // primeiro uso: o seletor até abre, mas o evento de seleção do arquivo
+  // nunca dispara de novo. Recriar o elemento contorna esse problema.
+  const [audioInputKey, setAudioInputKey] = useState(0);
+  const [textInputKey, setTextInputKey] = useState(0);
+
   const handleRemoveAttachment = (index: number) => {
     setAttachments(prev => {
       const att = prev[index];
@@ -999,13 +1007,14 @@ ${form.content}`;
                     <span className="text-xs font-bold uppercase tracking-wider">Subir Outro Áudio</span>
                   </button>
                   <input 
+                    key={audioInputKey}
                     ref={audioInputRef}
                     type="file" 
                     className="hidden" 
                     accept="audio/*" 
                     multiple
                     onChange={e => {
-                      if (e.target.files) {
+                      if (e.target.files && e.target.files.length > 0) {
                         // Um de cada vez — comprimir vários áudios ao
                         // mesmo tempo sobrecarregava o navegador.
                         const files = Array.from(e.target.files) as File[];
@@ -1013,9 +1022,8 @@ ${form.content}`;
                           for (const f of files) await handleAddAttachment('audio', f);
                         })();
                       }
-                      // Limpa o valor pra permitir selecionar o MESMO arquivo de novo
-                      // (ex.: removeu por engano e quer reenviar) sem precisar trocar de arquivo.
-                      e.target.value = '';
+                      // Recria o input do zero pra próxima vez (ver comentário na declaração da ref).
+                      setAudioInputKey(k => k + 1);
                     }} 
                   />
                 </div>
@@ -1082,16 +1090,17 @@ ${form.content}`;
                     <span className="text-xs font-bold uppercase tracking-wider">Subir Outro Anexo (PDF/TXT)</span>
                   </button>
                   <input 
+                    key={textInputKey}
                     ref={textInputRef}
                     type="file" 
                     className="hidden" 
                     accept=".pdf,.doc,.docx,.txt,image/*" 
                     multiple
                     onChange={e => {
-                      if (e.target.files) {
+                      if (e.target.files && e.target.files.length > 0) {
                         Array.from(e.target.files).forEach((f: any) => handleAddAttachment('text', f as File));
                       }
-                      e.target.value = '';
+                      setTextInputKey(k => k + 1);
                     }} 
                   />
                 </div>
