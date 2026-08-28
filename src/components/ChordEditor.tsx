@@ -174,6 +174,15 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
   // handleSubmit). Um ref porque isso não precisa re-renderizar nada.
   const removedAttachmentUrlsRef = useRef<string[]>([]);
 
+  // Refs pros inputs de arquivo escondidos — o botão dispara o seletor
+  // programaticamente (input.click()) em vez de depender só da ativação
+  // implícita do <label>. Em alguns WebViews Android, um <label> dentro de
+  // contêineres com backdrop-blur/transform (como este modal) não repassa o
+  // toque corretamente pro <input type="file"> associado, e nada acontece ao
+  // tocar — sem erro nenhum, só silêncio. Chamar .click() direto contorna isso.
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
+
   const handleRemoveAttachment = (index: number) => {
     setAttachments(prev => {
       const att = prev[index];
@@ -981,26 +990,34 @@ ${form.content}`;
                     </div>
                   )}
 
-                  <label className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-emerald-300 bg-emerald-50/10 text-emerald-700 hover:bg-emerald-50/30 rounded-2xl cursor-pointer transition-all">
+                  <button
+                    type="button"
+                    onClick={() => audioInputRef.current?.click()}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-emerald-300 bg-emerald-50/10 text-emerald-700 hover:bg-emerald-50/30 rounded-2xl cursor-pointer transition-all"
+                  >
                     <Plus className="w-5 h-5 text-emerald-500 animate-pulse" />
                     <span className="text-xs font-bold uppercase tracking-wider">Subir Outro Áudio</span>
-                    <input 
-                      type="file" 
-                      className="hidden" 
-                      accept="audio/*" 
-                      multiple
-                      onChange={e => {
-                        if (e.target.files) {
-                          // Um de cada vez — comprimir vários áudios ao
-                          // mesmo tempo sobrecarregava o navegador.
-                          const files = Array.from(e.target.files) as File[];
-                          (async () => {
-                            for (const f of files) await handleAddAttachment('audio', f);
-                          })();
-                        }
-                      }} 
-                    />
-                  </label>
+                  </button>
+                  <input 
+                    ref={audioInputRef}
+                    type="file" 
+                    className="hidden" 
+                    accept="audio/*" 
+                    multiple
+                    onChange={e => {
+                      if (e.target.files) {
+                        // Um de cada vez — comprimir vários áudios ao
+                        // mesmo tempo sobrecarregava o navegador.
+                        const files = Array.from(e.target.files) as File[];
+                        (async () => {
+                          for (const f of files) await handleAddAttachment('audio', f);
+                        })();
+                      }
+                      // Limpa o valor pra permitir selecionar o MESMO arquivo de novo
+                      // (ex.: removeu por engano e quer reenviar) sem precisar trocar de arquivo.
+                      e.target.value = '';
+                    }} 
+                  />
                 </div>
 
                 {/* Secao de Textos/Anexos */}
@@ -1056,21 +1073,27 @@ ${form.content}`;
                     </div>
                   )}
 
-                  <label className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-brand-blue/30 bg-brand-blue/5 text-brand-blue hover:bg-brand-blue/10 rounded-2xl cursor-pointer transition-all">
+                  <button
+                    type="button"
+                    onClick={() => textInputRef.current?.click()}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-brand-blue/30 bg-brand-blue/5 text-brand-blue hover:bg-brand-blue/10 rounded-2xl cursor-pointer transition-all"
+                  >
                     <Plus className="w-5 h-5 text-brand-blue animate-pulse" />
                     <span className="text-xs font-bold uppercase tracking-wider">Subir Outro Anexo (PDF/TXT)</span>
-                    <input 
-                      type="file" 
-                      className="hidden" 
-                      accept=".pdf,.doc,.docx,.txt,image/*" 
-                      multiple
-                      onChange={e => {
-                        if (e.target.files) {
-                          Array.from(e.target.files).forEach((f: any) => handleAddAttachment('text', f as File));
-                        }
-                      }} 
-                    />
-                  </label>
+                  </button>
+                  <input 
+                    ref={textInputRef}
+                    type="file" 
+                    className="hidden" 
+                    accept=".pdf,.doc,.docx,.txt,image/*" 
+                    multiple
+                    onChange={e => {
+                      if (e.target.files) {
+                        Array.from(e.target.files).forEach((f: any) => handleAddAttachment('text', f as File));
+                      }
+                      e.target.value = '';
+                    }} 
+                  />
                 </div>
               </div>
             </div>
