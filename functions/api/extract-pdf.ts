@@ -98,14 +98,17 @@ async function callGeminiWithKey(apiKey: string, images: string[], prompt: strin
 
   const response = await withTimeout(
     ai.models.generateContent({
-      // gemini-3.1-flash (não "flash-lite"): trocado de volta do "flash-lite" porque a
-      // versão lite vinha resumindo/pulando versículos em salmos e cânticos longos da
-      // Liturgia das Horas (mais rápida/barata, porém menos fiel em transcrição longa).
-      // O "flash" normal é mais lento e consome mais cota gratuita, mas segue melhor a
-      // regra 0c (proibido resumir) em textos extensos. Se algum dia a Google aposentar
-      // este modelo, o sintoma é sempre o mesmo: erro 404 "model ... is no longer
-      // available" em TODAS as chaves ao mesmo tempo (diferente de 429, que é só cota).
-      model: "gemini-3.1-flash",
+      // gemini-3.1-flash-lite: voltamos para o "lite" depois de testar o "flash" normal —
+      // o "flash" é mais fiel em textos longos, mas é lento o bastante para estourar o
+      // limite de execução da função no Cloudflare Pages em algumas páginas, travando a
+      // importação no meio (sem erro nenhum pro app tratar, porque a PLATAFORMA mata a
+      // função antes do nosso próprio timeout de 30s abaixo sequer disparar). Com o
+      // "lite" de volta, a completude em salmos/cânticos longos passa a depender da
+      // regra 0c do prompt (proibido resumir/pular versículo) em vez da capacidade do
+      // modelo. Se a Google aposentar este modelo, o sintoma é sempre o mesmo: erro 404
+      // "model ... is no longer available" em TODAS as chaves ao mesmo tempo (diferente
+      // de 429, que é só cota).
+      model: "gemini-3.1-flash-lite",
       contents,
       config: {
         temperature: 0.1,
