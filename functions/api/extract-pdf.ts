@@ -98,13 +98,14 @@ async function callGeminiWithKey(apiKey: string, images: string[], prompt: strin
 
   const response = await withTimeout(
     ai.models.generateContent({
-      // gemini-3.1-flash-lite: a Google aposentou o gemini-2.5-flash-lite (passou a
-      // devolver 404 "no longer available to new users" em jul/2026) — este é o
-      // substituto oficial recomendado pela Google, mesma categoria (rápido/barato,
-      // ótimo para extração estruturada). Se a Google trocar de novo no futuro, o
-      // sintoma é sempre esse: erro 404 "model ... is no longer available" em TODAS
-      // as chaves ao mesmo tempo (diferente de 429, que é só cota).
-      model: "gemini-3.1-flash-lite",
+      // gemini-3.1-flash (não "flash-lite"): trocado de volta do "flash-lite" porque a
+      // versão lite vinha resumindo/pulando versículos em salmos e cânticos longos da
+      // Liturgia das Horas (mais rápida/barata, porém menos fiel em transcrição longa).
+      // O "flash" normal é mais lento e consome mais cota gratuita, mas segue melhor a
+      // regra 0c (proibido resumir) em textos extensos. Se algum dia a Google aposentar
+      // este modelo, o sintoma é sempre o mesmo: erro 404 "model ... is no longer
+      // available" em TODAS as chaves ao mesmo tempo (diferente de 429, que é só cota).
+      model: "gemini-3.1-flash",
       contents,
       config: {
         temperature: 0.1,
