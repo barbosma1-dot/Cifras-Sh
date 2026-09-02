@@ -326,7 +326,25 @@ function isAnyHeadingLine(text: string): boolean {
  * Segmenta as linhas já ordenadas (mesma ordenação de coluna usada em
  * `extractPageChordProText`) de uma página de Ofício em peças separadas.
  */
-export function segmentLiturgyOfHoursPage(lines: PdfLine[], pageWidth: number): LiturgySection[] {
+// Quando um Salmo/Cântico/Hino atravessa uma quebra de página SEM repetir o
+// cabeçalho na página seguinte (comum em Ofício/Laudes — ex.: "Salmo 32(33)"
+// continua na página seguinte só com linhas de acorde+letra, sem reimprimir
+// "Salmo 32(33)"), passe aqui o título/tipo da última peça ainda "aberta" da
+// página anterior (ver `previousPageLastTitleRaw`/categoria em
+// PDFImporter.tsx). Sem isso, `current` começa null nesta página e as linhas
+// iniciais (sem cabeçalho reconhecido) caem no `if (!current) continue`
+// abaixo e são DESCARTADAS silenciosamente — era esse o bug real por trás de
+// estrofes/salmos inteiros sumindo quando a peça começava numa página e
+// terminava na seguinte. Com o carryOver, a peça desta página nasce com o
+// MESMO título da anterior, o que também faz a fusão por título já existente
+// em PDFImporter.tsx (comparação com `previousPageLastTitleKey`) funcionar
+// automaticamente — não precisou mexer na lógica de fusão, só parar de
+// perder o conteúdo aqui.
+export function segmentLiturgyOfHoursPage(
+  lines: PdfLine[],
+  pageWidth: number,
+  carryOverSection?: { title: string; hasChords: boolean } | null
+): LiturgySection[] {
   const mid = pageWidth / 2;
   const crossesMid = lines.some(l => l.words.some(w => w.x0 < mid - 10 && w.x1 > mid + 10));
 
@@ -344,9 +362,11 @@ export function segmentLiturgyOfHoursPage(lines: PdfLine[], pageWidth: number): 
   }
 
   const sections: LiturgySection[] = [];
-  let current: LiturgySection | null = null;
-  let currentIsPsalmType = false;
-  let bodyStarted = false;
+  let current: LiturgySection | null = carryOverSection
+    ? { title: carryOverSection.title, hasChords: carryOverSection.hasChords, contentLines: [] }
+    : null;
+  let currentIsPsalmType = carryOverSection?.hasChords ?? false;
+  let bodyStarted = !!carryOverSection; // já estava "no meio" da peça ao virar a página
   let pendingAntiphonLines: string[] = [];
   let skippingAltVersion = false;
   let sawAltVersionMarkerOnce = false;
