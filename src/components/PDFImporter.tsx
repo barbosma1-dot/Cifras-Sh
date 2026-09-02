@@ -3,7 +3,7 @@ import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save, Se
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { extractPreAlignedPageText } from '../lib/chordproExtractor';
+import { extractPreAlignedPageText, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage } from '../lib/chordproExtractor';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
 
@@ -185,6 +185,11 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   // breve, Preces, antífonas etc.) como objetos próprios com category="Leitura".
   // Não afeta em nada o comportamento padrão de importação de cifras.
   const [includeLiturgicalTexts, setIncludeLiturgicalTexts] = useState<boolean>(false);
+  // Modo Ofício/Laudes: em vez de mandar a página pra IA, segmenta e extrai o
+  // conteúdo cifrado direto da camada de texto do PDF (determinístico, sem
+  // risco de a IA "resumir" versículos longos). Só se aplica a páginas com
+  // texto selecionável; páginas escaneadas continuam no fluxo de imagem + IA.
+  const [officeMode, setOfficeMode] = useState<boolean>(false);
   // Id do lote no banco (import_batches). Criado/atualizado em
   // `ensureImportBatch`, usado por `importAll` para casar músicas
   // reimportadas com as que já existiam do mesmo lote.
@@ -373,8 +378,43 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
         const endOfBatch = Math.min(i + batchSize - 1, lastPage);
 
         try {
+          let extracted: ExtractedSong[] = [];
+          let usedDeterministic = false;
+          let quotaExhausted = false;
+
+          // Modo Ofício/Laudes: tenta segmentar a página direto da camada de texto
+          // do PDF antes de sequer considerar chamar a IA. Só funciona com
+          // batchSize = 1 (cada iteração deste loop é sempre 1 página só, então
+          // `i` já é a página em questão) e páginas com texto selecionável.
+          if (officeMode) {
+            setStatus(`Lendo página ${i} de ${lastPage} (modo Ofício/Laudes)...`);
+            const officePage = await pdf.getPage(i);
+            const officeWords = await extractPageWords(officePage);
+            if (hasReliableTextLayer(officeWords)) {
+              const officeLines = groupWordsIntoLines(officeWords);
+              const officeView = officePage.view as number[];
+              const officePageWidth = officeView[2] - officeView[0];
+              const sections = segmentLiturgyOfHoursPage(officeLines, officePageWidth);
+              if (sections.length > 0) {
+                extracted = sections.map(s => ({
+                  title: s.title,
+                  artist: '',
+                  category: s.hasChords ? '' : 'Leitura',
+                  original_key: '',
+                  content: s.contentLines.join('\n').trim(),
+                  youtube_url: '',
+                }));
+                usedDeterministic = true;
+              }
+            }
+            // Sem camada de texto confiável (página escaneada/foto) ou nenhuma
+            // peça reconhecida: cai no fluxo normal de imagem + IA abaixo, como
+            // se o modo estivesse desligado para esta página específica.
+          }
+
           const currentBatch: string[] = [];
           const currentTextBlocks: string[] = [];
+          if (!usedDeterministic) {
           setStatus(`Processando páginas ${i} até ${endOfBatch} de ${lastPage}...`);
 
           for (let j = i; j <= endOfBatch; j++) {
@@ -418,10 +458,8 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
           // Tenta o lote com algumas repetições em caso de limite de taxa (429), em vez
           // de abortar a importação inteira na primeira vez que isso acontecer — um
           // bloqueio temporário de RPM pode acontecer mesmo respeitando o espaçamento.
-          let extracted: ExtractedSong[] = [];
           let attempt = 0;
           const maxAttempts = 3;
-          let quotaExhausted = false;
           while (attempt < maxAttempts) {
             await waitForRateLimit();
             try {
@@ -443,6 +481,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               throw err;
             }
           }
+          } // fim do if (!usedDeterministic)
 
           if (extracted && extracted.length > 0) {
             let toAppend = extracted;
@@ -1004,6 +1043,24 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 <button onClick={() => setFile(null)} className="text-slate-300 hover:text-red-500 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 w-full max-w-md">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={officeMode}
+                    onChange={(e) => setOfficeMode(e.target.checked)}
+                    className="mt-0.5 accent-brand-orange"
+                  />
+                  <span className="text-[11px] font-bold text-slate-500 leading-snug">
+                    Modo Ofício/Laudes (extração determinística, sem IA)
+                    <br />
+                    <span className="text-slate-400 font-normal">
+                      Para PDFs de Liturgia das Horas com texto selecionável: separa Invitatório, Hino, cada Salmo, Cântico, Leitura, Responsório, Preces e Oração direto da camada de texto do PDF — nada de acorde/versículo é gerado por IA, então nada fica pela metade. Páginas escaneadas continuam usando IA normalmente.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 w-full max-w-md">
