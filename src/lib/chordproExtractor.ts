@@ -276,3 +276,179 @@ export async function extractPreAlignedPageText(page: any): Promise<string | nul
 
   return extractPageChordProText(lines, pageWidth);
 }
+
+// ---------------------------------------------------------------------------
+// MODO OFÍCIO/LAUDES: segmentação determinística de uma página de Liturgia
+// das Horas em peças separadas (Invitatório, Hino, cada Salmo, cada Cântico,
+// Leitura breve, Responsório breve, Preces, Oração...), SEM passar pela IA
+// para o conteúdo cifrado.
+//
+// Motivação: em páginas muito densas (várias peças, várias com dezenas de
+// versículos repetitivos), o modelo de IA "resumia" ou pulava trechos mesmo
+// com instruções explícitas contra isso — um problema conhecido de modelos
+// leves em transcrição longa. Como a camada de texto do PDF já dá a posição
+// exata de cada palavra e cada acorde (ver `extractPageChordProText` acima),
+// não há necessidade de pedir pra um modelo de linguagem "regenerar" esse
+// conteúdo do zero — só copiar. Este segmentador faz isso deterministicamente
+// via regex sobre os cabeçalhos impressos, sem risco de omitir versículo.
+//
+// É heurístico (como o resto deste arquivo) e assume o vocabulário comum de
+// cabeçalhos da Liturgia das Horas em português. Só é chamado quando o modo
+// "Ofício/Laudes" está ligado no importador; fora dele, o fluxo antigo
+// (imagem + IA) continua sendo usado.
+
+export interface LiturgySection {
+  title: string;
+  hasChords: boolean;
+  contentLines: string[];
+}
+
+const HEADING_RE = {
+  dayHeader: /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\.?$/i,
+  invitatorio: /^Invitat[oó]rio$/i,
+  hino: /^H[Ii]no$/,
+  salmodia: /^Salmodia$/i,
+  salmo: /^Salmo\s+\d/i,
+  cantico: /^C[âa]ntico\b/i,
+  leitura: /^Leitura breve\b/i,
+  responsorio: /^Respons[oó]rio breve\b/i,
+  preces: /^Preces$/i,
+  oracao: /^Ora[cç][ãa]o$/i,
+  antifona: /^Ant\.?\s*\d*\b/i,
+  altVersion: /^\(\s*\d+[ªa]\s*(op[cç][ãa]o|melodia)\s*\)$/i,
+};
+
+function isAnyHeadingLine(text: string): boolean {
+  return Object.values(HEADING_RE).some(re => re.test(text));
+}
+
+/**
+ * Segmenta as linhas já ordenadas (mesma ordenação de coluna usada em
+ * `extractPageChordProText`) de uma página de Ofício em peças separadas.
+ */
+export function segmentLiturgyOfHoursPage(lines: PdfLine[], pageWidth: number): LiturgySection[] {
+  const mid = pageWidth / 2;
+  const crossesMid = lines.some(l => l.words.some(w => w.x0 < mid - 10 && w.x1 > mid + 10));
+
+  let orderedLines: PdfLine[];
+  if (!crossesMid && lines.length > 4) {
+    const left = lines
+      .map(l => ({ y: l.y, words: l.words.filter(w => w.x0 < mid) }))
+      .filter(l => l.words.length > 0);
+    const right = lines
+      .map(l => ({ y: l.y, words: l.words.filter(w => w.x0 >= mid) }))
+      .filter(l => l.words.length > 0);
+    orderedLines = [...left, ...right];
+  } else {
+    orderedLines = lines;
+  }
+
+  const sections: LiturgySection[] = [];
+  let current: LiturgySection | null = null;
+  let currentIsPsalmType = false;
+  let bodyStarted = false;
+  let pendingAntiphonLines: string[] = [];
+  let skippingAltVersion = false;
+  let sawAltVersionMarkerOnce = false;
+  let checkNextLineForSubtitle = false;
+
+  const closeCurrent = () => {
+    if (current && current.contentLines.length > 0) sections.push(current);
+    current = null;
+    bodyStarted = false;
+    currentIsPsalmType = false;
+    skippingAltVersion = false;
+    sawAltVersionMarkerOnce = false;
+    checkNextLineForSubtitle = false;
+  };
+
+  const startSection = (title: string, isPsalmType: boolean) => {
+    closeCurrent();
+    current = { title, hasChords: isPsalmType, contentLines: [] };
+    if (isPsalmType && pendingAntiphonLines.length > 0) {
+      current.contentLines.push(...pendingAntiphonLines);
+      pendingAntiphonLines = [];
+    }
+    currentIsPsalmType = isPsalmType;
+    bodyStarted = false;
+    checkNextLineForSubtitle = isPsalmType;
+  };
+
+  for (let i = 0; i < orderedLines.length; i++) {
+    const line = orderedLines[i];
+    const next = orderedLines[i + 1];
+    const plainText = line.words.map(w => w.text).join(' ').trim();
+    const chordLine = isChordLine(line);
+
+    if (!chordLine && HEADING_RE.dayHeader.test(plainText)) continue;
+    if (!chordLine && HEADING_RE.salmodia.test(plainText)) continue;
+
+    if (!chordLine && HEADING_RE.invitatorio.test(plainText)) { startSection('Invitatório', false); continue; }
+    if (!chordLine && HEADING_RE.hino.test(plainText)) { startSection('Hino', true); continue; }
+    if (!chordLine && HEADING_RE.salmo.test(plainText)) {
+      startSection(plainText.split(',')[0].trim(), true);
+      continue;
+    }
+    if (!chordLine && HEADING_RE.cantico.test(plainText)) { startSection(plainText, true); continue; }
+    if (!chordLine && HEADING_RE.leitura.test(plainText)) { startSection(plainText, false); continue; }
+    if (!chordLine && HEADING_RE.responsorio.test(plainText)) { startSection(plainText, false); continue; }
+    if (!chordLine && HEADING_RE.preces.test(plainText)) { startSection('Preces', false); continue; }
+    if (!chordLine && HEADING_RE.oracao.test(plainText)) { startSection('Oração', false); continue; }
+
+    if (!chordLine && HEADING_RE.antifona.test(plainText)) {
+      if (currentIsPsalmType && bodyStarted) {
+        // fechamento: a mesma antífona reimpressa depois do salmo/cântico —
+        // entra como últimas linhas da peça que está fechando, não vira item novo.
+        current!.contentLines.push(plainText);
+        closeCurrent();
+      } else {
+        // abertura: fica pendente até a próxima peça com acorde (Salmo/Cântico).
+        pendingAntiphonLines.push(plainText);
+      }
+      continue;
+    }
+
+    if (!chordLine && HEADING_RE.altVersion.test(plainText)) {
+      if (!sawAltVersionMarkerOnce) {
+        sawAltVersionMarkerOnce = true; // entrando na 1ª opção/melodia — mantém coletando
+      } else {
+        skippingAltVersion = true; // 2ª opção em diante — pula até o próximo cabeçalho
+      }
+      continue;
+    }
+
+    if (skippingAltVersion) continue;
+
+    // Uma linha de subtítulo temático (itálico, sem acorde) pode vir logo após o
+    // cabeçalho "Salmo N"/"Cântico" e antes do corpo cifrado — não faz parte do
+    // conteúdo cantado, então é descartada (só quando a linha seguinte já é de
+    // acorde, confirmando que o corpo começa logo em seguida).
+    if (checkNextLineForSubtitle) {
+      checkNextLineForSubtitle = false;
+      if (!chordLine && next && isChordLine(next)) continue;
+    }
+
+    if (!current) continue; // conteúdo antes de qualquer cabeçalho reconhecido — ignora
+
+    if (chordLine) {
+      const gapToNext = next ? Math.abs(line.y - next.y) : Infinity;
+      const nextPlainText = next ? next.words.map(w => w.text).join(' ').trim() : '';
+      const nextIsHeading = !!next && !isChordLine(next) && isAnyHeadingLine(nextPlainText);
+      const pairsWithNext = !!next && !isChordLine(next) && gapToNext < MAX_PAIR_GAP && !nextIsHeading;
+
+      if (pairsWithNext) {
+        current.contentLines.push(mergeChordLyricLines(line, next!));
+        i++;
+      } else {
+        current.contentLines.push(formatInstrumentalLine(line));
+      }
+      bodyStarted = true;
+    } else {
+      current.contentLines.push(plainText);
+      bodyStarted = true;
+    }
+  }
+
+  closeCurrent();
+  return sections;
+}
