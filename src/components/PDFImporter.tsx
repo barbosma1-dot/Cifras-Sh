@@ -394,7 +394,18 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               const officeLines = groupWordsIntoLines(officeWords);
               const officeView = officePage.view as number[];
               const officePageWidth = officeView[2] - officeView[0];
-              const sections = segmentLiturgyOfHoursPage(officeLines, officePageWidth);
+              // Repassa a última peça da página anterior (título + se tem acorde) como
+              // carryOver — sem isso, uma peça que atravessa a quebra de página sem
+              // repetir o cabeçalho (comum em Salmo/Cântico/Hino) perde o conteúdo do
+              // início desta página. Ver comentário em segmentLiturgyOfHoursPage.
+              const officeCarryOver = previousPageLastTitleRaw
+                ? {
+                    title: previousPageLastTitleRaw,
+                    hasChords: localAllSongs.length > 0
+                      && localAllSongs[localAllSongs.length - 1].category !== 'Leitura',
+                  }
+                : null;
+              const sections = segmentLiturgyOfHoursPage(officeLines, officePageWidth, officeCarryOver);
               if (sections.length > 0) {
                 extracted = sections.map(s => ({
                   title: s.title,
