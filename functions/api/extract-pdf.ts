@@ -140,8 +140,14 @@ async function callGeminiWithKey(apiKey: string, images: string[], prompt: strin
         // Sem isso, um lote com várias músicas longas podia estourar o limite padrão
         // de tokens de saída do modelo e ser cortado no meio — o que ora quebrava o
         // JSON (caindo no rascunho bruto), ora silenciosamente resultava em só a
-        // primeira música do lote sendo retornada, sem nenhum aviso de erro.
-        maxOutputTokens: 32768
+        // primeira música do lote sendo retornada, sem nenhum aviso de erro. Subido
+        // de 32768 para 65536: páginas densas de Liturgia das Horas (Hino + 2 Salmos
+        // + Cântico + Leitura + Responsório + Preces, tudo numa página só) podiam
+        // ainda assim bater no teto de 32768 e forçar a extração inteira daquela
+        // página a cair pro provedor reserva (Cloudflare/Groq), que é bem mais fraco
+        // e perdia a maior parte do conteúdo — o sintoma era "só 3 cifras" em vez das
+        // 7+ esperadas.
+        maxOutputTokens: 65536
       }
     }),
     30000,
