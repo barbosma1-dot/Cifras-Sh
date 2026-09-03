@@ -1198,12 +1198,12 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
 
           {extractedSongs.length > 0 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
                 <h3 className="text-xl font-black text-brand-blue flex items-center gap-2">
                   <Check className="w-6 h-6 text-green-500" />
                   {extractedSongs.length} Cifras Encontradas
                 </h3>
-                <div className="flex gap-4">
+                <div className="flex flex-wrap gap-3 sm:gap-4">
                   <button 
                     onClick={() => { setExtractedSongs([]); setDuplicates({}); setReplaceChoices({}); }}
                     disabled={loading}
