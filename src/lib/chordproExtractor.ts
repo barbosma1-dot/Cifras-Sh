@@ -212,6 +212,23 @@ export function formatInstrumentalLine(line: PdfLine): string {
 }
 
 /**
+ * Extrai a primeira linha de letra "de verdade" (sem colchete de acorde) do
+ * conteúdo já segmentado de uma peça — usada para compor o incipit no título
+ * (ex.: "Hino — Ó Criador do Universo"). Pula linhas puramente instrumentais
+ * (só "[|]"/"[%]"/acordes soltos, sem nenhuma letra) e linhas em branco. Corta
+ * em ~50 caracteres para não estourar o título com um verso inteiro longo.
+ */
+export function extractFirstLyricLine(contentLines: string[]): string {
+  for (const raw of contentLines) {
+    const plain = raw.replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
+    const lettersOnly = plain.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z]/g, '');
+    if (lettersOnly.length < 2) continue; // sem letra de verdade — pula (ex.: linha só de acorde)
+    return plain.length > 50 ? `${plain.slice(0, 50).trim()}…` : plain;
+  }
+  return '';
+}
+
+/**
  * Monta o texto ChordPro (já com os acordes posicionados corretamente) de uma
  * página inteira, a partir das linhas agrupadas por `groupWordsIntoLines`.
  * Detecta duas colunas (regra 5 da skill): se nenhuma linha cruza o centro da
