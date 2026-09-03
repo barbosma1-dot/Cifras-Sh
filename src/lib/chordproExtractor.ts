@@ -359,6 +359,7 @@ const HEADING_RE = {
   preces: /^Preces$/i,
   oracao: /^Ora[cç][ãa]o$/i,
   antifona: /^Ant\.?\s*\d*\b/i,
+  tempoPascal: /^T\.\s*P\.\s*:?/i,
   altVersion: /^\(\s*\d+[ªa]\s*(op[cç][ãa]o|melodia)\s*\)$/i,
 };
 
@@ -421,6 +422,12 @@ export function segmentLiturgyOfHoursPage(
     ? { title: carryOverSection.title, hasChords: carryOverSection.hasChords, contentLines: [] }
     : null;
   let currentIsPsalmType = carryOverSection?.hasChords ?? false;
+  // Separada de currentIsPsalmType: o Hino TEM acordes (hasChords=true) mas
+  // NUNCA tem antífona — sem essa distinção, uma peça de Salmo carregada por
+  // carryOver da página anterior herdaria hasChords mas não teria como saber
+  // se usa antífona; aqui inicializamos como false e o valor real é sempre
+  // recalculado em startSection() a partir do título real da peça.
+  let currentUsesAntiphon = false;
   let bodyStarted = !!carryOverSection; // já estava "no meio" da peça ao virar a página
   let pendingAntiphonLines: string[] = [];
   let skippingAltVersion = false;
@@ -433,6 +440,7 @@ export function segmentLiturgyOfHoursPage(
     current = null;
     bodyStarted = false;
     currentIsPsalmType = false;
+    currentUsesAntiphon = false;
     skippingAltVersion = false;
     sawAltVersionMarkerOnce = false;
     checkNextLineForSubtitle = false;
@@ -446,6 +454,10 @@ export function segmentLiturgyOfHoursPage(
       pendingAntiphonLines = [];
     }
     currentIsPsalmType = isPsalmType;
+    // Regra: usa antífona quando é do tipo Salmo/Cântico (isPsalmType) E não
+    // é o Hino — o Hino tem acordes (isPsalmType=true, por levar cifra) mas
+    // nunca tem antífona.
+    currentUsesAntiphon = isPsalmType && !/^Hino$/i.test(title);
     bodyStarted = false;
     checkNextLineForSubtitle = isPsalmType;
   };
@@ -479,12 +491,16 @@ export function segmentLiturgyOfHoursPage(
     if (!chordLine && HEADING_RE.preces.test(plainText)) { startSection('Preces', false, true); continue; }
     if (!chordLine && HEADING_RE.oracao.test(plainText)) { startSection('Oração', false, true); continue; }
 
-    if (!chordLine && HEADING_RE.antifona.test(plainText)) {
-      if (currentIsPsalmType && bodyStarted) {
-        // fechamento: a mesma antífona reimpressa depois do salmo/cântico —
-        // entra como últimas linhas da peça que está fechando, não vira item novo.
+    if (!chordLine && (HEADING_RE.antifona.test(plainText) || HEADING_RE.tempoPascal.test(plainText))) {
+      if (currentUsesAntiphon && bodyStarted) {
+        // fechamento: a mesma antífona (ou o T.P., que vem na linha seguinte
+        // à Ant. de fechamento) reimpressa depois do salmo/cântico — entra
+        // como últimas linhas da peça que está fechando. NÃO chamamos
+        // closeCurrent() aqui de propósito: isso deixa a peça "aberta" para
+        // que a linha T.P. seguinte também entre no mesmo contentLines antes
+        // do fechamento de verdade, que acontece sozinho no próximo
+        // startSection() ou no closeCurrent() final da página.
         current!.contentLines.push(plainText);
-        closeCurrent();
       } else {
         // abertura: fica pendente até a próxima peça com acorde (Salmo/Cântico).
         pendingAntiphonLines.push(plainText);
