@@ -1077,7 +1077,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
           )}
 
           {file && !loading && extractedSongs.length === 0 && (
-            <div className="flex flex-col items-center justify-center p-20 space-y-6">
+            <div className="flex flex-col items-center justify-center px-2 py-10 sm:px-8 space-y-6">
               <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 flex items-center gap-4 w-full max-w-xl">
                 <div className="bg-red-100 p-3 rounded-xl">
                   <Upload className="w-8 h-8 text-red-500" />
@@ -1132,7 +1132,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
               </div>
 
               {numPages && numPages > 10 && (
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 w-full max-w-md space-y-2">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 w-full max-w-xl space-y-2">
                   <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                     PDF grande detectado — processe por partes
                   </p>
