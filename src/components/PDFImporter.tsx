@@ -3,7 +3,7 @@ import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save, Se
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { extractPreAlignedPageText, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage } from '../lib/chordproExtractor';
+import { extractPreAlignedPageText, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage, extractFirstLyricLine } from '../lib/chordproExtractor';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
 
@@ -423,8 +423,21 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
                   // em vez de cair genericamente em "Leitura" junto com Responsório/
                   // Invitatório (que são fixos, não mudam por dia).
                   const isProper = s.isProperOfDay && currentOfficeDayTitle;
+                  // Hino, Cântico (qualquer, inclusive "Cântico evangélico") e
+                  // Responsório breve levam o incipit (primeira linha de letra) no
+                  // título, pra diferenciar peças de mesmo nome genérico entre si
+                  // (ex.: "Hino — Ó Criador do Universo" em vez de só "Hino").
+                  const wantsIncipit = !isProper && (
+                    s.title === 'Hino' ||
+                    /^C[âa]ntico\b/i.test(s.title) ||
+                    /^Respons[oó]rio breve\b/i.test(s.title)
+                  );
+                  const incipit = wantsIncipit ? extractFirstLyricLine(s.contentLines) : '';
+                  const title = isProper
+                    ? `${s.title} — ${currentOfficeDayTitle}`
+                    : (incipit ? `${s.title} — ${incipit}` : s.title);
                   return {
-                    title: isProper ? `${s.title} — ${currentOfficeDayTitle}` : s.title,
+                    title,
                     artist: '',
                     category: isProper ? 'Própria do Dia' : (s.hasChords ? '' : 'Leitura'),
                     original_key: '',
@@ -1073,36 +1086,36 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 </button>
               </div>
 
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 w-full max-w-md">
-                <label className="flex items-start gap-2 cursor-pointer">
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-md">
+                <label className="flex items-start gap-3 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={officeMode}
                     onChange={(e) => setOfficeMode(e.target.checked)}
-                    className="mt-0.5 accent-brand-orange"
+                    className="mt-0.5 w-4 h-4 accent-brand-orange"
                   />
-                  <span className="text-[11px] font-bold text-slate-500 leading-snug">
+                  <span className="text-sm font-bold text-slate-600 leading-snug">
                     Modo Ofício/Laudes (extração determinística, sem IA)
                     <br />
-                    <span className="text-slate-400 font-normal">
+                    <span className="text-[9px] text-slate-400 font-normal leading-relaxed block mt-1">
                       Para PDFs de Liturgia das Horas com texto selecionável: separa Invitatório, Hino, cada Salmo, Cântico, Leitura, Responsório, Preces e Oração direto da camada de texto do PDF — nada de acorde/versículo é gerado por IA, então nada fica pela metade. Páginas escaneadas continuam usando IA normalmente.
                     </span>
                   </span>
                 </label>
               </div>
 
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 w-full max-w-md">
-                <label className="flex items-start gap-2 cursor-pointer">
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-md">
+                <label className="flex items-start gap-3 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={includeLiturgicalTexts}
                     onChange={(e) => setIncludeLiturgicalTexts(e.target.checked)}
-                    className="mt-0.5 accent-brand-orange"
+                    className="mt-0.5 w-4 h-4 accent-brand-orange"
                   />
-                  <span className="text-[11px] font-bold text-slate-500 leading-snug">
+                  <span className="text-sm font-bold text-slate-600 leading-snug">
                     Incluir leituras/textos litúrgicos (Ofício, Missa)
                     <br />
-                    <span className="text-slate-400 font-normal">
+                    <span className="text-[9px] text-slate-400 font-normal leading-relaxed block mt-1">
                       Extrai também Leitura breve, Responsório breve, Preces e antífonas como itens separados, sem acorde.
                     </span>
                   </span>
