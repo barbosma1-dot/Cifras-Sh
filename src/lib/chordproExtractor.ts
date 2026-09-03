@@ -348,6 +348,11 @@ const HEADING_RE = {
   hino: /^Hino$/i,
   salmodia: /^Salmodia$/i,
   salmo: /^Salmo\s+\d/i,
+  // "Cântico evangélico" (Benedictus/Magnificat) é checado ANTES do genérico
+  // "cantico" abaixo — sua antífona muda a cada dia do Ofício (é o Próprio do
+  // Dia, como Leitura/Preces/Oração), diferente dos demais cânticos da
+  // Salmodia, que seguem o saltério fixo e por isso levam incipit, não dia.
+  canticoEvangelico: /^C[âa]ntico\s+evang[eé]lico\b/i,
   cantico: /^C[âa]ntico\b/i,
   leitura: /^Leitura breve\b/i,
   responsorio: /^Respons[oó]rio breve\b/i,
@@ -463,12 +468,14 @@ export function segmentLiturgyOfHoursPage(
       startSection(plainText.split(',')[0].trim(), true);
       continue;
     }
+    if (!chordLine && HEADING_RE.canticoEvangelico.test(plainText)) { startSection(plainText, true, true); continue; }
     if (!chordLine && HEADING_RE.cantico.test(plainText)) { startSection(plainText, true); continue; }
-    // Leitura breve / Preces / Oração são o "Próprio do Dia": texto que muda a
-    // cada dia da semana. Marcadas com isProperOfDay=true para o chamador
-    // (PDFImporter.tsx) acrescentar o dia no título e na categoria.
+    // Leitura breve / Responsório breve / Preces / Oração são o "Próprio do
+    // Dia": texto que muda a cada dia da semana. Marcadas com
+    // isProperOfDay=true para o chamador (PDFImporter.tsx) acrescentar o dia
+    // no título e na categoria.
     if (!chordLine && HEADING_RE.leitura.test(plainText)) { startSection(plainText, false, true); continue; }
-    if (!chordLine && HEADING_RE.responsorio.test(plainText)) { startSection(plainText, false); continue; }
+    if (!chordLine && HEADING_RE.responsorio.test(plainText)) { startSection(plainText, false, true); continue; }
     if (!chordLine && HEADING_RE.preces.test(plainText)) { startSection('Preces', false, true); continue; }
     if (!chordLine && HEADING_RE.oracao.test(plainText)) { startSection('Oração', false, true); continue; }
 
