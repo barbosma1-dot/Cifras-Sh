@@ -301,6 +301,28 @@ export interface LiturgySection {
   title: string;
   hasChords: boolean;
   contentLines: string[];
+  // Marca Leitura breve / Preces / Oração — os trechos "Próprios do Dia" do
+  // Ofício, que mudam a cada dia da semana e por isso levam o dia no título
+  // (ver isProperOfTheDay em startSection e o uso em PDFImporter.tsx).
+  isProperOfDay?: boolean;
+}
+
+// "I TERÇA-FEIRA" (como sai do PDF, maiúsculo) -> "I Terça-feira" (título legível).
+const DAY_NAME_CANON: Record<string, string> = {
+  'DOMINGO': 'Domingo',
+  'SEGUNDA-FEIRA': 'Segunda-feira',
+  'TERÇA-FEIRA': 'Terça-feira',
+  'TERCA-FEIRA': 'Terça-feira',
+  'QUARTA-FEIRA': 'Quarta-feira',
+  'QUINTA-FEIRA': 'Quinta-feira',
+  'SEXTA-FEIRA': 'Sexta-feira',
+  'SÁBADO': 'Sábado',
+  'SABADO': 'Sábado',
+};
+
+function normalizeDayHeader(romanNumeral: string, dayName: string): string {
+  const canon = DAY_NAME_CANON[dayName.toUpperCase()] || dayName;
+  return `${romanNumeral.toUpperCase()} ${canon}`;
 }
 
 const HEADING_RE = {
@@ -340,11 +362,22 @@ function isAnyHeadingLine(text: string): boolean {
 // em PDFImporter.tsx (comparação com `previousPageLastTitleKey`) funcionar
 // automaticamente — não precisou mexer na lógica de fusão, só parar de
 // perder o conteúdo aqui.
+// Retorno inclui o título do dia (ex.: "I Terça-feira") detectado nesta
+// página, ou null se a página não trouxe cabeçalho de dia — nesse caso o
+// chamador deve repassar o último título de dia conhecido como
+// `carryOverDayTitle` na chamada da próxima página (o cabeçalho só aparece
+// uma vez, na primeira página de cada dia).
+export interface LiturgyPageResult {
+  sections: LiturgySection[];
+  dayTitle: string | null;
+}
+
 export function segmentLiturgyOfHoursPage(
   lines: PdfLine[],
   pageWidth: number,
-  carryOverSection?: { title: string; hasChords: boolean } | null
-): LiturgySection[] {
+  carryOverSection?: { title: string; hasChords: boolean } | null,
+  carryOverDayTitle?: string | null
+): LiturgyPageResult {
   const mid = pageWidth / 2;
   const crossesMid = lines.some(l => l.words.some(w => w.x0 < mid - 10 && w.x1 > mid + 10));
 
@@ -371,6 +404,7 @@ export function segmentLiturgyOfHoursPage(
   let skippingAltVersion = false;
   let sawAltVersionMarkerOnce = false;
   let checkNextLineForSubtitle = false;
+  let dayTitle: string | null = carryOverDayTitle ?? null;
 
   const closeCurrent = () => {
     if (current && current.contentLines.length > 0) sections.push(current);
@@ -382,9 +416,9 @@ export function segmentLiturgyOfHoursPage(
     checkNextLineForSubtitle = false;
   };
 
-  const startSection = (title: string, isPsalmType: boolean) => {
+  const startSection = (title: string, isPsalmType: boolean, isProperOfDay = false) => {
     closeCurrent();
-    current = { title, hasChords: isPsalmType, contentLines: [] };
+    current = { title, hasChords: isPsalmType, contentLines: [], isProperOfDay };
     if (isPsalmType && pendingAntiphonLines.length > 0) {
       current.contentLines.push(...pendingAntiphonLines);
       pendingAntiphonLines = [];
@@ -400,7 +434,10 @@ export function segmentLiturgyOfHoursPage(
     const plainText = line.words.map(w => w.text).join(' ').trim();
     const chordLine = isChordLine(line);
 
-    if (!chordLine && HEADING_RE.dayHeader.test(plainText)) continue;
+    if (!chordLine) {
+      const dayMatch = plainText.match(HEADING_RE.dayHeader);
+      if (dayMatch) { dayTitle = normalizeDayHeader(dayMatch[1], dayMatch[2]); continue; }
+    }
     if (!chordLine && HEADING_RE.salmodia.test(plainText)) continue;
 
     if (!chordLine && HEADING_RE.invitatorio.test(plainText)) { startSection('Invitatório', false); continue; }
@@ -410,10 +447,13 @@ export function segmentLiturgyOfHoursPage(
       continue;
     }
     if (!chordLine && HEADING_RE.cantico.test(plainText)) { startSection(plainText, true); continue; }
-    if (!chordLine && HEADING_RE.leitura.test(plainText)) { startSection(plainText, false); continue; }
+    // Leitura breve / Preces / Oração são o "Próprio do Dia": texto que muda a
+    // cada dia da semana. Marcadas com isProperOfDay=true para o chamador
+    // (PDFImporter.tsx) acrescentar o dia no título e na categoria.
+    if (!chordLine && HEADING_RE.leitura.test(plainText)) { startSection(plainText, false, true); continue; }
     if (!chordLine && HEADING_RE.responsorio.test(plainText)) { startSection(plainText, false); continue; }
-    if (!chordLine && HEADING_RE.preces.test(plainText)) { startSection('Preces', false); continue; }
-    if (!chordLine && HEADING_RE.oracao.test(plainText)) { startSection('Oração', false); continue; }
+    if (!chordLine && HEADING_RE.preces.test(plainText)) { startSection('Preces', false, true); continue; }
+    if (!chordLine && HEADING_RE.oracao.test(plainText)) { startSection('Oração', false, true); continue; }
 
     if (!chordLine && HEADING_RE.antifona.test(plainText)) {
       if (currentIsPsalmType && bodyStarted) {
@@ -470,5 +510,5 @@ export function segmentLiturgyOfHoursPage(
   }
 
   closeCurrent();
-  return sections;
+  return { sections, dayTitle };
 }
