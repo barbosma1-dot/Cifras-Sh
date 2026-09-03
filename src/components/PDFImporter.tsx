@@ -154,7 +154,7 @@ interface PDFImporterProps {
 
 // Categorias mais comuns, exibidas como atalhos (chips) para marcar cada
 // música individualmente sem precisar digitar tudo na mão.
-const COMMON_CATEGORIES = ['Missa', 'Louvor', 'Adoração', 'Oração', 'Ação de Graças', 'Leitura', 'Outros'];
+const COMMON_CATEGORIES = ['Missa', 'Louvor', 'Adoração', 'Oração', 'Ação de Graças', 'Leitura', 'Própria do Dia', 'Outros'];
 
 export default function PDFImporter({ onClose, onImportComplete, bookId, missionId, reimportBatchId, reimportFile }: PDFImporterProps) {
   useBackButton(true, onClose);
@@ -356,6 +356,10 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       let localAllSongs: ExtractedSong[] = [];
       let previousPageLastTitleKey: string | null = null;
       let previousPageLastTitleRaw: string | null = null;
+      // Título do dia (ex.: "I Terça-feira") só aparece impresso na 1ª página de
+      // cada dia do Ofício — persiste aqui entre páginas até a próxima mudança
+      // de dia, para marcar Leitura breve/Preces/Oração como "Próprio do Dia".
+      let currentOfficeDayTitle: string | null = null;
 
       // Espaçamento mínimo real entre chamadas à IA, calculado para ficar com folga
       // abaixo do limite de requisições por minuto do tier gratuito (evita bater no
@@ -401,20 +405,33 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               const officeCarryOver = previousPageLastTitleRaw
                 ? {
                     title: previousPageLastTitleRaw,
+                    // Categoria '' é o marcador de peça com acorde (Salmo/Cântico/Hino);
+                    // 'Leitura' e 'Própria do Dia' são ambas sem acorde — checar só
+                    // "!== 'Leitura'" deixaria de fora esse novo valor.
                     hasChords: localAllSongs.length > 0
-                      && localAllSongs[localAllSongs.length - 1].category !== 'Leitura',
+                      && localAllSongs[localAllSongs.length - 1].category === '',
                   }
                 : null;
-              const sections = segmentLiturgyOfHoursPage(officeLines, officePageWidth, officeCarryOver);
+              const { sections, dayTitle } = segmentLiturgyOfHoursPage(
+                officeLines, officePageWidth, officeCarryOver, currentOfficeDayTitle
+              );
+              if (dayTitle) currentOfficeDayTitle = dayTitle;
               if (sections.length > 0) {
-                extracted = sections.map(s => ({
-                  title: s.title,
-                  artist: '',
-                  category: s.hasChords ? '' : 'Leitura',
-                  original_key: '',
-                  content: s.contentLines.join('\n').trim(),
-                  youtube_url: '',
-                }));
+                extracted = sections.map(s => {
+                  // Leitura breve / Preces / Oração mudam a cada dia do Ofício — leva o
+                  // dia no título (ex.: "Oração — I Terça-feira") e categoria própria,
+                  // em vez de cair genericamente em "Leitura" junto com Responsório/
+                  // Invitatório (que são fixos, não mudam por dia).
+                  const isProper = s.isProperOfDay && currentOfficeDayTitle;
+                  return {
+                    title: isProper ? `${s.title} — ${currentOfficeDayTitle}` : s.title,
+                    artist: '',
+                    category: isProper ? 'Própria do Dia' : (s.hasChords ? '' : 'Leitura'),
+                    original_key: '',
+                    content: s.contentLines.join('\n').trim(),
+                    youtube_url: '',
+                  };
+                });
                 usedDeterministic = true;
               }
             }
