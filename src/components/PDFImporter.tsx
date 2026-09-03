@@ -356,6 +356,11 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       let localAllSongs: ExtractedSong[] = [];
       let previousPageLastTitleKey: string | null = null;
       let previousPageLastTitleRaw: string | null = null;
+      // Guarda separadamente se a última peça tinha acorde: a categoria sozinha
+      // não basta mais pra saber isso, já que peças "Próprio do Dia" com acorde
+      // (Cântico evangélico) usam a categoria 'Própria do Dia', igual às sem
+      // acorde (Leitura/Preces/Oração) — ver uso em officeCarryOver abaixo.
+      let previousPageLastTitleHasChords = false;
       // Título do dia (ex.: "I Terça-feira") só aparece impresso na 1ª página de
       // cada dia do Ofício — persiste aqui entre páginas até a próxima mudança
       // de dia, para marcar Leitura breve/Preces/Oração como "Próprio do Dia".
@@ -403,20 +408,14 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               // repetir o cabeçalho (comum em Salmo/Cântico/Hino) perde o conteúdo do
               // início desta página. Ver comentário em segmentLiturgyOfHoursPage.
               const officeCarryOver = previousPageLastTitleRaw
-                ? {
-                    title: previousPageLastTitleRaw,
-                    // Categoria '' é o marcador de peça com acorde (Salmo/Cântico/Hino);
-                    // 'Leitura' e 'Própria do Dia' são ambas sem acorde — checar só
-                    // "!== 'Leitura'" deixaria de fora esse novo valor.
-                    hasChords: localAllSongs.length > 0
-                      && localAllSongs[localAllSongs.length - 1].category === '',
-                  }
+                ? { title: previousPageLastTitleRaw, hasChords: previousPageLastTitleHasChords }
                 : null;
               const { sections, dayTitle } = segmentLiturgyOfHoursPage(
                 officeLines, officePageWidth, officeCarryOver, currentOfficeDayTitle
               );
               if (dayTitle) currentOfficeDayTitle = dayTitle;
               if (sections.length > 0) {
+                previousPageLastTitleHasChords = sections[sections.length - 1].hasChords;
                 extracted = sections.map(s => {
                   // Leitura breve / Preces / Oração mudam a cada dia do Ofício — leva o
                   // dia no título (ex.: "Oração — I Terça-feira") e categoria própria,
@@ -562,6 +561,14 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
             previousPageLastTitleRaw = localAllSongs.length > 0
               ? localAllSongs[localAllSongs.length - 1].title
               : null;
+            // Fallback pra páginas escaneadas (extraídas por IA) dentro do modo
+            // Ofício: sem `sections` do segmentador determinístico pra consultar
+            // `hasChords` direto (ver acima), usa a categoria '' como heurística
+            // de "tem acorde", igual à regra 6b do prompt da IA.
+            if (!usedDeterministic) {
+              previousPageLastTitleHasChords = localAllSongs.length > 0
+                && localAllSongs[localAllSongs.length - 1].category === '';
+            }
 
             // Atualiza incrementalmente: assim as músicas já extraídas ficam visíveis e
             // salváveis na hora, e não se perdem se o restante do PDF falhar ou se o
@@ -1071,7 +1078,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
 
           {file && !loading && extractedSongs.length === 0 && (
             <div className="flex flex-col items-center justify-center p-20 space-y-6">
-              <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 flex items-center gap-4 w-full max-w-md">
+              <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 flex items-center gap-4 w-full max-w-xl">
                 <div className="bg-red-100 p-3 rounded-xl">
                   <Upload className="w-8 h-8 text-red-500" />
                 </div>
@@ -1086,39 +1093,41 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 </button>
               </div>
 
-              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-md">
-                <label className="flex items-start gap-3 cursor-pointer">
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-xl">
+                <label className="flex items-start gap-4 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={officeMode}
                     onChange={(e) => setOfficeMode(e.target.checked)}
-                    className="mt-0.5 w-4 h-4 accent-brand-orange"
+                    className="mt-1 w-4 h-4 flex-shrink-0 accent-brand-orange"
                   />
-                  <span className="text-sm font-bold text-slate-600 leading-snug">
-                    Modo Ofício/Laudes (extração determinística, sem IA)
-                    <br />
-                    <span className="text-[9px] text-slate-400 font-normal leading-relaxed block mt-1">
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-600 leading-snug">
+                      Modo Ofício/Laudes (extração determinística, sem IA)
+                    </p>
+                    <p className="text-[9px] text-slate-400 font-normal leading-relaxed mt-1">
                       Para PDFs de Liturgia das Horas com texto selecionável: separa Invitatório, Hino, cada Salmo, Cântico, Leitura, Responsório, Preces e Oração direto da camada de texto do PDF — nada de acorde/versículo é gerado por IA, então nada fica pela metade. Páginas escaneadas continuam usando IA normalmente.
-                    </span>
-                  </span>
+                    </p>
+                  </div>
                 </label>
               </div>
 
-              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-md">
-                <label className="flex items-start gap-3 cursor-pointer">
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-xl">
+                <label className="flex items-start gap-4 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={includeLiturgicalTexts}
                     onChange={(e) => setIncludeLiturgicalTexts(e.target.checked)}
-                    className="mt-0.5 w-4 h-4 accent-brand-orange"
+                    className="mt-1 w-4 h-4 flex-shrink-0 accent-brand-orange"
                   />
-                  <span className="text-sm font-bold text-slate-600 leading-snug">
-                    Incluir leituras/textos litúrgicos (Ofício, Missa)
-                    <br />
-                    <span className="text-[9px] text-slate-400 font-normal leading-relaxed block mt-1">
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-600 leading-snug">
+                      Incluir leituras/textos litúrgicos (Ofício, Missa)
+                    </p>
+                    <p className="text-[9px] text-slate-400 font-normal leading-relaxed mt-1">
                       Extrai também Leitura breve, Responsório breve, Preces e antífonas como itens separados, sem acorde.
-                    </span>
-                  </span>
+                    </p>
+                  </div>
                 </label>
               </div>
 
