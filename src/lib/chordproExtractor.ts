@@ -328,7 +328,7 @@ function normalizeDayHeader(romanNumeral: string, dayName: string): string {
 const HEADING_RE = {
   dayHeader: /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\.?$/i,
   invitatorio: /^Invitat[oó]rio$/i,
-  hino: /^H[Ii]no$/,
+  hino: /^Hino$/i,
   salmodia: /^Salmodia$/i,
   salmo: /^Salmo\s+\d/i,
   cantico: /^C[âa]ntico\b/i,
