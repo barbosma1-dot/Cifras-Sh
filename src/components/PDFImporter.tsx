@@ -26,13 +26,17 @@ interface DuplicateMatch {
   artist: string;
 }
 
-// Normaliza um título para comparação de duplicatas: sem acento, minúsculo,
-// e SEM qualquer coisa a partir do primeiro "(", "-", "–" ou "—" — porque na
-// prática o mesmo PDF às vezes gera títulos "sujos" com um trecho de letra
-// colado (ex.: "Ossos Secos" vs "Ossos Secos (Espírito Santo Desce)"), e uma
-// comparação de título 100% exato deixava passar isso como música "nova".
+// Chave usada para achar cifra já existente com o MESMO título: só
+// normaliza acento/maiúscula/espaço nas pontas — sem cortar nada do título
+// (segue o mesmo critério de "duplicado" usado na tela de Cifras/Repertório:
+// título 100% igual, e nada além disso). Antes esta função cortava tudo a
+// partir do primeiro "(", "-", "–" ou "—", o que fazia títulos DIFERENTES
+// mas com o mesmo prefixo (ex.: "Preces — I Sexta-feira" e "Preces — I
+// Sábado", ou "Leitura breve — Ef 4,29-32 — I Sext" e "Leitura breve — 2Pd
+// 1,10-11 — I Sábado") serem tratados como duplicata um do outro — o que é
+// errado, já que o modo Ofício/Laudes agora usa "—" de propósito pra
+// diferenciar peças de mesmo nome genérico entre dias/incipits distintos.
 const normalizeTitle = (t: string) => (t || '')
-  .split(/[(\-–—]/)[0]
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '')
   .trim()
@@ -843,19 +847,29 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
   };
 
   const checkForDuplicateTitles = async (songs: ExtractedSong[]) => {
-    const titles = Array.from(new Set(songs.map(s => normalizeTitle(s.title)).filter(Boolean)));
-    if (titles.length === 0) return;
+    // Título "cru" (só tira espaço nas pontas) pra consultar o banco — o ilike
+    // do Postgres é sensível a acento, então usamos o texto tal como veio do
+    // PDF (que já tem os acentos certos), em vez da versão sem-acento usada
+    // só na comparação final abaixo.
+    const rawTitles = Array.from(new Set(songs.map(s => (s.title || '').trim()).filter(Boolean)));
+    if (rawTitles.length === 0) return;
+
+    // Título/valor de filtro do PostgREST precisa ir entre aspas quando tem
+    // vírgula, parênteses etc. — comuns aqui (ex.: "Salmo 99(100)", "Ef 4,29-32").
+    const escapeOrValue = (v: string) => `"${v.replace(/"/g, '""')}"`;
 
     try {
       // ilike em lote via .or(): funciona bem para o tamanho comum de um PDF
       // importado (dezenas de músicas); busca só id/título/artista, campos
-      // leves, para não trazer o conteúdo inteiro de cada cifra.
+      // leves, para não trazer o conteúdo inteiro de cada cifra. SEM "*" no
+      // fim do padrão — é comparação EXATA (só ignora maiúscula/minúscula),
+      // não "começa com" (ver normalizeTitle acima pro porquê).
       const CHUNK = 40;
       const found: DuplicateMatch[] = [];
-      for (let i = 0; i < titles.length; i += CHUNK) {
-        const chunk = titles.slice(i, i + CHUNK);
+      for (let i = 0; i < rawTitles.length; i += CHUNK) {
+        const chunk = rawTitles.slice(i, i + CHUNK);
         const orFilter = chunk
-          .map(t => `title.ilike.${t.replace(/[%,*]/g, '')}*`)
+          .map(t => `title.ilike.${escapeOrValue(t)}`)
           .join(',');
         const { data, error } = await supabase
           .from('chords')
@@ -877,15 +891,9 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
         if (match) map[idx] = match;
       });
       setDuplicates(map);
-      // Padrão seguro: se já existe uma cifra parecida, marca "substituir" por
-      // padrão em vez de deixar desmarcado — evita que o usuário esqueça de
-      // marcar a caixa e acabe criando mais uma duplicata sem querer. Quem
-      // realmente quiser manter as duas como músicas separadas desmarca.
-      setReplaceChoices(prev => {
-        const next = { ...prev };
-        Object.keys(map).forEach(idxStr => { next[Number(idxStr)] = true; });
-        return next;
-      });
+      // "Substituir a existente" é destrutivo (apaga a cifra já salva) — por
+      // isso vem SEMPRE desmarcado, mesmo quando o título bate exatamente.
+      // Quem decide é o usuário, lendo o aviso e marcando de propósito.
     } catch (err) {
       console.error('Falha ao verificar cifras já existentes (seguindo sem aviso de duplicidade):', err);
     }
