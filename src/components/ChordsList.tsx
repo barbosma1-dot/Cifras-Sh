@@ -781,7 +781,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                <h2 className="font-black text-xl text-slate-800">{bookTitle}</h2>
              </div>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             {isSavedOffline ? (
               <button
                 onClick={handleRemoveOffline}
@@ -859,7 +859,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           />
         </div>
         
-        <div className="flex gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap gap-3 w-full md:w-auto">
           {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
             <button 
               onClick={() => setIsPDFImporterOpen(true)}
