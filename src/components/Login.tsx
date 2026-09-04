@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Music, Mail, Lock, Loader2 } from 'lucide-react';
+import { Mail, Lock, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export default function Login() {
@@ -63,13 +63,11 @@ export default function Login() {
         <div className="absolute top-0 left-0 w-full h-2 bg-brand-orange" />
         
         <div className="flex justify-center mb-6">
-          <div className="bg-brand-orange p-3 rounded-xl">
-            <Music className="w-10 h-10 text-white" />
-          </div>
+          <img src="/logo.png" alt="Cifras Shalom" className="w-20 h-20 rounded-2xl shadow-lg" />
         </div>
 
         <h1 className="text-3xl font-display font-bold text-center text-brand-blue mb-2">
-          Cifra Mission
+          Cifras Shalom
         </h1>
         <p className="text-center text-slate-500 mb-8">
           {isRegister ? 'Crie sua conta para começar' : 'Acesse seu repertório e cifras'}
