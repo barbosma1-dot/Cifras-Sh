@@ -893,7 +893,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                 <button 
                   onClick={() => items.length > 0 && setSelectedChord(items[0])}
                   disabled={items.length === 0}
-                  className="w-full p-4 bg-brand-blue text-white font-black rounded-2xl text-left flex items-center justify-between hover:bg-brand-blue/90 shadow-lg shadow-brand-blue/20 transition-all active:scale-[0.98] disabled:opacity-50"
+                  className="w-full p-4 bg-brand-blue-light text-white font-black rounded-2xl text-left flex items-center justify-between hover:bg-brand-blue-light/90 shadow-lg shadow-brand-blue-light/20 transition-all active:scale-[0.98] disabled:opacity-50"
                 >
                   <span className="flex items-center gap-3">
                     <Play className="w-5 h-5 fill-current" />
@@ -909,7 +909,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                    <button 
                      onClick={handleExportPDF}
                      disabled={exporting}
-                     className="w-full p-4 bg-slate-50 text-slate-600 font-bold rounded-2xl text-left flex items-center justify-between hover:bg-slate-100 transition-colors disabled:opacity-50"
+                     className="w-full p-4 bg-brand-peach/40 text-brand-orange font-bold rounded-2xl text-left flex items-center justify-between border border-brand-peach-border/60 hover:bg-brand-peach/60 transition-colors disabled:opacity-50"
                    >
                      <span className="flex items-center gap-2">
                        {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
@@ -919,7 +919,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                    </button>
                    <button 
                      onClick={handleShare}
-                     className="w-full p-4 bg-slate-50 text-slate-600 font-bold rounded-2xl text-left flex items-center justify-between hover:bg-slate-100 transition-colors"
+                     className="w-full p-4 bg-brand-peach/40 text-brand-orange font-bold rounded-2xl text-left flex items-center justify-between border border-brand-peach-border/60 hover:bg-brand-peach/60 transition-colors"
                    >
                      <span className="flex items-center gap-2">
                        <Share2 className="w-4 h-4" />
