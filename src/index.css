@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-blue: #0033cc;
-  --color-brand-orange: #ff6600;
+  /* Paleta "Cifras Shalom" — extraída direto da logo (barbosma1@gmail.com,
+     imagem enviada em set/2026). brand-blue e brand-orange são o navy e o
+     laranja amostrados da logo; brand-blue-light e brand-peach são tons
+     derivados (não vêm da logo) para os papéis de botão "reprodução" e
+     "ação secundária/contorno" do painel de estilos enviado junto. */
+  --color-brand-blue: #043BA0;
+  --color-brand-blue-light: #4A71BA;
+  --color-brand-orange: #F64E03;
+  --color-brand-peach: #FDDFD1;
+  --color-brand-peach-border: #FAAF8D;
   
   /* Redefining color palettes with hex to avoid oklch parsing errors in jspdf/html2canvas */
   --color-slate-50: #f8fafc;
