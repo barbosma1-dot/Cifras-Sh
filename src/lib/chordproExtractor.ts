@@ -212,18 +212,20 @@ export function formatInstrumentalLine(line: PdfLine): string {
 }
 
 /**
- * Acha a primeira linha com letra cantável (não puramente instrumental) num
- * bloco de conteúdo já em ChordPro — usada para acrescentar a "primeira
- * linha da canção" ao título do Hino (ver uso em PDFImporter.tsx). Remove os
- * colchetes de acorde antes de comparar/retornar, e ignora linhas vazias ou
- * só com pontuação/hífen que sobrariam de uma linha 100% instrumental.
+ * Extrai a primeira linha de letra "de verdade" (sem colchete de acorde) do
+ * conteúdo já segmentado de uma peça — usada para compor o incipit no título
+ * (ex.: "Hino — Ó Criador do Universo"). Pula linhas puramente instrumentais
+ * (só "[|]"/"[%]"/acordes soltos, sem nenhuma letra) e linhas em branco. Corta
+ * em ~50 caracteres para não estourar o título com um verso inteiro longo.
  */
-export function firstLyricLine(contentLines: string[]): string | null {
-  for (const line of contentLines) {
-    const stripped = line.replace(/\[[^\]]*\]/g, '').trim();
-    if (stripped && /[a-zà-úA-ZÀ-Ú]{2,}/.test(stripped)) return stripped;
+export function extractFirstLyricLine(contentLines: string[]): string {
+  for (const raw of contentLines) {
+    const plain = raw.replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
+    const lettersOnly = plain.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z]/g, '');
+    if (lettersOnly.length < 2) continue; // sem letra de verdade — pula (ex.: linha só de acorde)
+    return plain.length > 50 ? `${plain.slice(0, 50).trim()}…` : plain;
   }
-  return null;
+  return '';
 }
 
 /**
@@ -342,22 +344,15 @@ function normalizeDayHeader(romanNumeral: string, dayName: string): string {
 
 const HEADING_RE = {
   dayHeader: /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\.?$/i,
-  // Variante de rodapé/cabeçalho repetido em PDFs "reformatados" (um trecho
-  // por página, com "Nome da Seção" + "II Quinta-feira — Laudes" impressos
-  // em toda página, sem quebra de linha entre eles — vira algo colado tipo
-  // "InvitatórioII QUINTA-FEIRA — LAUDES" no texto extraído). Sem `^`/`$`
-  // rígidos porque pode vir grudado a texto antes E depois; ver uso abaixo.
-  dayHeaderFooter: /(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\s*[—–-]\s*LAUDES\s*/i,
   invitatorio: /^Invitat[oó]rio$/i,
   hino: /^Hino$/i,
   salmodia: /^Salmodia$/i,
   salmo: /^Salmo\s+\d/i,
-  // Precisa vir ANTES de `cantico` abaixo — "Cântico evangélico, ant." também
-  // bate em "^Cântico\b" e seria capturado por engano pela regra genérica de
-  // cântico (que trata como peça com acorde). O evangélico nunca tem acorde
-  // (é só a antífona do Benedictus/Magnificat) e, como Leitura/Preces/Oração,
-  // muda a cada dia — ver uso de isProperOfDay abaixo.
-  canticoEvangelico: /^C[âa]ntico\s+evang[ée]lico\b/i,
+  // "Cântico evangélico" (Benedictus/Magnificat) é checado ANTES do genérico
+  // "cantico" abaixo — sua antífona muda a cada dia do Ofício (é o Próprio do
+  // Dia, como Leitura/Preces/Oração), diferente dos demais cânticos da
+  // Salmodia, que seguem o saltério fixo e por isso levam incipit, não dia.
+  canticoEvangelico: /^C[âa]ntico\s+evang[eé]lico\b/i,
   cantico: /^C[âa]ntico\b/i,
   leitura: /^Leitura breve\b/i,
   responsorio: /^Respons[oó]rio breve\b/i,
@@ -458,31 +453,10 @@ export function segmentLiturgyOfHoursPage(
   for (let i = 0; i < orderedLines.length; i++) {
     const line = orderedLines[i];
     const next = orderedLines[i + 1];
-    let plainText = line.words.map(w => w.text).join(' ').trim();
+    const plainText = line.words.map(w => w.text).join(' ').trim();
     const chordLine = isChordLine(line);
 
     if (!chordLine) {
-      // Rodapé/cabeçalho repetido tipo "InvitatórioII QUINTA-FEIRA — LAUDES"
-      // (ver comentário em dayHeaderFooter). Captura o dia mesmo aqui — é a
-      // única fonte de dia nesse formato de PDF, já que dayHeader (linha
-      // limpa "II QUINTA-FEIRA") não existe nele — e remove o trecho do
-      // rodapé da linha. Se sobrar só o eco do título da seção atual (ex.:
-      // "Invitatório" repetido depois do próprio Invitatório), ignora; senão
-      // segue com o texto restante como se fosse a linha original (permite
-      // reconhecer um cabeçalho real que viesse colado, ex. próxima seção).
-      const footerMatch = plainText.match(HEADING_RE.dayHeaderFooter);
-      if (footerMatch) {
-        dayTitle = normalizeDayHeader(footerMatch[1], footerMatch[2]);
-        const cleaned = (plainText.slice(0, footerMatch.index) + plainText.slice(footerMatch.index! + footerMatch[0].length)).trim();
-        const curTitle = current?.title.trim().toLowerCase() || '';
-        const cl = cleaned.toLowerCase();
-        // Prefixo em qualquer direção cobre o caso do rodapé encurtar o título
-        // (ex.: seção aberta como "Leitura breve (Rm 14,17-19)" mas o eco no
-        // rodapé vem só "Leitura breve", sem a referência bíblica).
-        const isEcho = !!current && (curTitle === cl || curTitle.startsWith(cl) || cl.startsWith(curTitle));
-        if (!cleaned || isEcho) continue;
-        plainText = cleaned;
-      }
       const dayMatch = plainText.match(HEADING_RE.dayHeader);
       if (dayMatch) { dayTitle = normalizeDayHeader(dayMatch[1], dayMatch[2]); continue; }
     }
@@ -494,11 +468,12 @@ export function segmentLiturgyOfHoursPage(
       startSection(plainText.split(',')[0].trim(), true);
       continue;
     }
-    if (!chordLine && HEADING_RE.canticoEvangelico.test(plainText)) { startSection(plainText, false, true); continue; }
+    if (!chordLine && HEADING_RE.canticoEvangelico.test(plainText)) { startSection(plainText, true, true); continue; }
     if (!chordLine && HEADING_RE.cantico.test(plainText)) { startSection(plainText, true); continue; }
-    // Leitura breve / Preces / Oração são o "Próprio do Dia": texto que muda a
-    // cada dia da semana. Marcadas com isProperOfDay=true para o chamador
-    // (PDFImporter.tsx) acrescentar o dia no título e na categoria.
+    // Leitura breve / Responsório breve / Preces / Oração são o "Próprio do
+    // Dia": texto que muda a cada dia da semana. Marcadas com
+    // isProperOfDay=true para o chamador (PDFImporter.tsx) acrescentar o dia
+    // no título e na categoria.
     if (!chordLine && HEADING_RE.leitura.test(plainText)) { startSection(plainText, false, true); continue; }
     if (!chordLine && HEADING_RE.responsorio.test(plainText)) { startSection(plainText, false, true); continue; }
     if (!chordLine && HEADING_RE.preces.test(plainText)) { startSection('Preces', false, true); continue; }
