@@ -1,13 +1,13 @@
 {
-  "name": "Cifra Mission",
-  "short_name": "CifraMission",
+  "name": "Cifras Shalom",
+  "short_name": "Cifras Shalom",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0033cc",
-  "theme_color": "#ff6600",
+  "background_color": "#043BA0",
+  "theme_color": "#F64E03",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3844/3844724.png",
+      "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png"
     }
