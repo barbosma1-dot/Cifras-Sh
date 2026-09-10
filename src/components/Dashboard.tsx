@@ -271,16 +271,18 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
       >
         <div className="p-2.5 flex items-center justify-between min-w-[210px]">
           <div className="flex items-center gap-1.5">
-            <div className="bg-brand-orange p-1 rounded-md shrink-0">
-              <Music className="w-3.5 h-3.5 text-white" />
-            </div>
+            <img
+              src="/icon-192.png"
+              alt="Cifras Shalom"
+              className="w-6 h-6 rounded-md shrink-0 object-contain"
+            />
             {!isCollapsed && (
               <motion.span 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className="font-display font-bold text-[13px] tracking-tight whitespace-nowrap"
               >
-                Cifra SH
+                Cifras Shalom
               </motion.span>
             )}
           </div>
