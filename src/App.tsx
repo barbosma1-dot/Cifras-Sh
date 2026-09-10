@@ -9,7 +9,8 @@ import { UserProfile } from './types';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import RepertoireDetail from './components/RepertoireDetail';
-import { Loader2, WifiOff } from 'lucide-react';
+import SplashScreen from './components/SplashScreen';
+import { WifiOff } from 'lucide-react';
 import { Repertoire } from './types';
 import { withTimeout } from './lib/withTimeout';
 
@@ -269,11 +270,7 @@ export default function App() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-brand-blue">
-        <Loader2 className="w-12 h-12 text-white animate-spin" />
-      </div>
-    );
+    return <SplashScreen />;
   }
 
   if (!session) {
@@ -283,11 +280,7 @@ export default function App() {
     // repertório público), e quem abrisse o link sem estar logado via a tela de
     // Login em vez do repertório, mesmo quando o link era válido.
     if (publicRepertoireId && publicRepertoireLoading) {
-      return (
-        <div className="flex items-center justify-center min-h-screen bg-brand-blue">
-          <Loader2 className="w-12 h-12 text-white animate-spin" />
-        </div>
-      );
+      return <SplashScreen />;
     }
 
     if (publicRepertoire) {
