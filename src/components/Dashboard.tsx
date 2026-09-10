@@ -13,6 +13,7 @@ import {
   Download,
   History,
   FileText,
+  Loader2,
   Copy,
   Share2
 } from 'lucide-react';
@@ -81,6 +82,11 @@ export default function Dashboard({
     useState<string | null>(null);
 
   const [triggerNewChord, setTriggerNewChord] = useState(0);
+
+  // Estados para controlar os modais/ações da barra de pesquisa
+  const [isPDFImporterOpen, setIsPDFImporterOpen] = useState(false);
+  const [isDuplicatesModalOpen, setIsDuplicatesModalOpen] = useState(false);
+  const [isBulkYoutubeRunning, setIsBulkYoutubeRunning] = useState(false);
 
   const {
     isInstallable,
@@ -385,30 +391,6 @@ export default function Dashboard({
   }
 
   /*
-   * Menus secundários (botões de ação pequenos).
-   */
-  const secondaryMenuItems = [
-    {
-      id: 'import-pdf',
-      label: 'Importar PDF',
-      icon: FileText,
-      tooltip: 'Importar PDF'
-    },
-    {
-      id: 'duplicate',
-      label: 'Duplicar',
-      icon: Copy,
-      tooltip: 'Duplicar'
-    },
-    {
-      id: 'share',
-      label: 'Compartilhar',
-      icon: Share2,
-      tooltip: 'Compartilhar'
-    }
-  ];
-
-  /*
    * Navegação.
    */
   const handleMenuClick = (id: string) => {
@@ -450,6 +432,10 @@ export default function Dashboard({
             profile={profile}
             initialBookId={selectedChordBookId}
             triggerNewChord={triggerNewChord}
+            onOpenPDFImporter={() => setIsPDFImporterOpen(true)}
+            onOpenDuplicates={() => setIsDuplicatesModalOpen(true)}
+            onBulkYoutubeStart={() => setIsBulkYoutubeRunning(true)}
+            onBulkYoutubeEnd={() => setIsBulkYoutubeRunning(false)}
           />
         );
 
@@ -517,6 +503,10 @@ export default function Dashboard({
         return (
           <ChordsList
             profile={profile}
+            onOpenPDFImporter={() => setIsPDFImporterOpen(true)}
+            onOpenDuplicates={() => setIsDuplicatesModalOpen(true)}
+            onBulkYoutubeStart={() => setIsBulkYoutubeRunning(true)}
+            onBulkYoutubeEnd={() => setIsBulkYoutubeRunning(false)}
           />
         );
     }
@@ -1030,38 +1020,82 @@ export default function Dashboard({
          * Estende-se de ponta a ponta
          * =================================================
          */}
-        <div className="relative z-20 border-b border-slate-200 bg-white px-3 py-4 sm:px-5">
-          {/* Barra de pesquisa - full width */}
-          <div className="mb-4 flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Buscar cifra, artista, caderno..."
-              className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/10"
-            />
-          </div>
+        {activeTab === 'chords' && (
+          <div className="relative z-20 border-b border-slate-200 bg-white px-3 py-4 sm:px-5">
+            {/* Barra de pesquisa - full width */}
+            <div className="mb-4 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Buscar cifra, artista ou trecho da letra..."
+                className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/10"
+              />
+            </div>
 
-          {/* Botões secundários - ícones pequenos em linha */}
-          <div className="flex items-center gap-2">
-            {secondaryMenuItems.map(item => {
-              const Icon = item.icon;
-              return (
-                <div key={item.id} className="group relative">
+            {/* Botões secundários - ícones pequenos em linha */}
+            <div className="flex items-center gap-2">
+              {/* Importar PDF */}
+              {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                <div className="group relative">
                   <button
                     type="button"
+                    onClick={() => setIsPDFImporterOpen(true)}
                     className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-800"
-                    title={item.tooltip}
+                    title="Importar PDF"
                   >
-                    <Icon size={18} />
+                    <FileText size={18} />
                   </button>
                   {/* Tooltip ao passar o mouse */}
                   <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 mb-1 hidden rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:block">
-                    {item.tooltip}
+                    Importar PDF
                   </div>
                 </div>
-              );
-            })}
+              )}
+
+              {/* Duplicadas */}
+              {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                <div className="group relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsDuplicatesModalOpen(true)}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-800"
+                    title="Duplicadas"
+                  >
+                    <Copy size={18} />
+                  </button>
+                  {/* Tooltip ao passar o mouse */}
+                  <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 mb-1 hidden rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:block">
+                    Duplicadas
+                  </div>
+                </div>
+              )}
+
+              {/* Preencher YouTube Faltantes */}
+              {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                <div className="group relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsBulkYoutubeRunning(true);
+                    }}
+                    disabled={isBulkYoutubeRunning}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50"
+                    title="Preencher YouTube Faltantes"
+                  >
+                    {isBulkYoutubeRunning ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <Share2 size={18} />
+                    )}
+                  </button>
+                  {/* Tooltip ao passar o mouse */}
+                  <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 mb-1 hidden rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:block">
+                    Preencher YouTube
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/*
          * =====================================================
