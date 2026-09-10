@@ -11,7 +11,10 @@ import {
   X,
   Bell,
   Download,
-  History
+  History,
+  FileText,
+  Copy,
+  Share2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, UserNotification } from '../types';
@@ -323,7 +326,7 @@ export default function Dashboard({
   };
 
   /*
-   * Menus.
+   * Menus principais.
    */
   const menuItems = [
     {
@@ -380,6 +383,30 @@ export default function Dashboard({
       icon: Settings
     });
   }
+
+  /*
+   * Menus secundários (botões de ação pequenos).
+   */
+  const secondaryMenuItems = [
+    {
+      id: 'import-pdf',
+      label: 'Importar PDF',
+      icon: FileText,
+      tooltip: 'Importar PDF'
+    },
+    {
+      id: 'duplicate',
+      label: 'Duplicar',
+      icon: Copy,
+      tooltip: 'Duplicar'
+    },
+    {
+      id: 'share',
+      label: 'Compartilhar',
+      icon: Share2,
+      tooltip: 'Compartilhar'
+    }
+  ];
 
   /*
    * Navegação.
@@ -804,9 +831,7 @@ export default function Dashboard({
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/*
          * =================================================
-         * BARRA SUPERIOR
-         *
-         * Logo branca + título do menu.
+         * BARRA SUPERIOR - LOGO + TÍTULO
          * =================================================
          */}
         <header className="relative z-30 flex h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-3 shadow-sm sm:px-5">
@@ -998,6 +1023,45 @@ export default function Dashboard({
             </AnimatePresence>
           </div>
         </header>
+
+        {/*
+         * =================================================
+         * BARRA DE PESQUISA E BOTÕES SECUNDÁRIOS
+         * Estende-se de ponta a ponta
+         * =================================================
+         */}
+        <div className="relative z-20 border-b border-slate-200 bg-white px-3 py-4 sm:px-5">
+          {/* Barra de pesquisa - full width */}
+          <div className="mb-4 flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Buscar cifra, artista, caderno..."
+              className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/10"
+            />
+          </div>
+
+          {/* Botões secundários - ícones pequenos em linha */}
+          <div className="flex items-center gap-2">
+            {secondaryMenuItems.map(item => {
+              const Icon = item.icon;
+              return (
+                <div key={item.id} className="group relative">
+                  <button
+                    type="button"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-800"
+                    title={item.tooltip}
+                  >
+                    <Icon size={18} />
+                  </button>
+                  {/* Tooltip ao passar o mouse */}
+                  <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 mb-1 hidden rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:block">
+                    {item.tooltip}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         {/*
          * =====================================================
