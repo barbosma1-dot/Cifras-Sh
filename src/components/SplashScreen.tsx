@@ -34,7 +34,7 @@ export default function SplashScreen({ label }: SplashScreenProps) {
       <div className="relative flex flex-col items-center">
         {/* logo — static, no scale/opacity pulse (reference shows no breathing) */}
         <img
-          src="/icon-192.png"
+          src="/icon-192-1.png"
           alt="Cifras Shalom"
           className="relative w-28 h-28 drop-shadow-lg mb-3"
         />
