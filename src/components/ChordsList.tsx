@@ -21,6 +21,7 @@ import {
   WifiOff,
   CheckCircle,
   Trash,
+  Clock,
 } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
@@ -74,6 +75,14 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   // Filtro de "adicionadas recentemente" — facilita achar e revisar/editar
   // categorias logo depois de uma importação de PDF.
   const [recentFilter, setRecentFilter] = useState<'all' | '1h' | '24h' | '7d'>('all');
+  const [isRecentDropdownOpen, setIsRecentDropdownOpen] = useState(false);
+  const recentDropdownRef = useRef<HTMLDivElement>(null);
+  const RECENT_FILTER_LABELS: Record<typeof recentFilter, string> = {
+    all: 'Adicionadas: Todas',
+    '1h': 'Última hora',
+    '24h': 'Últimas 24h',
+    '7d': 'Últimos 7 dias',
+  };
 
   const [chordToDelete, setChordToDelete] = useState<string | null>(null);
   useBackButton(!!chordToDelete, () => setChordToDelete(null));
@@ -152,6 +161,9 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     function handleClickOutsideCategory(event: MouseEvent) {
       if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(event.target as Node)) {
         setIsCategoryDropdownOpen(false);
+      }
+      if (recentDropdownRef.current && !recentDropdownRef.current.contains(event.target as Node)) {
+        setIsRecentDropdownOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutsideCategory);
@@ -846,51 +858,57 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-8">
-        <div className="relative w-full md:max-w-md group">
-          <Search className="absolute left-4 top-3 w-5 h-5 text-slate-300 group-focus-within:text-brand-orange transition-colors" />
+      <div className="flex flex-col gap-3 mb-8">
+        {/* Barra de pesquisa — ocupa toda a largura disponível */}
+        <div className="relative w-full group">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-brand-orange transition-colors" />
           <input
             id="main-chord-search"
             type="text"
             placeholder="Buscar por título, artista ou trecho da letra..."
-            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-brand-orange/10 focus:border-brand-orange outline-none shadow-sm transition-all text-sm font-medium"
+            className="w-full pl-12 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-brand-orange/10 focus:border-brand-orange outline-none shadow-sm transition-all text-sm font-medium"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        
-        <div className="flex flex-wrap gap-3 w-full md:w-auto">
+
+        {/* Ações — botões reduzidos a ícones, mesma linha, cores originais mantidas.
+            O nome de cada ação aparece via tooltip nativo (title) ao passar o mouse. */}
+        <div className="flex flex-wrap items-center gap-2">
           {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
-            <button 
+            <button
               onClick={() => setIsPDFImporterOpen(true)}
-              className="bg-brand-blue/10 text-brand-blue px-5 py-3 rounded-2xl font-black text-xs flex items-center gap-2 hover:bg-brand-blue hover:text-white transition-all active:scale-95"
+              title="Importar PDF"
+              aria-label="Importar PDF"
+              className="bg-brand-blue/10 text-brand-blue p-3 rounded-2xl flex items-center justify-center hover:bg-brand-blue hover:text-white transition-all active:scale-95"
             >
               <Upload className="w-4 h-4" />
-              IMPORTAR PDF
             </button>
           )}
 
           {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && duplicateGroups.length > 0 && (
             <button
               onClick={() => setIsDuplicatesModalOpen(true)}
-              className="relative bg-amber-50 text-amber-600 px-5 py-3 rounded-2xl font-black text-xs flex items-center gap-2 hover:bg-amber-500 hover:text-white transition-all active:scale-95"
+              title="Duplicadas"
+              aria-label="Duplicadas"
+              className="relative bg-amber-50 text-amber-600 p-3 rounded-2xl flex items-center justify-center hover:bg-amber-500 hover:text-white transition-all active:scale-95"
             >
               <Copy className="w-4 h-4" />
-              DUPLICADAS
               <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
                 {duplicateGroups.length}
               </span>
             </button>
           )}
-          
+
           {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
             <button
               onClick={fillMissingYoutubeLinksBulk}
               disabled={isBulkYoutubeRunning}
-              className="bg-red-50 text-red-600 px-5 py-3 rounded-2xl font-black text-xs flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-50 disabled:hover:text-red-600"
+              title="Preencher YouTube faltantes"
+              aria-label="Preencher YouTube faltantes"
+              className="bg-red-50 text-red-600 p-3 rounded-2xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-50 disabled:hover:text-red-600"
             >
               {isBulkYoutubeRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Youtube className="w-4 h-4" />}
-              PREENCHER YOUTUBE FALTANTES
             </button>
           )}
 
@@ -898,10 +916,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             <button
               type="button"
               onClick={() => setIsCategoryDropdownOpen(prev => !prev)}
-              className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-slate-600 font-bold text-xs hover:bg-slate-50 shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 focus:border-brand-orange outline-none min-w-[160px] justify-between"
+              title={selectedCategory === 'all' ? 'Todas Categorias' : selectedCategory || 'Categorias'}
+              aria-label="Categorias"
+              className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-600 flex items-center justify-center hover:bg-slate-50 shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 focus:border-brand-orange outline-none"
             >
-              <span className="truncate">{selectedCategory === 'all' ? 'Todas Categorias' : selectedCategory}</span>
-              <Filter className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+              <Filter className="w-4 h-4" />
             </button>
 
             {isCategoryDropdownOpen && (
@@ -945,21 +964,36 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             )}
           </div>
 
-          <select
-            className={`flex items-center justify-center gap-2 px-4 py-3 border rounded-2xl font-bold text-xs shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 outline-none ${
-              recentFilter !== 'all'
-                ? 'bg-brand-orange text-white border-brand-orange'
-                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 focus:border-brand-orange'
-            }`}
-            value={recentFilter}
-            onChange={(e) => setRecentFilter(e.target.value as typeof recentFilter)}
-            title="Filtrar por cifras adicionadas recentemente — útil para revisar após uma importação"
-          >
-            <option value="all">Adicionadas: Todas</option>
-            <option value="1h">Última hora</option>
-            <option value="24h">Últimas 24h</option>
-            <option value="7d">Últimos 7 dias</option>
-          </select>
+          <div className="relative" ref={recentDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsRecentDropdownOpen(prev => !prev)}
+              title={RECENT_FILTER_LABELS[recentFilter] + ' — filtrar por cifras adicionadas recentemente'}
+              aria-label="Adicionadas"
+              className={`p-3 border rounded-2xl flex items-center justify-center shadow-sm transition-all focus:ring-4 focus:ring-brand-orange/10 outline-none ${
+                recentFilter !== 'all'
+                  ? 'bg-brand-orange text-white border-brand-orange'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 focus:border-brand-orange'
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+            </button>
+
+            {isRecentDropdownOpen && (
+              <div className="absolute z-40 mt-2 w-52 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden right-0 md:left-0">
+                {(Object.keys(RECENT_FILTER_LABELS) as Array<typeof recentFilter>).map(key => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => { setRecentFilter(key); setIsRecentDropdownOpen(false); }}
+                    className={`w-full text-left px-4 py-2 text-xs font-bold hover:bg-slate-50 transition-colors ${recentFilter === key ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
+                  >
+                    {RECENT_FILTER_LABELS[key]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
