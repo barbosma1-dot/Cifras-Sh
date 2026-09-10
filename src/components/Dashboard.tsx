@@ -272,7 +272,7 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
         <div className="p-2.5 flex items-center justify-between min-w-[210px]">
           <div className="flex items-center gap-1.5">
             <img
-              src="/icon-192.png"
+              src="/icon-192-1.png"
               alt="Cifras Shalom"
               className="w-6 h-6 rounded-md shrink-0 object-contain"
             />
