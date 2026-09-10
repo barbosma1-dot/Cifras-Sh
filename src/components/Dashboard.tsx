@@ -26,20 +26,8 @@ import { useBackButton } from '../hooks/useBackButton';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
-const getRoleLabel = (role?: string) => {
-  if (!role) return 'Membro';
-
-  switch (role) {
-    case 'admin':
-      return 'Administrador';
-    case 'coordinator':
-      return 'Coordenador';
-    case 'editor':
-      return 'Editor';
-    default:
-      return 'Membro';
-  }
-};
+const LOGO = '/brand/logo-mark-blue.png';
+const LAST_VIEW_KEY = 'cifrash:lastView';
 
 interface DashboardProps {
   user: any;
@@ -47,34 +35,30 @@ interface DashboardProps {
   setProfile: (p: UserProfile | null) => void;
 }
 
+const getRoleLabel = (role?: string) => {
+  switch (role) {
+    case 'admin':
+      return 'Administrador';
+    case 'coordinator':
+      return 'Coordenador';
+    case 'editor':
+      return 'Editor';
+    case 'moderator':
+      return 'Moderador';
+    default:
+      return 'Membro';
+  }
+};
+
 export default function Dashboard({
   user,
   profile,
   setProfile
 }: DashboardProps) {
-  const LAST_VIEW_KEY = 'cifrash:lastView';
+  const sidebarRef = useRef<HTMLDivElement>(null);
 
-  const readLastView = (): {
-    tab: string;
-    bookId: string | null;
-    missionId: string | null;
-    repertoireId: string | null;
-  } | null => {
-    try {
-      const raw = localStorage.getItem(LAST_VIEW_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const lastView = readLastView();
-
-  const [activeTab, setActiveTab] = useState(
-    lastView?.tab || 'chords'
-  );
-
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState('chords');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const [notifications, setNotifications] = useState<
@@ -85,22 +69,58 @@ export default function Dashboard({
     useState(false);
 
   const [selectedMissionId, setSelectedMissionId] =
-    useState<string | null>(
-      lastView?.missionId || null
-    );
+    useState<string | null>(null);
 
   const [selectedChordBookId, setSelectedChordBookId] =
-    useState<string | null>(
-      lastView?.bookId || null
-    );
+    useState<string | null>(null);
 
   const [selectedRepertoireId, setSelectedRepertoireId] =
-    useState<string | null>(
-      lastView?.repertoireId || null
-    );
+    useState<string | null>(null);
 
   const [triggerNewChord, setTriggerNewChord] = useState(0);
 
+  const {
+    isInstallable,
+    install
+  } = usePWAInstall();
+
+  /*
+   * Recupera a última tela aberta.
+   */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LAST_VIEW_KEY);
+
+      if (!raw) return;
+
+      const saved = JSON.parse(raw);
+
+      if (saved?.tab) {
+        setActiveTab(saved.tab);
+      }
+
+      if (saved?.bookId) {
+        setSelectedChordBookId(saved.bookId);
+      }
+
+      if (saved?.missionId) {
+        setSelectedMissionId(saved.missionId);
+      }
+
+      if (saved?.repertoireId) {
+        setSelectedRepertoireId(saved.repertoireId);
+      }
+    } catch (error) {
+      console.warn(
+        'Não foi possível recuperar a última tela:',
+        error
+      );
+    }
+  }, []);
+
+  /*
+   * Salva a navegação atual.
+   */
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -113,7 +133,7 @@ export default function Dashboard({
         })
       );
     } catch {
-      // Storage indisponível.
+      // Ignora indisponibilidade do localStorage.
     }
   }, [
     activeTab,
@@ -122,52 +142,52 @@ export default function Dashboard({
     selectedRepertoireId
   ]);
 
+  /*
+   * Botão voltar do celular.
+   */
   const isAwayFromHome =
     activeTab !== 'chords' ||
-    !!selectedChordBookId ||
-    !!selectedMissionId ||
-    !!selectedRepertoireId;
+    selectedChordBookId !== null ||
+    selectedMissionId !== null ||
+    selectedRepertoireId !== null;
 
   useBackButton(isAwayFromHome, () => {
     if (selectedChordBookId) {
       setSelectedChordBookId(null);
-    } else if (selectedMissionId) {
-      setSelectedMissionId(null);
-    } else if (selectedRepertoireId) {
-      setSelectedRepertoireId(null);
-    } else {
-      setActiveTab('chords');
+      return;
     }
+
+    if (selectedMissionId) {
+      setSelectedMissionId(null);
+      return;
+    }
+
+    if (selectedRepertoireId) {
+      setSelectedRepertoireId(null);
+      return;
+    }
+
+    setActiveTab('chords');
   });
 
-  const {
-    isInstallable,
-    install
-  } = usePWAInstall();
-
-  const sidebarRef = useRef<HTMLDivElement>(null);
-
+  /*
+   * Fecha o menu ao clicar fora no celular.
+   */
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!isSidebarOpen) return;
+
       if (
-        !sidebarRef.current ||
-        sidebarRef.current.contains(
+        sidebarRef.current &&
+        !sidebarRef.current.contains(
           event.target as Node
         )
       ) {
-        return;
-      }
-
-      if (window.innerWidth < 768) {
-        if (isSidebarOpen) {
+        if (window.innerWidth < 768) {
           setIsSidebarOpen(false);
         }
-      } else {
-        if (isSidebarOpen && !isCollapsed) {
-          setIsCollapsed(true);
-        }
       }
-    }
+    };
 
     document.addEventListener(
       'mousedown',
@@ -180,29 +200,46 @@ export default function Dashboard({
         handleClickOutside
       );
     };
-  }, [isSidebarOpen, isCollapsed]);
+  }, [isSidebarOpen]);
 
+  /*
+   * Fecha o menu automaticamente quando a tela muda
+   * para desktop.
+   */
   useEffect(() => {
-    const params = new URLSearchParams(
-      window.location.search
+    const handleResize = () => {
+      if (window.innerWidth >= 768) {
+        setIsSidebarOpen(true);
+      } else {
+        setIsSidebarOpen(false);
+      }
+    };
+
+    handleResize();
+
+    window.addEventListener(
+      'resize',
+      handleResize
     );
 
-    const repertoireId =
-      params.get('repertoireId');
-
-    if (repertoireId) {
-      setSelectedRepertoireId(repertoireId);
-      setActiveTab('repertoires');
-    }
+    return () => {
+      window.removeEventListener(
+        'resize',
+        handleResize
+      );
+    };
   }, []);
 
+  /*
+   * Notificações.
+   */
   useEffect(() => {
-    if (!profile) return;
+    if (!profile?.id) return;
 
     fetchNotifications();
 
     const channel = supabase
-      .channel('schema-db-changes')
+      .channel(`user-notifications-${profile.id}`)
       .on(
         'postgres_changes',
         {
@@ -211,10 +248,10 @@ export default function Dashboard({
           table: 'user_notifications',
           filter: `user_id=eq.${profile.id}`
         },
-        (payload) => {
-          setNotifications(prev => [
+        payload => {
+          setNotifications(previous => [
             payload.new as UserNotification,
-            ...prev
+            ...previous
           ]);
         }
       )
@@ -225,48 +262,69 @@ export default function Dashboard({
     };
   }, [profile?.id]);
 
-  async function fetchNotifications() {
+  const fetchNotifications = async () => {
+    if (!profile?.id) return;
+
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('user_notifications')
         .select('*')
-        .eq('user_id', profile?.id)
+        .eq('user_id', profile.id)
         .order('created_at', {
           ascending: false
         })
         .limit(10);
+
+      if (error) {
+        console.error(
+          'Erro ao buscar notificações:',
+          error
+        );
+        return;
+      }
 
       if (data) {
         setNotifications(
           data as UserNotification[]
         );
       }
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(
+        'Erro ao buscar notificações:',
+        error
+      );
     }
-  }
+  };
 
   const markAsRead = async () => {
+    if (!profile?.id) return;
+
     try {
       await supabase
         .from('user_notifications')
         .update({
           is_read: true
         })
-        .eq('user_id', profile?.id)
+        .eq('user_id', profile.id)
         .eq('is_read', false);
 
-      setNotifications(prev =>
-        prev.map(n => ({
-          ...n,
+      setNotifications(previous =>
+        previous.map(notification => ({
+          ...notification,
           is_read: true
         }))
       );
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(
+        'Erro ao marcar notificações:',
+        error
+      );
     }
   };
 
+  /*
+   * Menus.
+   */
   const menuItems = [
     {
       id: 'chords',
@@ -295,14 +353,14 @@ export default function Dashboard({
     }
   ];
 
-  if (
-    [
-      'admin',
-      'editor',
-      'coordinator',
-      'moderator'
-    ].includes(profile?.role || '')
-  ) {
+  const canManageImports = [
+    'admin',
+    'editor',
+    'coordinator',
+    'moderator'
+  ].includes(profile?.role || '');
+
+  if (canManageImports) {
     menuItems.splice(2, 0, {
       id: 'importBatches',
       label: 'Lotes de Importação',
@@ -323,6 +381,40 @@ export default function Dashboard({
     });
   }
 
+  /*
+   * Navegação.
+   */
+  const handleMenuClick = (id: string) => {
+    setActiveTab(id);
+
+    /*
+     * Ao trocar de menu, limpa seleções internas.
+     */
+    if (id !== 'chords') {
+      setSelectedChordBookId(null);
+    }
+
+    if (id !== 'mission') {
+      setSelectedMissionId(null);
+    }
+
+    if (id !== 'repertoires') {
+      setSelectedRepertoireId(null);
+    }
+
+    /*
+     * No celular, o menu fica sobre a página.
+     * Ao clicar em uma opção, ele fecha e a página
+     * volta a ocupar 100% da largura.
+     */
+    if (window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  };
+
+  /*
+   * Conteúdo principal.
+   */
   const renderContent = () => {
     switch (activeTab) {
       case 'chords':
@@ -338,7 +430,7 @@ export default function Dashboard({
         return (
           <ChordBooksList
             profile={profile}
-            onViewChords={(bookId) => {
+            onViewChords={bookId => {
               setSelectedChordBookId(bookId);
               setActiveTab('chords');
             }}
@@ -361,11 +453,11 @@ export default function Dashboard({
           <MissionView
             profile={profile}
             setProfile={setProfile}
-            onSelectMission={(missionId) => {
+            onSelectMission={missionId => {
               setSelectedMissionId(missionId);
               setActiveTab('repertoires');
             }}
-            onViewChords={(bookId) => {
+            onViewChords={bookId => {
               setSelectedChordBookId(bookId);
               setActiveTab('chords');
             }}
@@ -403,151 +495,31 @@ export default function Dashboard({
     }
   };
 
+  const currentMenu =
+    menuItems.find(
+      item => item.id === activeTab
+    );
+
+  const CurrentIcon =
+    currentMenu?.icon || Music;
+
+  const unreadCount = notifications.filter(
+    notification => !notification.is_read
+  ).length;
+
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden">
-      {/* SIDEBAR */}
-      <motion.div
-        ref={sidebarRef}
-        initial={false}
-        animate={{
-          width: isSidebarOpen
-            ? (isCollapsed ? 60 : 210)
-            : 0,
-          x: isSidebarOpen ? 0 : -210
-        }}
-        className="fixed md:relative z-50 h-full bg-brand-blue text-white flex flex-col overflow-hidden"
-      >
-        <div className="flex items-center justify-between p-4 min-h-[64px]">
-          {!isCollapsed && (
-            <div className="flex items-center gap-2 min-w-0">
-              <Music className="w-7 h-7 shrink-0" />
-
-              <div className="min-w-0">
-                <div className="font-bold truncate">
-                  Cifra SH
-                </div>
-
-                {profile && (
-                  <div className="text-xs text-white/70 truncate">
-                    {getRoleLabel(profile.role)}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          <button
-            type="button"
-            aria-label={
-              isCollapsed
-                ? 'Expandir menu'
-                : 'Recolher menu'
-            }
-            onClick={() =>
-              setIsCollapsed(value => !value)
-            }
-            className="p-2 rounded-lg hover:bg-white/10 shrink-0"
-          >
-            {isCollapsed ? (
-              <Menu size={20} />
-            ) : (
-              <X size={20} />
-            )}
-          </button>
-        </div>
-
-        <nav className="flex-1 overflow-y-auto px-2 py-2">
-          {menuItems.map(item => {
-            const Icon = item.icon;
-            const active =
-              activeTab === item.id;
-
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  setActiveTab(item.id);
-
-                  if (window.innerWidth < 768) {
-                    setIsSidebarOpen(false);
-                  }
-                }}
-                className={`w-full flex items-center gap-3 rounded-lg px-3 py-3 mb-1 text-left transition-colors ${
-                  active
-                    ? 'bg-white/15'
-                    : 'hover:bg-white/10'
-                }`}
-                title={
-                  isCollapsed
-                    ? item.label
-                    : undefined
-                }
-              >
-                <Icon
-                  size={20}
-                  className="shrink-0"
-                />
-
-                {!isCollapsed && (
-                  <span className="truncate">
-                    {item.label}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="border-t border-white/10 p-2 space-y-1">
-          {!isCollapsed && isInstallable && (
-            <button
-              type="button"
-              onClick={install}
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-white/10"
-            >
-              <Download size={20} />
-
-              <span>
-                Instalar aplicativo
-              </span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                await supabase.auth.signOut();
-              } catch (err) {
-                console.error(
-                  'Erro ao sair:',
-                  err
-                );
-              }
-            }}
-            className="w-full flex items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-white/10"
-            title={
-              isCollapsed
-                ? 'Sair'
-                : undefined
-            }
-          >
-            <LogOut
-              size={20}
-              className="shrink-0"
-            />
-
-            {!isCollapsed && (
-              <span>Sair</span>
-            )}
-          </button>
-        </div>
-      </motion.div>
-
-      {/* MOBILE OVERLAY */}
+    <div className="relative flex h-screen w-full overflow-hidden bg-slate-50">
+      {/*
+       * =====================================================
+       * FUNDO ESCURO DO MENU NO CELULAR
+       *
+       * Importante:
+       * o menu é FIXED no celular, portanto NÃO reduz
+       * nem corta a largura da página.
+       * =====================================================
+       */}
       <AnimatePresence>
-        {isSidebarOpen && !isCollapsed && (
+        {isSidebarOpen && (
           <motion.button
             type="button"
             aria-label="Fechar menu"
@@ -562,10 +534,286 @@ export default function Dashboard({
         )}
       </AnimatePresence>
 
-      {/* MAIN AREA */}
-      <div className="flex-1 min-w-0 flex flex-col h-full">
-        <header className="h-16 shrink-0 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-5">
-          <div className="flex items-center gap-2 min-w-0">
+      {/*
+       * =====================================================
+       * MENU LATERAL
+       *
+       * Desktop:
+       * fica ao lado da página.
+       *
+       * Celular:
+       * fica SOBRE a página.
+       * =====================================================
+       */}
+      <motion.aside
+        ref={sidebarRef}
+        initial={false}
+        animate={{
+          width: isSidebarOpen
+            ? isCollapsed
+              ? 72
+              : 260
+            : 0,
+          x: isSidebarOpen ? 0 : -280
+        }}
+        transition={{
+          duration: 0.2,
+          ease: 'easeOut'
+        }}
+        className="
+          fixed
+          md:relative
+          left-0
+          top-0
+          bottom-0
+          z-50
+          h-screen
+          shrink-0
+          overflow-hidden
+          bg-brand-blue
+          text-white
+          shadow-2xl
+          md:shadow-none
+        "
+      >
+        <div className="flex h-full w-full flex-col">
+          {/*
+           * =================================================
+           * CABEÇALHO DO MENU
+           * LOGO NO TOPO
+           * =================================================
+           */}
+          <div
+            className={`
+              flex
+              h-[88px]
+              shrink-0
+              items-center
+              border-b
+              border-white/10
+              px-4
+              ${isCollapsed
+                ? 'justify-center'
+                : 'justify-between'}
+            `}
+          >
+            {!isCollapsed && (
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-1.5 shadow-sm">
+                  <img
+                    src={LOGO}
+                    alt="Cifra SH"
+                    className="h-full w-full object-contain"
+                  />
+                </div>
+
+                <div className="min-w-0">
+                  <div className="truncate text-lg font-bold">
+                    Cifra SH
+                  </div>
+
+                  <div className="truncate text-sm text-white/70">
+                    {getRoleLabel(
+                      profile?.role
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              aria-label={
+                isCollapsed
+                  ? 'Expandir menu'
+                  : 'Recolher menu'
+              }
+              onClick={() =>
+                setIsCollapsed(
+                  value => !value
+                )
+              }
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white transition hover:bg-white/10"
+            >
+              {isCollapsed ? (
+                <Menu size={24} />
+              ) : (
+                <X size={24} />
+              )}
+            </button>
+          </div>
+
+          {/*
+           * =================================================
+           * ITENS DO MENU
+           * =================================================
+           */}
+          <nav className="flex-1 overflow-y-auto px-3 py-5">
+            <div className="space-y-1">
+              {menuItems.map(item => {
+                const Icon = item.icon;
+                const active =
+                  activeTab === item.id;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() =>
+                      handleMenuClick(
+                        item.id
+                      )
+                    }
+                    title={
+                      isCollapsed
+                        ? item.label
+                        : undefined
+                    }
+                    className={`
+                      group
+                      flex
+                      w-full
+                      items-center
+                      rounded-xl
+                      transition-all
+                      duration-150
+                      ${isCollapsed
+                        ? 'justify-center px-2'
+                        : 'gap-4 px-4'}
+                      py-3.5
+                      ${
+                        active
+                          ? 'bg-white/15 shadow-sm'
+                          : 'hover:bg-white/10'
+                      }
+                    `}
+                  >
+                    <Icon
+                      size={25}
+                      strokeWidth={1.8}
+                      className="shrink-0"
+                    />
+
+                    {!isCollapsed && (
+                      <span className="truncate text-[17px] font-medium">
+                        {item.label}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+
+          {/*
+           * =================================================
+           * RODAPÉ DO MENU
+           * =================================================
+           */}
+          <div className="shrink-0 border-t border-white/10 p-3">
+            {isInstallable && (
+              <button
+                type="button"
+                onClick={install}
+                title={
+                  isCollapsed
+                    ? 'Instalar aplicativo'
+                    : undefined
+                }
+                className={`
+                  mb-1
+                  flex
+                  w-full
+                  items-center
+                  rounded-xl
+                  py-3.5
+                  transition
+                  hover:bg-white/10
+                  ${isCollapsed
+                    ? 'justify-center px-2'
+                    : 'gap-4 px-4'}
+                `}
+              >
+                <Download
+                  size={24}
+                  className="shrink-0"
+                />
+
+                {!isCollapsed && (
+                  <span className="text-[17px]">
+                    Instalar aplicativo
+                  </span>
+                )}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await supabase.auth.signOut();
+                } catch (error) {
+                  console.error(
+                    'Erro ao sair:',
+                    error
+                  );
+                }
+              }}
+              title={
+                isCollapsed
+                  ? 'Sair'
+                  : undefined
+              }
+              className={`
+                flex
+                w-full
+                items-center
+                rounded-xl
+                py-3.5
+                transition
+                hover:bg-white/10
+                ${isCollapsed
+                  ? 'justify-center px-2'
+                  : 'gap-4 px-4'}
+              `}
+            >
+              <LogOut
+                size={24}
+                className="shrink-0"
+              />
+
+              {!isCollapsed && (
+                <span className="text-[17px]">
+                  Sair
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      </motion.aside>
+
+      {/*
+       * =====================================================
+       * ÁREA PRINCIPAL
+       *
+       * Sempre ocupa o espaço restante.
+       * No celular o menu não participa do layout,
+       * portanto não corta a página.
+       * =====================================================
+       */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/*
+         * =================================================
+         * BARRA SUPERIOR
+         *
+         * Logo branca + título do menu.
+         * =================================================
+         */}
+        <header className="relative z-30 flex h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-3 shadow-sm sm:px-5">
+          <div className="flex min-w-0 items-center gap-3">
+            {/*
+             * Botão do menu no celular
+             */}
             <button
               type="button"
               aria-label="Abrir menu"
@@ -574,53 +822,90 @@ export default function Dashboard({
                   value => !value
                 )
               }
-              className="md:hidden p-2 rounded-lg hover:bg-slate-100"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-700 transition hover:bg-slate-100 md:hidden"
             >
-              <Menu size={22} />
+              <Menu size={28} />
             </button>
 
-            <div className="font-semibold text-slate-800 truncate">
-              {menuItems.find(
-                item => item.id === activeTab
-              )?.label || 'Cifras'}
+            {/*
+             * Logo com fundo branco
+             */}
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-100 bg-white p-1 shadow-sm">
+              <img
+                src={LOGO}
+                alt="Cifra SH"
+                className="h-full w-full object-contain"
+              />
+            </div>
+
+            {/*
+             * Título da tela atual
+             */}
+            <div className="flex min-w-0 items-center">
+              <CurrentIcon
+                size={21}
+                className="mr-2 hidden shrink-0 text-brand-blue sm:block"
+              />
+
+              <h1 className="truncate text-lg font-semibold text-slate-800 sm:text-xl">
+                {currentMenu?.label ||
+                  'Cifras'}
+              </h1>
             </div>
           </div>
 
-          <div className="relative flex items-center gap-2 shrink-0">
+          {/*
+           * =================================================
+           * NOTIFICAÇÕES + USUÁRIO
+           * =================================================
+           */}
+          <div className="relative flex shrink-0 items-center gap-1 sm:gap-3">
             <button
               type="button"
               aria-label="Notificações"
               onClick={() => {
+                const willOpen =
+                  !showNotifications;
+
                 setShowNotifications(
-                  value => !value
+                  willOpen
                 );
 
-                if (!showNotifications) {
+                if (willOpen) {
                   markAsRead();
                 }
               }}
-              className="relative p-2 rounded-lg hover:bg-slate-100"
+              className="relative flex h-11 w-11 items-center justify-center rounded-xl text-slate-700 transition hover:bg-slate-100"
             >
-              <Bell size={21} />
+              <Bell size={25} />
 
-              {notifications.some(
-                n => !n.is_read
-              ) && (
-                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500" />
+              {unreadCount > 0 && (
+                <span className="absolute right-1 top-1 flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                  {unreadCount > 9
+                    ? '9+'
+                    : unreadCount}
+                </span>
               )}
             </button>
 
-            <div className="hidden sm:flex items-center gap-2 max-w-[220px]">
-              <UserCircle className="text-slate-500" size={22} />
+            <div className="hidden h-10 w-px bg-slate-200 sm:block" />
+
+            <div className="hidden max-w-[220px] items-center gap-2 md:flex">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100">
+                <UserCircle
+                  size={24}
+                  className="text-slate-500"
+                />
+              </div>
 
               <div className="min-w-0">
-                <div className="text-sm font-medium text-slate-700 truncate">
+                <div className="truncate text-sm font-semibold text-slate-700">
                   {profile?.display_name ||
                     user?.email ||
                     'Usuário'}
                 </div>
 
-                <div className="text-xs text-slate-500 truncate">
+                <div className="truncate text-xs text-slate-500">
                   {getRoleLabel(
                     profile?.role
                   )}
@@ -628,12 +913,17 @@ export default function Dashboard({
               </div>
             </div>
 
+            {/*
+             * =================================================
+             * PAINEL DE NOTIFICAÇÕES
+             * =================================================
+             */}
             <AnimatePresence>
               {showNotifications && (
                 <motion.div
                   initial={{
                     opacity: 0,
-                    y: -6
+                    y: -8
                   }}
                   animate={{
                     opacity: 1,
@@ -641,17 +931,31 @@ export default function Dashboard({
                   }}
                   exit={{
                     opacity: 0,
-                    y: -6
+                    y: -8
                   }}
-                  className="absolute right-0 top-12 z-50 w-[min(360px,calc(100vw-24px))] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden"
+                  className="absolute right-0 top-14 z-[100] w-[min(360px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
                 >
-                  <div className="px-4 py-3 border-b border-slate-100 font-semibold">
-                    Notificações
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4">
+                    <span className="font-semibold text-slate-800">
+                      Notificações
+                    </span>
+
+                    {unreadCount > 0 && (
+                      <span className="rounded-full bg-red-50 px-2 py-1 text-xs font-semibold text-red-600">
+                        {unreadCount}{' '}
+                        nova
+                        {unreadCount !==
+                        1
+                          ? 's'
+                          : ''}
+                      </span>
+                    )}
                   </div>
 
-                  <div className="max-h-80 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <div className="p-4 text-sm text-slate-500">
+                  <div className="max-h-[360px] overflow-y-auto">
+                    {notifications.length ===
+                    0 ? (
+                      <div className="px-5 py-8 text-center text-sm text-slate-500">
                         Nenhuma notificação.
                       </div>
                     ) : (
@@ -661,19 +965,25 @@ export default function Dashboard({
                             key={
                               notification.id
                             }
-                            className={`px-4 py-3 border-b border-slate-100 ${
-                              notification.is_read
-                                ? ''
-                                : 'bg-blue-50'
-                            }`}
+                            className={`
+                              border-b
+                              border-slate-100
+                              px-4
+                              py-3
+                              ${
+                                notification.is_read
+                                  ? 'bg-white'
+                                  : 'bg-blue-50'
+                              }
+                            `}
                           >
-                            <div className="font-medium text-sm text-slate-800">
+                            <div className="text-sm font-semibold text-slate-800">
                               {
                                 notification.title
                               }
                             </div>
 
-                            <div className="text-sm text-slate-600 mt-1">
+                            <div className="mt-1 text-sm text-slate-600">
                               {
                                 notification.message
                               }
@@ -689,7 +999,15 @@ export default function Dashboard({
           </div>
         </header>
 
-        <main className="flex-1 min-h-0 overflow-auto">
+        {/*
+         * =====================================================
+         * CONTEÚDO
+         *
+         * A página inteira fica disponível e o menu lateral
+         * não reduz sua largura no celular.
+         * =====================================================
+         */}
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto">
           {renderContent()}
         </main>
       </div>
