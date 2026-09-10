@@ -15,7 +15,9 @@ import {
   FileText,
   Loader2,
   Copy,
-  Share2
+  Share2,
+  Filter,
+  Calendar
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, UserNotification } from '../types';
@@ -87,6 +89,10 @@ export default function Dashboard({
   const [isPDFImporterOpen, setIsPDFImporterOpen] = useState(false);
   const [isDuplicatesModalOpen, setIsDuplicatesModalOpen] = useState(false);
   const [isBulkYoutubeRunning, setIsBulkYoutubeRunning] = useState(false);
+
+  // Estados para filtros
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedImportTime, setSelectedImportTime] = useState<string | null>(null);
 
   const {
     isInstallable,
@@ -1016,83 +1022,116 @@ export default function Dashboard({
 
         {/*
          * =================================================
-         * BARRA DE PESQUISA E BOTÕES SECUNDÁRIOS
-         * Estende-se de ponta a ponta
+         * BARRA DE PESQUISA E BOTÕES PRINCIPAIS
          * =================================================
          */}
         {activeTab === 'chords' && (
           <div className="relative z-20 border-b border-slate-200 bg-white px-3 py-4 sm:px-5">
-            {/* Barra de pesquisa - full width */}
-            <div className="mb-4 flex items-center gap-2">
+            {/* Primeira barra de pesquisa */}
+            <div className="mb-4">
               <input
                 type="text"
                 placeholder="Buscar cifra, artista ou trecho da letra..."
-                className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/10"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/30"
               />
             </div>
 
-            {/* Botões secundários - ícones pequenos em linha */}
-            <div className="flex items-center gap-2">
-              {/* Importar PDF */}
+            {/* Botões principais - com cores e textos */}
+            <div className="flex flex-wrap gap-2">
+              {/* IMPORTAR PDF */}
               {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
-                <div className="group relative">
+                <button
+                  type="button"
+                  onClick={() => setIsPDFImporterOpen(true)}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700 active:bg-blue-800"
+                >
+                  <FileText size={18} />
+                  <span>IMPORTAR PDF</span>
+                </button>
+              )}
+
+              {/* DUPLICADAS */}
+              {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                <button
+                  type="button"
+                  onClick={() => setIsDuplicatesModalOpen(true)}
+                  className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-amber-700 active:bg-amber-800"
+                >
+                  <Copy size={18} />
+                  <span>DUPLICADAS</span>
+                </button>
+              )}
+
+              {/* PREENCHER YOUTUBE FALTANTES */}
+              {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBulkYoutubeRunning(true);
+                  }}
+                  disabled={isBulkYoutubeRunning}
+                  className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 active:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isBulkYoutubeRunning ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <Share2 size={18} />
+                  )}
+                  <span>PREENCHER YOUTUBE FALTANTES</span>
+                </button>
+              )}
+
+              {/* CATEGORIAS */}
+              {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                <div className="relative group">
                   <button
                     type="button"
-                    onClick={() => setIsPDFImporterOpen(true)}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-800"
-                    title="Importar PDF"
+                    className="flex items-center gap-2 rounded-lg bg-slate-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 active:bg-slate-800"
                   >
-                    <FileText size={18} />
+                    <Filter size={18} />
+                    <span>CATEGORIAS</span>
                   </button>
-                  {/* Tooltip ao passar o mouse */}
-                  <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 mb-1 hidden rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:block">
-                    Importar PDF
+                  {/* Dropdown placeholder */}
+                  <div className="absolute left-0 top-full mt-1 hidden w-48 rounded-lg border border-slate-200 bg-white shadow-lg group-hover:block z-[100]">
+                    <div className="px-4 py-2 text-sm text-slate-600">
+                      Categorias disponíveis
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* Duplicadas */}
+              {/* HORA DA IMPORTAÇÃO */}
               {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
-                <div className="group relative">
+                <div className="relative group">
                   <button
                     type="button"
-                    onClick={() => setIsDuplicatesModalOpen(true)}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-800"
-                    title="Duplicadas"
+                    className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-purple-700 active:bg-purple-800"
                   >
-                    <Copy size={18} />
+                    <Calendar size={18} />
+                    <span>HORA DA IMPORTAÇÃO</span>
                   </button>
-                  {/* Tooltip ao passar o mouse */}
-                  <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 mb-1 hidden rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:block">
-                    Duplicadas
+                  {/* Dropdown placeholder */}
+                  <div className="absolute left-0 top-full mt-1 hidden w-48 rounded-lg border border-slate-200 bg-white shadow-lg group-hover:block z-[100]">
+                    <div className="px-4 py-2 text-sm text-slate-600">
+                      Filtro de hora
+                    </div>
                   </div>
                 </div>
               )}
+            </div>
 
-              {/* Preencher YouTube Faltantes */}
-              {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
-                <div className="group relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsBulkYoutubeRunning(true);
-                    }}
-                    disabled={isBulkYoutubeRunning}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50"
-                    title="Preencher YouTube Faltantes"
-                  >
-                    {isBulkYoutubeRunning ? (
-                      <Loader2 size={18} className="animate-spin" />
-                    ) : (
-                      <Share2 size={18} />
-                    )}
-                  </button>
-                  {/* Tooltip ao passar o mouse */}
-                  <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 mb-1 hidden rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:block">
-                    Preencher YouTube
-                  </div>
-                </div>
-              )}
+            {/* Segunda barra de pesquisa - antes era "Buscar por título..." */}
+            <div className="mt-4">
+              <input
+                type="text"
+                placeholder="Buscar por título, artista ou trecho da letra..."
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/30"
+              />
+            </div>
+
+            {/* Texto "Todas Categorias" */}
+            <div className="mt-3 text-sm text-slate-600">
+              Todas Categorias
             </div>
           </div>
         )}
