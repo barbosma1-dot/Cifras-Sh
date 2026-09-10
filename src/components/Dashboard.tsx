@@ -62,6 +62,7 @@ export default function Dashboard({
   setProfile
 }: DashboardProps) {
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const chordsListRef = useRef<any>(null);
 
   const [activeTab, setActiveTab] = useState('chords');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -435,6 +436,7 @@ export default function Dashboard({
       case 'chords':
         return (
           <ChordsList
+            ref={chordsListRef}
             profile={profile}
             initialBookId={selectedChordBookId}
             triggerNewChord={triggerNewChord}
@@ -508,6 +510,7 @@ export default function Dashboard({
       default:
         return (
           <ChordsList
+            ref={chordsListRef}
             profile={profile}
             onOpenPDFImporter={() => setIsPDFImporterOpen(true)}
             onOpenDuplicates={() => setIsDuplicatesModalOpen(true)}
