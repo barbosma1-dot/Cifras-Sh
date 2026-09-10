@@ -382,9 +382,18 @@ export default function Dashboard({ user, profile, setProfile }: DashboardProps)
                 <Menu className="w-6 h-6 text-brand-blue" />
               </button>
             )}
-            <h2 className="text-lg md:text-xl font-bold text-brand-blue capitalize truncate">
-              {menuItems.find(i => i.id === activeTab)?.label}
-            </h2>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 shadow-sm flex items-center justify-center shrink-0 overflow-hidden">
+                <img
+                  src="/icon-192-1.png"
+                  alt="Cifras Shalom"
+                  className="w-6 h-6 object-contain"
+                />
+              </div>
+              <h2 className="text-lg md:text-xl font-bold text-brand-blue capitalize truncate">
+                {menuItems.find(i => i.id === activeTab)?.label}
+              </h2>
+            </div>
           </div>
           
           <div className="flex items-center gap-2 md:gap-4">
