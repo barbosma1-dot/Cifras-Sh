@@ -86,24 +86,32 @@ function hasStrongTwoColumnEvidence(
   lines: PdfLine[],
   pageWidth: number
 ): boolean {
-  const candidates = lines.filter(
-    line => line.words.length > 0 && !isSpanningLine(line, pageWidth)
-  );
+  const candidates = lines
+    .filter(line => line.words.length > 0 && !isSpanningLine(line, pageWidth))
+    .map(line => ({
+      line,
+      side: isLikelyColumnLine(line, pageWidth)
+    }))
+    .filter(
+      (item): item is { line: PdfLine; side: 'left' | 'right' } =>
+        item.side !== null
+    )
+    .sort((a, b) => b.line.y - a.line.y);
 
   const leftYs = candidates
-    .filter(line => isLikelyColumnLine(line, pageWidth) === 'left')
-    .map(line => line.y);
+    .filter(item => item.side === 'left')
+    .map(item => item.line.y);
 
   const rightYs = candidates
-    .filter(line => isLikelyColumnLine(line, pageWidth) === 'right')
-    .map(line => line.y);
+    .filter(item => item.side === 'right')
+    .map(item => item.line.y);
 
   // Uma coluna real deve apresentar várias linhas dos dois lados,
   // distribuídas verticalmente. Uma ou duas linhas curtas não bastam.
   if (leftYs.length < 3 || rightYs.length < 3) return false;
 
-  const yMin = Math.min(...candidates.map(l => l.y));
-  const yMax = Math.max(...candidates.map(l => l.y));
+  const yMin = Math.min(...candidates.map(item => item.line.y));
+  const yMax = Math.max(...candidates.map(item => item.line.y));
   const yRange = Math.abs(yMax - yMin);
 
   if (yRange < 80) return false;
@@ -119,9 +127,104 @@ function hasStrongTwoColumnEvidence(
     return false;
   }
 
+  //
+  // GUARD RAIL CRÍTICO — não confundir uma única coluna com linhas
+  // alternadas de acorde/lettura com uma página de duas colunas.
+  //
+  // No padrão problemático do PDF, a linha curta de acordes fica mais à
+  // esquerda e a linha de letra correspondente, mais comprida, fica mais
+  // à direita. Se classificarmos apenas pelo centro X, teremos algo como:
+  //
+  //   left(chord) -> right(lyric) -> left(chord) -> right(lyric) ...
+  //
+  // Ou o inverso. Isso é uma sequência vertical alternada, e não dois
+  // blocos de texto paralelos. Antes de aceitar duas colunas, procuramos
+  // esse padrão explicitamente.
+  //
+  // A verificação é deliberadamente conservadora: só rejeita a hipótese
+  // de duas colunas quando há pelo menos 3 pares consecutivos alternados,
+  // cada par está suficientemente próximo no eixo Y para ser uma linha
+  // de acorde seguida da respectiva letra, e a alternância representa a
+  // maior parte das transições observadas. Em uma página real de duas
+  // colunas, o conteúdo de uma coluna tende a formar sequências verticais
+  // consecutivas e não uma cadeia acorde/lettura alternada.
+  //
+  let alternatingPairs = 0;
+  let chordLyricAlternatingPairs = 0;
+  let alternatingTransitions = 0;
+
+  for (let i = 0; i < candidates.length - 1; i++) {
+    const current = candidates[i];
+    const next = candidates[i + 1];
+    const gap = Math.abs(current.line.y - next.line.y);
+
+    if (current.side !== next.side && gap <= MAX_PAIR_GAP) {
+      alternatingTransitions++;
+
+      const currentIsChord = isChordLine(current.line);
+      const nextIsChord = isChordLine(next.line);
+      const currentHasLyrics = hasLyricText(current.line);
+      const nextHasLyrics = hasLyricText(next.line);
+
+      if (
+        (currentIsChord && !nextIsChord && nextHasLyrics) ||
+        (nextIsChord && !currentIsChord && currentHasLyrics)
+      ) {
+        chordLyricAlternatingPairs++;
+      }
+    }
+  }
+
+  if (
+    chordLyricAlternatingPairs >= 3 &&
+    chordLyricAlternatingPairs >= candidates.length * 0.35 &&
+    alternatingTransitions >= chordLyricAlternatingPairs
+  ) {
+    return false;
+  }
+
+  // Também detecta o padrão alternado mesmo quando a camada de texto não
+  // permite classificar todos os pares como acorde/lettura (por exemplo,
+  // acordes muito curtos ou palavras que parecem acordes). Exigimos uma
+  // alternância muito forte e ausência de blocos de 3 linhas consecutivas
+  // do mesmo lado.
+  let longestSameSideRun = 1;
+  let currentSameSideRun = 1;
+  let sideChanges = 0;
+
+  for (let i = 1; i < candidates.length; i++) {
+    if (candidates[i].side === candidates[i - 1].side) {
+      currentSameSideRun++;
+      longestSameSideRun = Math.max(
+        longestSameSideRun,
+        currentSameSideRun
+      );
+    } else {
+      currentSameSideRun = 1;
+      sideChanges++;
+    }
+  }
+
+  const transitionCount = Math.max(1, candidates.length - 1);
+  const alternationRatio = sideChanges / transitionCount;
+
+  if (
+    longestSameSideRun <= 2 &&
+    alternationRatio >= 0.75 &&
+    alternatingTransitions >= 5
+  ) {
+    return false;
+  }
+
   // Exige presença dos dois lados em uma parte substancial da altura.
-  const overlapMin = Math.max(Math.min(...leftYs), Math.min(...rightYs));
-  const overlapMax = Math.min(Math.max(...leftYs), Math.max(...rightYs));
+  const overlapMin = Math.max(
+    Math.min(...leftYs),
+    Math.min(...rightYs)
+  );
+  const overlapMax = Math.min(
+    Math.max(...leftYs),
+    Math.max(...rightYs)
+  );
 
   return Math.abs(overlapMax - overlapMin) >= yRange * 0.35;
 }
