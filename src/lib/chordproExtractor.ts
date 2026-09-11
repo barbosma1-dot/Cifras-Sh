@@ -103,9 +103,12 @@ export function hasReliableTextLayer(
 }
 
 /**
- * Agrupa palavras por linha usando a coordenada vertical.
+ * Agrupa palavras por linha usando somente a coordenada vertical (sem
+ * nenhuma noção de coluna). Usada como etapa interna por
+ * groupWordsIntoLines — nunca chamar diretamente de fora deste arquivo
+ * quando a página tem duas colunas, ou o bug abaixo volta.
  */
-export function groupWordsIntoLines(
+function groupWordsByYOnly(
   words: PdfWord[]
 ): PdfLine[] {
   const sorted = [...words].sort(
@@ -138,6 +141,104 @@ export function groupWordsIntoLines(
   }
 
   return lines;
+}
+
+/**
+ * Mesma heurística usada por orderTwoColumnPage para reconhecer um
+ * cabeçalho/título centralizado que atravessa visualmente as duas colunas.
+ * Extraída para função própria porque agora ela também é usada ANTES do
+ * agrupamento em colunas (ver groupWordsIntoLines) — as duas etapas
+ * precisam concordar sobre o que é "linha central", ou o cabeçalho é
+ * partido ao meio numa etapa e reconhecido inteiro na outra.
+ */
+function isSpanningLine(
+  line: PdfLine,
+  pageWidth: number
+): boolean {
+  if (!line.words.length) return false;
+
+  const mid = pageWidth / 2;
+
+  const minX = Math.min(
+    ...line.words.map(w => w.x0)
+  );
+
+  const maxX = Math.max(
+    ...line.words.map(w => w.x1)
+  );
+
+  const center = (minX + maxX) / 2;
+
+  return (
+    minX < mid - 65 &&
+    maxX > mid + 65 &&
+    Math.abs(center - mid) <
+      Math.max(75, pageWidth * 0.14)
+  );
+}
+
+/**
+ * Agrupa palavras por linha.
+ *
+ * CORREÇÃO CRÍTICA (bug do "Ant./T.P. misturado com o salmo errado"):
+ *
+ * Antes, esta função agrupava TODAS as palavras da página por y, sem
+ * nenhuma noção de coluna. Numa página de duas colunas, uma palavra da
+ * coluna esquerda e uma da coluna direita na MESMA altura (y) caíam na
+ * MESMA linha — o texto da coluna esquerda e da coluna direita ficavam
+ * literalmente fundidos numa linha só (ex.: "Jerusalém; ... - ele faz
+ * cair a neve como lã", misturando a antífona da esquerda com o versículo
+ * do salmo da direita). orderTwoColumnPage() só reordena LINHAS inteiras
+ * entre coluna esquerda/direita — ela não sabe (nem pode) desfazer uma
+ * fusão que já aconteceu dentro de uma única linha.
+ *
+ * Agora, quando pageWidth é informado:
+ * 1. as palavras são pré-agrupadas por y só para achar cabeçalhos/títulos
+ *    centralizados (mesma regra de orderTwoColumnPage);
+ * 2. as palavras restantes são divididas em coluna esquerda/direita PELO
+ *    PRÓPRIO CENTRO DA PALAVRA (não da linha, que ainda não existe);
+ * 3. cada coluna é agrupada por y SEPARADAMENTE — então uma linha nunca
+ *    mistura palavras das duas colunas.
+ *
+ * pageWidth é opcional só para não quebrar chamadas antigas — sempre que
+ * a página puder ter duas colunas, passe pageWidth.
+ */
+export function groupWordsIntoLines(
+  words: PdfWord[],
+  pageWidth?: number
+): PdfLine[] {
+  const rawLines = groupWordsByYOnly(words);
+
+  if (pageWidth == null) {
+    return rawLines;
+  }
+
+  const mid = pageWidth / 2;
+
+  const spanningWords: PdfWord[] = [];
+  const columnWords: PdfWord[] = [];
+
+  for (const line of rawLines) {
+    if (isSpanningLine(line, pageWidth)) {
+      spanningWords.push(...line.words);
+    } else {
+      columnWords.push(...line.words);
+    }
+  }
+
+  const leftWords = columnWords.filter(
+    w => (w.x0 + w.x1) / 2 < mid
+  );
+
+  const rightWords = columnWords.filter(
+    w => (w.x0 + w.x1) / 2 >= mid
+  );
+
+  return [
+    ...groupWordsByYOnly(spanningWords),
+    ...groupWordsByYOnly(leftWords),
+    ...groupWordsByYOnly(rightWords)
+  ];
 }
 
 /**
@@ -175,6 +276,11 @@ function orderTwoColumnPage(
   for (const line of lines) {
     if (!line.words.length) continue;
 
+    if (isSpanningLine(line, pageWidth)) {
+      spanning.push(line);
+      continue;
+    }
+
     const minX = Math.min(
       ...line.words.map(w => w.x0)
     );
@@ -182,30 +288,6 @@ function orderTwoColumnPage(
     const maxX = Math.max(
       ...line.words.map(w => w.x1)
     );
-
-    const center =
-      (minX + maxX) / 2;
-
-    const width =
-      maxX - minX;
-
-    /*
-     * Identifica cabeçalhos/títulos que ocupam visualmente
-     * a região central entre as duas colunas.
-     *
-     * Não basta uma palavra cruzar o meio. A linha precisa
-     * ocupar claramente as duas metades.
-     */
-    const isCenteredWideLine =
-      minX < mid - 65 &&
-      maxX > mid + 65 &&
-      Math.abs(center - mid) <
-        Math.max(75, pageWidth * 0.14);
-
-    if (isCenteredWideLine) {
-      spanning.push(line);
-      continue;
-    }
 
     const lineCenter =
       (minX + maxX) / 2;
@@ -543,14 +625,14 @@ export async function extractPreAlignedPageText(
     return null;
   }
 
-  const lines =
-    groupWordsIntoLines(words);
-
   const view =
     page.view as number[];
 
   const pageWidth =
     view[2] - view[0];
+
+  const lines =
+    groupWordsIntoLines(words, pageWidth);
 
   return extractPageChordProText(
     lines,
