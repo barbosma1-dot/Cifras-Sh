@@ -317,23 +317,36 @@ function orderTwoColumnPage(
     return cleaned;
   }
 
-  const bodyTopY = Math.min(
+  // Num PDF, Y CRESCE PARA CIMA (o topo da página tem o maior Y). O menor
+  // Y entre as linhas pareadas é, portanto, a linha mais BAIXA do bloco de
+  // duas colunas (fisicamente embaixo, perto do rodapé), e o maior Y é a
+  // linha mais ALTA do bloco (fisicamente em cima, perto do título).
+  const lowestBodyY = Math.min(
     ...pairedRows.map(line => line.y)
   );
-  const bodyBottomY = Math.max(
+  const highestBodyY = Math.max(
     ...pairedRows.map(line => line.y)
   );
 
-  const topLines = cleaned.filter(
-    line => line.y < bodyTopY - Y_TOLERANCE
+  // CORREÇÃO (bug do cabeçalho/título indo parar DEPOIS do corpo de duas
+  // colunas): como Y cresce para cima, o cabeçalho da página ("Hino",
+  // "Salmo 50(51)" etc.) sempre tem Y MAIOR que o bloco de duas colunas —
+  // ou seja, ele pertence ao grupo "acima do corpo", não ao grupo "abaixo
+  // do corpo". A versão anterior comparava certo, mas devolvia os dois
+  // grupos na ORDEM ERRADA (rodapé antes do corpo, cabeçalho depois do
+  // corpo), fazendo o título da seção só ser reconhecido no fim da
+  // página — depois de todo o conteúdo já ter sido perdido ou atribuído
+  // à seção anterior por engano.
+  const aboveBodyLines = cleaned.filter(
+    line => line.y > highestBodyY + Y_TOLERANCE
   );
   const bodyLines = cleaned.filter(
     line =>
-      line.y >= bodyTopY - Y_TOLERANCE &&
-      line.y <= bodyBottomY + Y_TOLERANCE
+      line.y >= lowestBodyY - Y_TOLERANCE &&
+      line.y <= highestBodyY + Y_TOLERANCE
   );
-  const bottomLines = cleaned.filter(
-    line => line.y > bodyBottomY + Y_TOLERANCE
+  const belowBodyLines = cleaned.filter(
+    line => line.y < lowestBodyY - Y_TOLERANCE
   );
 
   const leftWords: PdfWord[] = [];
@@ -353,10 +366,10 @@ function orderTwoColumnPage(
   const rightBody = groupWordsByYOnly(rightWords);
 
   return [
-    ...topLines,
+    ...aboveBodyLines,
     ...leftBody,
     ...rightBody,
-    ...bottomLines
+    ...belowBodyLines
   ];
 }
 
@@ -579,16 +592,11 @@ export function extractPageChordProText(
   lines: PdfLine[],
   pageWidth: number
 ): string {
-  const orderedLines =
-    lines.length > 4
-      ? orderTwoColumnPage(
-          lines,
-          pageWidth
-        )
-      : [...lines].sort(
-          (a, b) =>
-            b.y - a.y
-        );
+  // Ver o comentário equivalente em segmentLiturgyOfHoursPage: `lines`
+  // já vem ordenado por groupWordsIntoLines (que já roda
+  // orderTwoColumnPage). Rodar de novo aqui desfazia a separação de
+  // colunas em vez de preservá-la.
+  const orderedLines = lines;
 
   const outputLines: string[] = [];
 
@@ -839,21 +847,33 @@ export function segmentLiturgyOfHoursPage(
     | null
 ): LiturgyPageResult {
   /*
-   * CORREÇÃO PRINCIPAL PARA LAUDES:
+   * CORREÇÃO CRÍTICA (bug da "coluna duplicada"/conteúdo trocado entre
+   * seções em PDFs de duas colunas):
    *
-   * Nunca mais usamos uma linha centralizada do cabeçalho para decidir
-   * que a página inteira possui uma única coluna.
+   * `lines` já chega aqui na ordem de leitura correta — quem chama esta
+   * função (extractPreAlignedPageText, e o modo Ofício/Laudes em
+   * PDFImporter.tsx) sempre produz `lines` através de
+   * `groupWordsIntoLines(words, pageWidth)`, que JÁ executa
+   * `orderTwoColumnPage` internamente.
+   *
+   * Chamar `orderTwoColumnPage` de novo aqui pegava uma lista que já
+   * tinha sido separada em "bloco esquerdo inteiro" + "bloco direito
+   * inteiro" e a reordenava de novo — e como cada linha, depois da
+   * primeira separação, só tem palavras de UM lado, ela deixa de
+   * "parecer" duas colunas para `hasTwoColumnLayout` (que exige palavras
+   * dos dois lados na MESMA linha). Isso fazia a segunda chamada achar
+   * que a página não tinha duas colunas e devolver tudo ordenado só por
+   * Y de novo — o que intercala linha da coluna esquerda / linha da
+   * coluna direita que têm a MESMA altura, exatamente como antes da
+   * correção original. Foi isso que causou acordes de uma coluna
+   * grudando na letra da outra coluna (ex.: "Deus, que criastes a
+   * [C-D/C-Bm-Em]luz," juntando o Hino da coluna esquerda com o acorde
+   * da coluna direita) e conteúdo de uma seção aparecendo dentro do
+   * título errado.
+   *
+   * Corrigido: usar `lines` como já vier, sem reordenar de novo.
    */
-  const orderedLines =
-    lines.length > 4
-      ? orderTwoColumnPage(
-          lines,
-          pageWidth
-        )
-      : [...lines].sort(
-          (a, b) =>
-            b.y - a.y
-        );
+  const orderedLines = lines;
 
   // Se a página possui um cabeçalho de seção próprio, não ativamos o
   // carry-over antes dele. Isso evita jogar epígrafes/antífonas iniciais
@@ -1006,6 +1026,21 @@ export function segmentLiturgyOfHoursPage(
     i < orderedLines.length;
     i++
   ) {
+    // CORREÇÃO (erro de compilação "Property 'contentLines' does not
+    // exist on type 'never'"): `current` é reatribuído dentro de
+    // closures (closeCurrent/startSection/activateCarryOver) chamadas
+    // ao longo do corpo deste loop. O checker do TypeScript não refaz
+    // essa análise de fluxo entre uma iteração e a próxima (o "current"
+    // no início do laço só enxerga o valor de ANTES do loop, que é
+    // `null`), então em alguns pontos ele concluía — incorretamente —
+    // que `current` só poderia ser `null` ali, e reduzia o tipo da
+    // checagem `current && ...` para `never`. Reatribuir aqui, com o
+    // tipo explícito, obriga o checker a tratar `current` como
+    // `LiturgySection | null` de novo em cada iteração. Não muda nada
+    // em tempo de execução — é só para o `tsc` (o `npm run lint`) parar
+    // de reclamar; o comportamento da extração não depende disto.
+    current = current as LiturgySection | null;
+
     const line =
       orderedLines[i];
 
