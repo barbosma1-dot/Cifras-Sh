@@ -343,7 +343,17 @@ function normalizeDayHeader(romanNumeral: string, dayName: string): string {
 }
 
 const HEADING_RE = {
-  dayHeader: /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\.?$/i,
+  // Aceita tanto o cabeçalho "puro" ("II Sexta-feira") quanto o formato de
+  // cabeçalho corrente de página usado neste PDF, que traz a hora litúrgica
+  // colada em seguida com um travessão ("II SEXTA-FEIRA — LAUDES",
+  // "I TERÇA-FEIRA — VÉSPERAS" etc.). Sem o sufixo opcional abaixo, essa
+  // linha nunca batia com o regex (por causa do "$" logo após o nome do dia)
+  // e por isso: 1) o dia nunca era capturado, então Preces/Oração/Leitura
+  // breve/Responsório breve/Cântico evangélico nunca levavam o dia no título;
+  // e 2) a linha não reconhecida caía no branch genérico de conteúdo e
+  // poluía a peça que estivesse aberta naquele momento.
+  dayHeader:
+    /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\b(?:\s*[—–-].*)?\.?$/i,
   invitatorio: /^Invitat[oó]rio$/i,
   hino: /^Hino$/i,
   salmodia: /^Salmodia$/i,
