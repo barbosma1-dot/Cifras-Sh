@@ -415,38 +415,46 @@ export function groupWordsIntoLines(
     return rawLines;
   }
 
-  const mid = pageWidth / 2;
-  const spanningWords: PdfWord[] = [];
-  const leftWords: PdfWord[] = [];
-  const rightWords: PdfWord[] = [];
+  const separatedLines: PdfLine[] = [];
 
+  /*
+   * IMPORTANTE: a detecção de duas colunas deve separar as palavras para
+   * impedir que duas colunas na mesma altura sejam fundidas, mas NÃO deve
+   * reordenar a sequência aqui.
+   *
+   * A ordem original (Y descrescente, X crescente) é preservada nesta etapa.
+   * Isso é essencial para que o pareamento acorde -> letra possa ser feito
+   * antes da eventual remontagem esquerda -> direita feita por
+   * orderTwoColumnPage().
+   */
   for (const line of rawLines) {
     if (isSpanningLine(line, pageWidth)) {
-      spanningWords.push(...line.words);
+      separatedLines.push({
+        y: line.y,
+        words: [...line.words].sort((a, b) => a.x0 - b.x0)
+      });
       continue;
     }
 
     const side = isLikelyColumnLine(line, pageWidth);
 
-    if (side === 'left') {
-      leftWords.push(...line.words);
-    } else if (side === 'right') {
-      rightWords.push(...line.words);
+    if (side !== null) {
+      separatedLines.push({
+        y: line.y,
+        words: [...line.words].sort((a, b) => a.x0 - b.x0)
+      });
     } else {
-      // Linha central curta: mantém-na inteira para não perder texto.
-      spanningWords.push(...line.words);
+      // Linha central curta/ambígua: mantém-na inteira.
+      separatedLines.push({
+        y: line.y,
+        words: [...line.words].sort((a, b) => a.x0 - b.x0)
+      });
     }
   }
 
-  // `mid` é mantido como referência explícita para deixar claro que a
-  // divisão é baseada na posição da palavra, não no centro de uma linha.
-  void mid;
-
-  return [
-    ...groupWordsByYOnly(spanningWords),
-    ...groupWordsByYOnly(leftWords),
-    ...groupWordsByYOnly(rightWords)
-  ];
+  return separatedLines.sort(
+    (a, b) => b.y - a.y || a.words[0]?.x0 - b.words[0]?.x0
+  );
 }
 
 /**
@@ -750,7 +758,92 @@ export function extractPageChordProText(
       pageWidth
     );
 
+  /*
+   * O pareamento acorde <-> letra é calculado ANTES da reordenação por
+   * colunas, usando exclusivamente a geometria original da página.
+   *
+   * Em uma página de uma coluna isso preserva o padrão:
+   *
+   *   acorde (Y maior)
+   *   letra  (Y menor)
+   *
+   * Mesmo que o centro X da letra esteja do outro lado do meio da página.
+   *
+   * Em uma página de duas colunas reais, linhas que estejam na mesma altura
+   * não podem formar um par porque o gap vertical precisa ser positivo e a
+   * compatibilidade horizontal impede o cruzamento de colunas.
+   */
+  const originalLines = [...cleanLines].sort(
+    (a, b) =>
+      b.y - a.y ||
+      (a.words[0]?.x0 ?? 0) -
+        (b.words[0]?.x0 ?? 0)
+  );
+
+  const originalPairForChord =
+    new Map<PdfLine, PdfLine>();
+
+  for (let j = 0; j < originalLines.length - 1; j++) {
+    const chord = originalLines[j];
+    const lyric = originalLines[j + 1];
+
+    if (
+      !isChordLine(chord) ||
+      isChordLine(lyric) ||
+      !hasLyricText(lyric)
+    ) {
+      continue;
+    }
+
+    const gap = chord.y - lyric.y;
+
+    if (
+      gap <= 0 ||
+      gap > MAX_PAIR_GAP
+    ) {
+      continue;
+    }
+
+    const chordMinX = Math.min(
+      ...chord.words.map(w => w.x0)
+    );
+    const chordMaxX = Math.max(
+      ...chord.words.map(w => w.x1)
+    );
+    const lyricMinX = Math.min(
+      ...lyric.words.map(w => w.x0)
+    );
+    const lyricMaxX = Math.max(
+      ...lyric.words.map(w => w.x1)
+    );
+
+    const horizontalDistance =
+      chordMaxX < lyricMinX
+        ? lyricMinX - chordMaxX
+        : lyricMaxX < chordMinX
+          ? chordMinX - lyricMaxX
+          : 0;
+
+    const maxHorizontalDistance =
+      Math.max(
+        120,
+        pageWidth * 0.08
+      );
+
+    if (
+      horizontalDistance <=
+      maxHorizontalDistance
+    ) {
+      originalPairForChord.set(
+        chord,
+        lyric
+      );
+    }
+  }
+
   const outputLines: string[] = [];
+  const consumedLyricLines =
+    new Set<PdfLine>();
 
   for (
     let i = 0;
@@ -760,33 +853,29 @@ export function extractPageChordProText(
     const line =
       orderedLines[i];
 
-    const next =
-      orderedLines[i + 1];
+    if (consumedLyricLines.has(line)) {
+      continue;
+    }
 
     if (isChordLine(line)) {
-      const gapToNext =
-        next
-          ? Math.abs(
-              line.y - next.y
-            )
-          : Infinity;
+      const pairedLyric =
+        originalPairForChord.get(line);
 
-      const pairsWithNext =
-        !!next &&
-        !isChordLine(next) &&
-        hasLyricText(next) &&
-        gapToNext <
-          MAX_PAIR_GAP;
-
-      if (pairsWithNext) {
+      if (
+        pairedLyric &&
+        !consumedLyricLines.has(
+          pairedLyric
+        )
+      ) {
         outputLines.push(
           mergeChordLyricLines(
             line,
-            next
+            pairedLyric
           )
         );
-
-        i++;
+        consumedLyricLines.add(
+          pairedLyric
+        );
       } else {
         outputLines.push(
           formatInstrumentalLine(
