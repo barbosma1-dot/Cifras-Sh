@@ -730,10 +730,10 @@ const HEADING_RE = {
     /^Ant\.?\s*\d*\b/i,
 
   altVersion:
-    /^\(?\s*\d+[ºªa]?\s*(op[cç][ãa]o|melodia)\s*\)?$/i,
+    /^\(?\s*\d+[ºª°a]?\s*(op[cç][ãa]o|melodia)\s*\)?$/i,
 
   optionNamed:
-    /^(?:Op[cç][ãa]o\s+.+|Miserere(?:\s*\(\s*Salmo\s*50(?:\(51\))?\s*\))?)$/i,
+    /^\(?\s*(?:Op[cç][ãa]o\s+[^()]+?|Miserere(?:\s*\(\s*Salmo\s*50(?:\(51\))?\s*\))?)\s*\)?$/i,
 
   extraMelodyTitle:
     /^Op[cç][õo]es\s+extras\s+de\s+melodia/i
