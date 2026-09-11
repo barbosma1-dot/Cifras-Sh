@@ -369,6 +369,12 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       // cada dia do Ofício — persiste aqui entre páginas até a próxima mudança
       // de dia, para marcar Leitura breve/Preces/Oração como "Próprio do Dia".
       let currentOfficeDayTitle: string | null = null;
+      // Antífona de abertura ainda não anexada a nenhum Salmo/Cântico ao
+      // fim de uma página (ver comentário em `pendingAntiphon` no retorno de
+      // segmentLiturgyOfHoursPage) — repassada como carryOver pra próxima
+      // página pra não se perder quando o cabeçalho do Salmo/Cântico só
+      // aparece impresso na página seguinte.
+      let officePendingAntiphon: string[] = [];
 
       // Espaçamento mínimo real entre chamadas à IA, calculado para ficar com folga
       // abaixo do limite de requisições por minuto do tier gratuito (evita bater no
@@ -414,10 +420,12 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
               const officeCarryOver = previousPageLastTitleRaw
                 ? { title: previousPageLastTitleRaw, hasChords: previousPageLastTitleHasChords }
                 : null;
-              const { sections, dayTitle } = segmentLiturgyOfHoursPage(
-                officeLines, officePageWidth, officeCarryOver, currentOfficeDayTitle
+              const { sections, dayTitle, pendingAntiphon } = segmentLiturgyOfHoursPage(
+                officeLines, officePageWidth, officeCarryOver, currentOfficeDayTitle,
+                officePendingAntiphon.length > 0 ? officePendingAntiphon : null
               );
               if (dayTitle) currentOfficeDayTitle = dayTitle;
+              officePendingAntiphon = pendingAntiphon;
               if (sections.length > 0) {
                 previousPageLastTitleHasChords = sections[sections.length - 1].hasChords;
                 extracted = sections.map(s => {
