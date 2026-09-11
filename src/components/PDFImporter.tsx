@@ -200,6 +200,34 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   const [importBatchId, setImportBatchId] = useState<string | null>(reimportBatchId || null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Detecta, ao carregar o arquivo, se ele tem camada de texto confiável
+  // (checa até as 3 primeiras páginas) — usado para LIGAR o Modo
+  // Ofício/Laudes automaticamente.
+  //
+  // Por que isso é necessário: o checkbox "Modo Ofício/Laudes" nasce
+  // desligado (useState(false)) e é fácil o usuário esquecer de marcá-lo.
+  // Quando isso acontece com um PDF de Liturgia das Horas com texto
+  // selecionável, a extração cai inteira no fluxo de IA por imagem — que
+  // não tem nenhuma das correções de coluna/ordenação deste arquivo (ela
+  // só "adivinha" a partir da imagem da página) e produz exatamente o tipo
+  // de título cortado/texto remontado errado que o modo determinístico
+  // existe para evitar. Era esse o motivo real de o bug parecer "não
+  // corrigido" mesmo com o código já certo: o código certo nunca chegava a
+  // rodar porque o checkbox estava desmarcado.
+  const detectReliableTextLayer = async (pdf: any): Promise<boolean> => {
+    try {
+      const pagesToCheck = Math.min(pdf.numPages, 3);
+      for (let i = 1; i <= pagesToCheck; i++) {
+        const page = await pdf.getPage(i);
+        const words = await extractPageWords(page);
+        if (hasReliableTextLayer(words)) return true;
+      }
+    } catch (err) {
+      console.error('Erro ao detectar camada de texto do PDF:', err);
+    }
+    return false;
+  };
+
   // Se veio de "Atualizar Lote" (arquivo já baixado do Storage), carrega o
   // número de páginas automaticamente, sem exigir que o usuário escolha o
   // arquivo de novo manualmente.
@@ -212,6 +240,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
         setNumPages(pdf.numPages);
         setStartPage(1);
         setEndPage(pdf.numPages);
+        setOfficeMode(await detectReliableTextLayer(pdf));
       } catch (err) {
         console.error('Erro ao ler número de páginas do lote:', err);
       }
@@ -234,6 +263,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
         setNumPages(pdf.numPages);
         setStartPage(1);
         setEndPage(pdf.numPages);
+        setOfficeMode(await detectReliableTextLayer(pdf));
       } catch (err) {
         console.error('Erro ao ler número de páginas:', err);
       }
@@ -1129,7 +1159,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                       Modo Ofício/Laudes (extração determinística, sem IA)
                     </p>
                     <p className="text-[9px] text-slate-400 font-normal leading-relaxed mt-1">
-                      Para PDFs de Liturgia das Horas com texto selecionável: separa Invitatório, Hino, cada Salmo, Cântico, Leitura, Responsório, Preces e Oração direto da camada de texto do PDF — nada de acorde/versículo é gerado por IA, então nada fica pela metade. Páginas escaneadas continuam usando IA normalmente.
+                      Ligado automaticamente quando o PDF tem texto selecionável (você pode desmarcar se preferir a IA mesmo assim). Separa Invitatório, Hino, cada Salmo, Cântico, Leitura, Responsório, Preces e Oração direto da camada de texto do PDF — nada de acorde/versículo é gerado por IA, então nada fica pela metade. Páginas escaneadas continuam usando IA normalmente.
                     </p>
                   </div>
                 </label>
