@@ -410,9 +410,16 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
             const officePage = await pdf.getPage(i);
             const officeWords = await extractPageWords(officePage);
             if (hasReliableTextLayer(officeWords)) {
-              const officeLines = groupWordsIntoLines(officeWords);
               const officeView = officePage.view as number[];
               const officePageWidth = officeView[2] - officeView[0];
+              // CRÍTICO: pageWidth precisa ser passado aqui — sem ele,
+              // groupWordsIntoLines cai no modo antigo (agrupa só por y,
+              // sem noção de coluna) e mistura texto da coluna esquerda
+              // com a da direita numa linha só antes mesmo de
+              // segmentLiturgyOfHoursPage/orderTwoColumnPage entrarem em
+              // ação. Era esse o motivo do Ant./T.P. aparecerem colados
+              // com o versículo errado do salmo da coluna vizinha.
+              const officeLines = groupWordsIntoLines(officeWords, officePageWidth);
               // Repassa a última peça da página anterior (título + se tem acorde) como
               // carryOver — sem isso, uma peça que atravessa a quebra de página sem
               // repetir o cabeçalho (comum em Salmo/Cântico/Hino) perde o conteúdo do
