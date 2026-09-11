@@ -14,7 +14,7 @@ const Y_TOLERANCE = 2;
 
 // Espaçamento máximo entre uma linha de acordes e a linha de letra
 // correspondente.
-const MAX_PAIR_GAP = 44;
+const MAX_PAIR_GAP = 36;
 
 const ROOT = '[A-G](?:#|b|♯|♭)?';
 
@@ -44,201 +44,6 @@ function isChordToken(text: string): boolean {
 
 function isLooseHyphen(text: string): boolean {
   return text === '-' || text === '–' || text === '—';
-}
-
-function getLineText(line: PdfLine): string {
-  return line.words.map(w => w.text).join(' ').replace(/\s+/g, ' ').trim();
-}
-
-function isPageNumberLine(line: PdfLine): boolean {
-  const text = getLineText(line);
-  return /^\d{1,3}$/.test(text);
-}
-
-function isLaudesHeaderFragment(text: string): boolean {
-  return /^[-—–]\s*LAUDES\s*$/i.test(text);
-}
-
-function isDayHeaderBase(text: string): RegExpMatchArray | null {
-  return text.match(
-    /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\s*$/i
-  );
-}
-
-function isLikelyColumnLine(line: PdfLine, pageWidth: number): 'left' | 'right' | null {
-  if (!line.words.length) return null;
-
-  const mid = pageWidth / 2;
-  const minX = Math.min(...line.words.map(w => w.x0));
-  const maxX = Math.max(...line.words.map(w => w.x1));
-  const center = (minX + maxX) / 2;
-
-  // Zona central: linhas curtas/centralizadas não são evidência de coluna.
-  const centralMargin = Math.max(35, pageWidth * 0.06);
-
-  if (center < mid - centralMargin) return 'left';
-  if (center > mid + centralMargin) return 'right';
-
-  return null;
-}
-
-function hasStrongTwoColumnEvidence(
-  lines: PdfLine[],
-  pageWidth: number
-): boolean {
-  const candidates = lines
-    .filter(line => line.words.length > 0 && !isSpanningLine(line, pageWidth))
-    .map(line => ({
-      line,
-      side: isLikelyColumnLine(line, pageWidth)
-    }))
-    .filter(
-      (item): item is { line: PdfLine; side: 'left' | 'right' } =>
-        item.side !== null
-    )
-    .sort((a, b) => b.line.y - a.line.y);
-
-  const leftYs = candidates
-    .filter(item => item.side === 'left')
-    .map(item => item.line.y);
-
-  const rightYs = candidates
-    .filter(item => item.side === 'right')
-    .map(item => item.line.y);
-
-  // Uma coluna real deve apresentar várias linhas dos dois lados,
-  // distribuídas verticalmente. Uma ou duas linhas curtas não bastam.
-  if (leftYs.length < 3 || rightYs.length < 3) return false;
-
-  const yMin = Math.min(...candidates.map(item => item.line.y));
-  const yMax = Math.max(...candidates.map(item => item.line.y));
-  const yRange = Math.abs(yMax - yMin);
-
-  if (yRange < 80) return false;
-
-  const distinctLeftBands = new Set(
-    leftYs.map(y => Math.round(y / 20))
-  ).size;
-  const distinctRightBands = new Set(
-    rightYs.map(y => Math.round(y / 20))
-  ).size;
-
-  if (distinctLeftBands < 3 || distinctRightBands < 3) {
-    return false;
-  }
-
-  //
-  // GUARD RAIL CRÍTICO — não confundir uma única coluna com linhas
-  // alternadas de acorde/lettura com uma página de duas colunas.
-  //
-  // No padrão problemático do PDF, a linha curta de acordes fica mais à
-  // esquerda e a linha de letra correspondente, mais comprida, fica mais
-  // à direita. Se classificarmos apenas pelo centro X, teremos algo como:
-  //
-  //   left(chord) -> right(lyric) -> left(chord) -> right(lyric) ...
-  //
-  // Ou o inverso. Isso é uma sequência vertical alternada, e não dois
-  // blocos de texto paralelos. Antes de aceitar duas colunas, procuramos
-  // esse padrão explicitamente.
-  //
-  // A verificação é deliberadamente conservadora: só rejeita a hipótese
-  // de duas colunas quando há pelo menos 3 pares consecutivos alternados,
-  // cada par está suficientemente próximo no eixo Y para ser uma linha
-  // de acorde seguida da respectiva letra, e a alternância representa a
-  // maior parte das transições observadas. Em uma página real de duas
-  // colunas, o conteúdo de uma coluna tende a formar sequências verticais
-  // consecutivas e não uma cadeia acorde/lettura alternada.
-  //
-  let alternatingPairs = 0;
-  let chordLyricAlternatingPairs = 0;
-  let alternatingTransitions = 0;
-
-  for (let i = 0; i < candidates.length - 1; i++) {
-    const current = candidates[i];
-    const next = candidates[i + 1];
-    const gap = Math.abs(current.line.y - next.line.y);
-
-    if (current.side !== next.side && gap <= MAX_PAIR_GAP) {
-      alternatingTransitions++;
-
-      const currentIsChord = isChordLine(current.line);
-      const nextIsChord = isChordLine(next.line);
-      const currentHasLyrics = hasLyricText(current.line);
-      const nextHasLyrics = hasLyricText(next.line);
-
-      if (
-        (currentIsChord && !nextIsChord && nextHasLyrics) ||
-        (nextIsChord && !currentIsChord && currentHasLyrics)
-      ) {
-        chordLyricAlternatingPairs++;
-      }
-    }
-  }
-
-  if (
-    chordLyricAlternatingPairs >= 3 &&
-    chordLyricAlternatingPairs >= candidates.length * 0.35 &&
-    alternatingTransitions >= chordLyricAlternatingPairs
-  ) {
-    return false;
-  }
-
-  // Também detecta o padrão alternado mesmo quando a camada de texto não
-  // permite classificar todos os pares como acorde/lettura (por exemplo,
-  // acordes muito curtos ou palavras que parecem acordes). Exigimos uma
-  // alternância muito forte e ausência de blocos de 3 linhas consecutivas
-  // do mesmo lado.
-  let longestSameSideRun = 1;
-  let currentSameSideRun = 1;
-  let sideChanges = 0;
-
-  for (let i = 1; i < candidates.length; i++) {
-    if (candidates[i].side === candidates[i - 1].side) {
-      currentSameSideRun++;
-      longestSameSideRun = Math.max(
-        longestSameSideRun,
-        currentSameSideRun
-      );
-    } else {
-      currentSameSideRun = 1;
-      sideChanges++;
-    }
-  }
-
-  const transitionCount = Math.max(1, candidates.length - 1);
-  const alternationRatio = sideChanges / transitionCount;
-
-  if (
-    longestSameSideRun <= 2 &&
-    alternationRatio >= 0.75 &&
-    alternatingTransitions >= 5
-  ) {
-    return false;
-  }
-
-  // Exige presença dos dois lados em uma parte substancial da altura.
-  const overlapMin = Math.max(
-    Math.min(...leftYs),
-    Math.min(...rightYs)
-  );
-  const overlapMax = Math.min(
-    Math.max(...leftYs),
-    Math.max(...rightYs)
-  );
-
-  return Math.abs(overlapMax - overlapMin) >= yRange * 0.35;
-}
-
-function filterNonContentLines(lines: PdfLine[]): PdfLine[] {
-  return lines.filter(line => !isPageNumberLine(line));
-}
-
-function hasLyricText(line: PdfLine): boolean {
-  const text = getLineText(line)
-    .replace(/\[[^\]]*\]/g, '')
-    .trim();
-
-  return /[A-Za-zÀ-ÿ]/.test(text);
 }
 
 /**
@@ -408,53 +213,32 @@ export function groupWordsIntoLines(
     return rawLines;
   }
 
-  // Só dividimos palavras em colunas quando a página demonstra, de fato,
-  // uma estrutura consistente de duas colunas. Isso evita embaralhar
-  // páginas de uma coluna com títulos centralizados ou linhas curtas.
-  if (!hasStrongTwoColumnEvidence(rawLines, pageWidth)) {
-    return rawLines;
-  }
+  const mid = pageWidth / 2;
 
-  const separatedLines: PdfLine[] = [];
+  const spanningWords: PdfWord[] = [];
+  const columnWords: PdfWord[] = [];
 
-  /*
-   * IMPORTANTE: a detecção de duas colunas deve separar as palavras para
-   * impedir que duas colunas na mesma altura sejam fundidas, mas NÃO deve
-   * reordenar a sequência aqui.
-   *
-   * A ordem original (Y descrescente, X crescente) é preservada nesta etapa.
-   * Isso é essencial para que o pareamento acorde -> letra possa ser feito
-   * antes da eventual remontagem esquerda -> direita feita por
-   * orderTwoColumnPage().
-   */
   for (const line of rawLines) {
     if (isSpanningLine(line, pageWidth)) {
-      separatedLines.push({
-        y: line.y,
-        words: [...line.words].sort((a, b) => a.x0 - b.x0)
-      });
-      continue;
-    }
-
-    const side = isLikelyColumnLine(line, pageWidth);
-
-    if (side !== null) {
-      separatedLines.push({
-        y: line.y,
-        words: [...line.words].sort((a, b) => a.x0 - b.x0)
-      });
+      spanningWords.push(...line.words);
     } else {
-      // Linha central curta/ambígua: mantém-na inteira.
-      separatedLines.push({
-        y: line.y,
-        words: [...line.words].sort((a, b) => a.x0 - b.x0)
-      });
+      columnWords.push(...line.words);
     }
   }
 
-  return separatedLines.sort(
-    (a, b) => b.y - a.y || a.words[0]?.x0 - b.words[0]?.x0
+  const leftWords = columnWords.filter(
+    w => (w.x0 + w.x1) / 2 < mid
   );
+
+  const rightWords = columnWords.filter(
+    w => (w.x0 + w.x1) / 2 >= mid
+  );
+
+  return [
+    ...groupWordsByYOnly(spanningWords),
+    ...groupWordsByYOnly(leftWords),
+    ...groupWordsByYOnly(rightWords)
+  ];
 }
 
 /**
@@ -483,21 +267,13 @@ function orderTwoColumnPage(
   lines: PdfLine[],
   pageWidth: number
 ): PdfLine[] {
-  const cleanLines = filterNonContentLines(lines);
-
-  // Conservador: sem evidência forte, a ordem original por Y é a mais
-  // segura para páginas de coluna única.
-  if (!hasStrongTwoColumnEvidence(cleanLines, pageWidth)) {
-    return [...cleanLines].sort(
-      (a, b) => b.y - a.y
-    );
-  }
+  const mid = pageWidth / 2;
 
   const spanning: PdfLine[] = [];
   const left: PdfLine[] = [];
   const right: PdfLine[] = [];
 
-  for (const line of cleanLines) {
+  for (const line of lines) {
     if (!line.words.length) continue;
 
     if (isSpanningLine(line, pageWidth)) {
@@ -505,22 +281,43 @@ function orderTwoColumnPage(
       continue;
     }
 
-    const side = isLikelyColumnLine(line, pageWidth);
+    const minX = Math.min(
+      ...line.words.map(w => w.x0)
+    );
 
-    if (side === 'left') {
+    const maxX = Math.max(
+      ...line.words.map(w => w.x1)
+    );
+
+    const lineCenter =
+      (minX + maxX) / 2;
+
+    if (lineCenter < mid) {
       left.push(line);
-    } else if (side === 'right') {
-      right.push(line);
     } else {
-      // Linha central curta/ambígua: não inventa uma coluna.
-      spanning.push(line);
+      right.push(line);
     }
   }
 
-  spanning.sort((a, b) => b.y - a.y);
-  left.sort((a, b) => b.y - a.y);
-  right.sort((a, b) => b.y - a.y);
+  spanning.sort(
+    (a, b) => b.y - a.y
+  );
 
+  left.sort(
+    (a, b) => b.y - a.y
+  );
+
+  right.sort(
+    (a, b) => b.y - a.y
+  );
+
+  /*
+   * Ordem final:
+   *
+   * cabeçalhos centralizados
+   * coluna esquerda
+   * coluna direita
+   */
   return [
     ...spanning,
     ...left,
@@ -531,33 +328,24 @@ function orderTwoColumnPage(
 function isChordLine(
   line: PdfLine
 ): boolean {
-  const relevant = line.words.filter(
-    w => !isLooseHyphen(w.text)
-  );
+  const relevant =
+    line.words.filter(
+      w => !isLooseHyphen(w.text)
+    );
 
   if (relevant.length === 0) {
     return false;
   }
 
-  const chordish = relevant.filter(
-    w => isChordToken(w.text)
-  );
-
-  if (chordish.length === 0) {
-    return false;
-  }
-
-  // Linhas com vários tokens exigem maioria clara de acordes. Para uma
-  // linha de um único token, só aceitamos um acorde inequívoco.
-  if (relevant.length === 1) {
-    return !AMBIGUOUS_ALONE_ROOT.test(
-      relevant[0].text
+  const chordish =
+    relevant.filter(
+      w => isChordToken(w.text)
     );
-  }
 
   return (
-    chordish.length >= 2 &&
-    chordish.length / relevant.length >= 0.6
+    chordish.length /
+      relevant.length >=
+    0.8
   );
 }
 
@@ -568,70 +356,76 @@ export function mergeChordLyricLines(
   chordLine: PdfLine,
   lyricLine: PdfLine
 ): string {
-  const lyricWords = lyricLine.words;
+  const lyricWords =
+    lyricLine.words;
 
-  if (lyricWords.length === 0) {
-    // Não perde a linha de acordes se o PDF não tiver palavras de letra.
-    return formatInstrumentalLine(chordLine);
-  }
+  const chordTokens =
+    chordLine.words.filter(
+      w => !isLooseHyphen(w.text)
+    );
 
-  const chordTokens = chordLine.words.filter(
-    w => !isLooseHyphen(w.text)
-  );
-
-  const assignments = new Map<number, string[]>();
+  const assignments =
+    new Map<number, string[]>();
 
   for (const chord of chordTokens) {
-    let bestIndex = -1;
-    let bestDistance = Infinity;
+    let idx =
+      lyricWords.findIndex(
+        w =>
+          chord.x0 >= w.x0 &&
+          chord.x0 < w.x1
+      );
 
-    // Primeiro tenta sobreposição horizontal real; se não houver, escolhe
-    // a palavra de letra mais próxima do ponto inicial do acorde.
-    lyricWords.forEach((word, index) => {
-      const overlaps =
-        chord.x0 <= word.x1 &&
-        chord.x1 >= word.x0;
+    if (idx === -1) {
+      idx =
+        lyricWords.findIndex(
+          w =>
+            w.x0 >= chord.x0
+        );
+    }
 
-      const distance = overlaps
-        ? 0
-        : chord.x0 < word.x0
-          ? word.x0 - chord.x0
-          : chord.x0 - word.x1;
+    if (idx === -1) {
+      idx =
+        lyricWords.length - 1;
+    }
 
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestIndex = index;
-      }
-    });
+    if (idx < 0) continue;
 
-    if (bestIndex < 0) continue;
-
-    if (!assignments.has(bestIndex)) {
-      assignments.set(bestIndex, []);
+    if (!assignments.has(idx)) {
+      assignments.set(idx, []);
     }
 
     assignments
-      .get(bestIndex)!
+      .get(idx)!
       .push(chord.text);
   }
 
   let result = '';
 
-  lyricWords.forEach((w, i) => {
-    const chords = assignments.get(i);
+  lyricWords.forEach(
+    (w, i) => {
+      const chords =
+        assignments.get(i);
 
-    if (chords && chords.length > 0) {
-      result += `[${chords.join('-')}]`;
+      if (
+        chords &&
+        chords.length > 0
+      ) {
+        result +=
+          `[${chords.join('-')}]`;
+      }
+
+      result += w.text;
+
+      if (
+        i <
+        lyricWords.length - 1
+      ) {
+        result += ' ';
+      }
     }
+  );
 
-    result += w.text;
-
-    if (i < lyricWords.length - 1) {
-      result += ' ';
-    }
-  });
-
-  return result.trim();
+  return result;
 }
 
 /**
@@ -750,100 +544,18 @@ export function extractPageChordProText(
   lines: PdfLine[],
   pageWidth: number
 ): string {
-  const cleanLines = filterNonContentLines(lines);
-
   const orderedLines =
-    orderTwoColumnPage(
-      cleanLines,
-      pageWidth
-    );
-
-  /*
-   * O pareamento acorde <-> letra é calculado ANTES da reordenação por
-   * colunas, usando exclusivamente a geometria original da página.
-   *
-   * Em uma página de uma coluna isso preserva o padrão:
-   *
-   *   acorde (Y maior)
-   *   letra  (Y menor)
-   *
-   * Mesmo que o centro X da letra esteja do outro lado do meio da página.
-   *
-   * Em uma página de duas colunas reais, linhas que estejam na mesma altura
-   * não podem formar um par porque o gap vertical precisa ser positivo e a
-   * compatibilidade horizontal impede o cruzamento de colunas.
-   */
-  const originalLines = [...cleanLines].sort(
-    (a, b) =>
-      b.y - a.y ||
-      (a.words[0]?.x0 ?? 0) -
-        (b.words[0]?.x0 ?? 0)
-  );
-
-  const originalPairForChord =
-    new Map<PdfLine, PdfLine>();
-
-  for (let j = 0; j < originalLines.length - 1; j++) {
-    const chord = originalLines[j];
-    const lyric = originalLines[j + 1];
-
-    if (
-      !isChordLine(chord) ||
-      isChordLine(lyric) ||
-      !hasLyricText(lyric)
-    ) {
-      continue;
-    }
-
-    const gap = chord.y - lyric.y;
-
-    if (
-      gap <= 0 ||
-      gap > MAX_PAIR_GAP
-    ) {
-      continue;
-    }
-
-    const chordMinX = Math.min(
-      ...chord.words.map(w => w.x0)
-    );
-    const chordMaxX = Math.max(
-      ...chord.words.map(w => w.x1)
-    );
-    const lyricMinX = Math.min(
-      ...lyric.words.map(w => w.x0)
-    );
-    const lyricMaxX = Math.max(
-      ...lyric.words.map(w => w.x1)
-    );
-
-    const horizontalDistance =
-      chordMaxX < lyricMinX
-        ? lyricMinX - chordMaxX
-        : lyricMaxX < chordMinX
-          ? chordMinX - lyricMaxX
-          : 0;
-
-    const maxHorizontalDistance =
-      Math.max(
-        120,
-        pageWidth * 0.08
-      );
-
-    if (
-      horizontalDistance <=
-      maxHorizontalDistance
-    ) {
-      originalPairForChord.set(
-        chord,
-        lyric
-      );
-    }
-  }
+    lines.length > 4
+      ? orderTwoColumnPage(
+          lines,
+          pageWidth
+        )
+      : [...lines].sort(
+          (a, b) =>
+            b.y - a.y
+        );
 
   const outputLines: string[] = [];
-  const consumedLyricLines =
-    new Set<PdfLine>();
 
   for (
     let i = 0;
@@ -853,29 +565,32 @@ export function extractPageChordProText(
     const line =
       orderedLines[i];
 
-    if (consumedLyricLines.has(line)) {
-      continue;
-    }
+    const next =
+      orderedLines[i + 1];
 
     if (isChordLine(line)) {
-      const pairedLyric =
-        originalPairForChord.get(line);
+      const gapToNext =
+        next
+          ? Math.abs(
+              line.y - next.y
+            )
+          : Infinity;
 
-      if (
-        pairedLyric &&
-        !consumedLyricLines.has(
-          pairedLyric
-        )
-      ) {
+      const pairsWithNext =
+        !!next &&
+        !isChordLine(next) &&
+        gapToNext <
+          MAX_PAIR_GAP;
+
+      if (pairsWithNext) {
         outputLines.push(
           mergeChordLyricLines(
             line,
-            pairedLyric
+            next
           )
         );
-        consumedLyricLines.add(
-          pairedLyric
-        );
+
+        i++;
       } else {
         outputLines.push(
           formatInstrumentalLine(
@@ -934,6 +649,7 @@ export interface LiturgySection {
   hasChords: boolean;
   contentLines: string[];
   isProperOfDay?: boolean;
+  isContinuation?: boolean;
 }
 
 const DAY_NAME_CANON:
@@ -979,7 +695,7 @@ function normalizeDayHeader(
 
 const HEADING_RE = {
   dayHeader:
-    /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\b(?:\s*[—–-]\s*LAUDES)?\s*\.?$/i,
+    /^(I{1,3}|IV|VI{0,3}|V)\s+(DOMINGO|SEGUNDA-FEIRA|TER[ÇC]A-FEIRA|QUARTA-FEIRA|QUINTA-FEIRA|SEXTA-FEIRA|S[ÁA]BADO)\b(?:\s*[—–-].*)?\.?$/i,
 
   invitatorio:
     /^Invitat[oó]rio$/i,
@@ -1063,13 +779,16 @@ export function segmentLiturgyOfHoursPage(
    * Nunca mais usamos uma linha centralizada do cabeçalho para decidir
    * que a página inteira possui uma única coluna.
    */
-  const cleanLines = filterNonContentLines(lines);
-
   const orderedLines =
-    orderTwoColumnPage(
-      cleanLines,
-      pageWidth
-    );
+    lines.length > 4
+      ? orderTwoColumnPage(
+          lines,
+          pageWidth
+        )
+      : [...lines].sort(
+          (a, b) =>
+            b.y - a.y
+        );
 
   const sections:
     LiturgySection[] = [];
@@ -1084,7 +803,9 @@ export function segmentLiturgyOfHoursPage(
         hasChords:
           carryOverSection.hasChords,
 
-        contentLines: []
+        contentLines: [],
+
+        isContinuation: true
       }
     : null;
 
@@ -1095,13 +816,13 @@ export function segmentLiturgyOfHoursPage(
   let bodyStarted =
     !!carryOverSection;
 
-  /*
-   * Uma antífona pendente é contexto LOCAL da página. O valor recebido do
-   * chamador só é aceito quando existe também uma seção de continuidade;
-   * assim uma antífona solta nunca é injetada no primeiro Salmo/Cântico
-   * não relacionado da página seguinte.
-   */
-  let pendingAntiphonLines: string[] = [];
+  let pendingAntiphonLines:
+    string[] =
+    carryOverPendingAntiphon
+      ? [
+          ...carryOverPendingAntiphon
+        ]
+      : [];
 
   /*
    * TODAS as versões de melodia são preservadas.
@@ -1136,38 +857,11 @@ export function segmentLiturgyOfHoursPage(
       false;
   };
 
-  const normalizeSectionTitle = (title: string): string =>
-    title
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
-
   const startSection = (
     title: string,
     isPsalmType: boolean,
     isProperOfDay = false
   ) => {
-    /*
-     * Se o mesmo título reaparece enquanto ainda estamos dentro da mesma
-     * peça (situação comum em cabeçalhos/repetições de página), não fecha
-     * e reabre a seção. Continua acumulando o conteúdo.
-     */
-    if (
-      current &&
-      normalizeSectionTitle(current.title) ===
-        normalizeSectionTitle(title)
-    ) {
-      current.hasChords =
-        current.hasChords || isPsalmType;
-      current.isProperOfDay =
-        current.isProperOfDay || isProperOfDay;
-      currentIsPsalmType =
-        current.hasChords;
-      return;
-    }
-
     closeCurrent();
 
     current = {
@@ -1235,25 +929,6 @@ export function segmentLiturgyOfHoursPage(
             dayMatch[2]
           );
 
-        continue;
-      }
-
-      const dayBaseMatch =
-        isDayHeaderBase(plainText);
-
-      if (dayBaseMatch) {
-        dayTitle =
-          normalizeDayHeader(
-            dayBaseMatch[1],
-            dayBaseMatch[2]
-          );
-
-        continue;
-      }
-
-      // Quando o PDF quebra "II SEXTA-FEIRA — LAUDES" em duas linhas,
-      // esta segunda linha é apenas um fragmento do cabeçalho.
-      if (isLaudesHeaderFragment(plainText)) {
         continue;
       }
     }
