@@ -1,22 +1,3 @@
-// Extração de cifras por COORDENADAS REAIS do PDF (não por imagem/IA visual).
-//
-// Isso é o equivalente em TypeScript do que a skill "chordpro-transcriber" faz
-// em Python com `pdfplumber`: em vez de confiar no julgamento visual de um
-// modelo de IA para decidir em qual sílaba cada acorde cai, usamos a posição
-// x/y real de cada palavra no PDF (disponível via `page.getTextContent()` do
-// pdf.js) para calcular isso matematicamente.
-//
-// Só funciona em páginas com camada de texto real (cifra "digital", com texto
-// selecionável no PDF original). Páginas escaneadas/fotografadas não têm essa
-// camada — para essas, `hasReliableTextLayer` retorna false e o chamador deve
-// cair de volta no fluxo antigo (imagem + IA com visão).
-//
-// Assim como a skill original, este é um cálculo geométrico com heurísticas
-// (tolerância de linha, limiar de "vão" entre colunas, etc.) — não é 100%
-// infalível, mas é MUITO mais confiável do que pedir pra uma IA "olhar" a
-// imagem e adivinhar a coluna, que era a causa mais comum de acorde
-// deslocado nas extrações antigas.
-
 export interface PdfWord {
   text: string;
   x0: number;
@@ -31,8 +12,8 @@ export interface PdfLine {
 
 const Y_TOLERANCE = 2;
 
-// Aumentado para conseguir associar corretamente linhas de acordes
-// à linha de letra correspondente em PDFs de Laudes mais espaçados.
+// Espaçamento máximo entre uma linha de acordes e a linha de letra
+// correspondente.
 const MAX_PAIR_GAP = 36;
 
 const ROOT = '[A-G](?:#|b|♯|♭)?';
@@ -66,7 +47,7 @@ function isLooseHyphen(text: string): boolean {
 }
 
 /**
- * Extrai as palavras de uma página do pdf.js com sua posição x0/x1/y real.
+ * Extrai as palavras da camada de texto do PDF com suas coordenadas reais.
  */
 export async function extractPageWords(
   page: any
@@ -113,7 +94,7 @@ export async function extractPageWords(
 }
 
 /**
- * Heurística para decidir se a página possui camada de texto confiável.
+ * Verifica se existe uma camada de texto suficientemente confiável.
  */
 export function hasReliableTextLayer(
   words: PdfWord[]
@@ -122,7 +103,7 @@ export function hasReliableTextLayer(
 }
 
 /**
- * Agrupa palavras em linhas.
+ * Agrupa palavras por linha usando a coordenada vertical.
  */
 export function groupWordsIntoLines(
   words: PdfWord[]
@@ -159,55 +140,170 @@ export function groupWordsIntoLines(
   return lines;
 }
 
-function isChordLine(line: PdfLine): boolean {
-  const relevant = line.words.filter(
-    w => !isLooseHyphen(w.text)
+/**
+ * NOVA CORREÇÃO:
+ *
+ * Organiza corretamente uma página de PDF com duas colunas.
+ *
+ * O problema anterior era que uma linha centralizada do cabeçalho podia
+ * atravessar o meio da página. Isso fazia o algoritmo concluir que a página
+ * não possuía duas colunas e então misturava:
+ *
+ * coluna esquerda
+ * coluna direita
+ * coluna esquerda
+ * coluna direita
+ *
+ * Agora:
+ *
+ * 1. linhas realmente centralizadas são separadas;
+ * 2. coluna esquerda é processada inteira;
+ * 3. coluna direita é processada inteira.
+ *
+ * Isso é especialmente importante nos PDFs de Laudes enviados.
+ */
+function orderTwoColumnPage(
+  lines: PdfLine[],
+  pageWidth: number
+): PdfLine[] {
+  const mid = pageWidth / 2;
+
+  const spanning: PdfLine[] = [];
+  const left: PdfLine[] = [];
+  const right: PdfLine[] = [];
+
+  for (const line of lines) {
+    if (!line.words.length) continue;
+
+    const minX = Math.min(
+      ...line.words.map(w => w.x0)
+    );
+
+    const maxX = Math.max(
+      ...line.words.map(w => w.x1)
+    );
+
+    const center =
+      (minX + maxX) / 2;
+
+    const width =
+      maxX - minX;
+
+    /*
+     * Identifica cabeçalhos/títulos que ocupam visualmente
+     * a região central entre as duas colunas.
+     *
+     * Não basta uma palavra cruzar o meio. A linha precisa
+     * ocupar claramente as duas metades.
+     */
+    const isCenteredWideLine =
+      minX < mid - 65 &&
+      maxX > mid + 65 &&
+      Math.abs(center - mid) <
+        Math.max(75, pageWidth * 0.14);
+
+    if (isCenteredWideLine) {
+      spanning.push(line);
+      continue;
+    }
+
+    const lineCenter =
+      (minX + maxX) / 2;
+
+    if (lineCenter < mid) {
+      left.push(line);
+    } else {
+      right.push(line);
+    }
+  }
+
+  spanning.sort(
+    (a, b) => b.y - a.y
   );
 
-  if (relevant.length === 0) return false;
-
-  const chordish = relevant.filter(
-    w => isChordToken(w.text)
+  left.sort(
+    (a, b) => b.y - a.y
   );
+
+  right.sort(
+    (a, b) => b.y - a.y
+  );
+
+  /*
+   * Ordem final:
+   *
+   * cabeçalhos centralizados
+   * coluna esquerda
+   * coluna direita
+   */
+  return [
+    ...spanning,
+    ...left,
+    ...right
+  ];
+}
+
+function isChordLine(
+  line: PdfLine
+): boolean {
+  const relevant =
+    line.words.filter(
+      w => !isLooseHyphen(w.text)
+    );
+
+  if (relevant.length === 0) {
+    return false;
+  }
+
+  const chordish =
+    relevant.filter(
+      w => isChordToken(w.text)
+    );
 
   return (
-    chordish.length / relevant.length >= 0.8
+    chordish.length /
+      relevant.length >=
+    0.8
   );
 }
 
 /**
- * Funde uma linha de acordes com a linha de letra abaixo.
+ * Junta uma linha de acordes com a linha de letra.
  */
 export function mergeChordLyricLines(
   chordLine: PdfLine,
   lyricLine: PdfLine
 ): string {
-  const lyricWords = lyricLine.words;
+  const lyricWords =
+    lyricLine.words;
 
-  const chordTokens = chordLine.words.filter(
-    w => !isLooseHyphen(w.text)
-  );
-
-  const assignments = new Map<
-    number,
-    string[]
-  >();
-
-  for (const chord of chordTokens) {
-    let idx = lyricWords.findIndex(
-      w =>
-        chord.x0 >= w.x0 &&
-        chord.x0 < w.x1
+  const chordTokens =
+    chordLine.words.filter(
+      w => !isLooseHyphen(w.text)
     );
 
-    if (idx === -1) {
-      idx = lyricWords.findIndex(
-        w => w.x0 >= chord.x0
+  const assignments =
+    new Map<number, string[]>();
+
+  for (const chord of chordTokens) {
+    let idx =
+      lyricWords.findIndex(
+        w =>
+          chord.x0 >= w.x0 &&
+          chord.x0 < w.x1
       );
+
+    if (idx === -1) {
+      idx =
+        lyricWords.findIndex(
+          w =>
+            w.x0 >= chord.x0
+        );
     }
 
     if (idx === -1) {
-      idx = lyricWords.length - 1;
+      idx =
+        lyricWords.length - 1;
     }
 
     if (idx < 0) continue;
@@ -223,77 +319,84 @@ export function mergeChordLyricLines(
 
   let result = '';
 
-  lyricWords.forEach((w, i) => {
-    const chords = assignments.get(i);
+  lyricWords.forEach(
+    (w, i) => {
+      const chords =
+        assignments.get(i);
 
-    if (chords && chords.length > 0) {
-      result += `[${chords.join('-')}]`;
+      if (
+        chords &&
+        chords.length > 0
+      ) {
+        result +=
+          `[${chords.join('-')}]`;
+      }
+
+      result += w.text;
+
+      if (
+        i <
+        lyricWords.length - 1
+      ) {
+        result += ' ';
+      }
     }
-
-    result += w.text;
-
-    if (i < lyricWords.length - 1) {
-      result += ' ';
-    }
-  });
+  );
 
   return result;
 }
 
 /**
- * Formata uma linha de acordes sem letra associada.
+ * Formata uma linha que possui apenas acordes.
  */
 export function formatInstrumentalLine(
   line: PdfLine
 ): string {
-  const tokens = line.words.filter(
-    w => !isLooseHyphen(w.text)
-  );
+  const tokens =
+    line.words.filter(
+      w => !isLooseHyphen(w.text)
+    );
 
-  if (tokens.length === 0) return '';
+  if (tokens.length === 0) {
+    return '';
+  }
 
   const AVG_CHAR_WIDTH = 6;
 
   let result = '';
 
-  let lastEnd = tokens[0].x0;
+  let lastEnd =
+    tokens[0].x0;
 
-  tokens.forEach((w, i) => {
-    const gap =
-      i === 0
-        ? 0
-        : Math.max(
-            1,
-            Math.round(
-              (w.x0 - lastEnd) /
-                AVG_CHAR_WIDTH
-            )
-          );
+  tokens.forEach(
+    (w, i) => {
+      const gap =
+        i === 0
+          ? 0
+          : Math.max(
+              1,
+              Math.round(
+                (w.x0 - lastEnd) /
+                  AVG_CHAR_WIDTH
+              )
+            );
 
-    result +=
-      ' '.repeat(gap) +
-      `[${w.text}]`;
+      result +=
+        ' '.repeat(gap) +
+        `[${w.text}]`;
 
-    lastEnd = w.x1;
-  });
+      lastEnd = w.x1;
+    }
+  );
 
   return result;
 }
 
-// Algumas linhas possuem letra e acordes misturados na mesma linha.
-//
-// Exemplo:
-//
-// "a F C/E D esposa do Cordeiro"
-//
-// vira:
-//
-// "a [F] [C/E] [D] esposa do Cordeiro"
-//
-// As raízes A e E isoladas são excluídas porque normalmente são
-// artigos/conjunções em português.
-
-const AMBIGUOUS_ALONE_ROOT = /^[AE]$/;
+/**
+ * Formata uma linha que possui texto e acordes misturados.
+ */
+const AMBIGUOUS_ALONE_ROOT =
+  /^[AE]$/;
 
 export function formatMixedTextLine(
   words: PdfWord[]
@@ -301,7 +404,9 @@ export function formatMixedTextLine(
   return words
     .map(w =>
       isChordToken(w.text) &&
-      !AMBIGUOUS_ALONE_ROOT.test(w.text)
+      !AMBIGUOUS_ALONE_ROOT.test(
+        w.text
+      )
         ? `[${w.text}]`
         : w.text
     )
@@ -310,12 +415,14 @@ export function formatMixedTextLine(
 }
 
 /**
- * Extrai a primeira linha de letra real do conteúdo.
+ * Extrai a primeira linha de letra real.
  */
 export function extractFirstLyricLine(
   contentLines: string[]
 ): string {
-  for (const raw of contentLines) {
+  for (
+    const raw of contentLines
+  ) {
     const plain = raw
       .replace(/\[[^\]]*\]/g, '')
       .replace(/\s+/g, ' ')
@@ -323,15 +430,25 @@ export function extractFirstLyricLine(
 
     const lettersOnly = plain
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-zA-Z]/g, '');
+      .replace(
+        /[\u0300-\u036f]/g,
+        ''
+      )
+      .replace(
+        /[^a-zA-Z]/g,
+        ''
+      );
 
-    if (lettersOnly.length < 2) {
+    if (
+      lettersOnly.length < 2
+    ) {
       continue;
     }
 
     return plain.length > 50
-      ? `${plain.slice(0, 50).trim()}…`
+      ? `${plain
+          .slice(0, 50)
+          .trim()}…`
       : plain;
   }
 
@@ -339,54 +456,22 @@ export function extractFirstLyricLine(
 }
 
 /**
- * Monta o texto ChordPro de uma página inteira.
+ * Extrai uma página inteira no formato ChordPro.
  */
 export function extractPageChordProText(
   lines: PdfLine[],
   pageWidth: number
 ): string {
-  const mid = pageWidth / 2;
-
-  const crossesMid = lines.some(l =>
-    l.words.some(
-      w =>
-        w.x0 < mid - 10 &&
-        w.x1 > mid + 10
-    )
-  );
-
-  let orderedLines: PdfLine[];
-
-  if (!crossesMid && lines.length > 4) {
-    const left = lines
-      .map(l => ({
-        y: l.y,
-        words: l.words.filter(
-          w => w.x0 < mid
+  const orderedLines =
+    lines.length > 4
+      ? orderTwoColumnPage(
+          lines,
+          pageWidth
         )
-      }))
-      .filter(
-        l => l.words.length > 0
-      );
-
-    const right = lines
-      .map(l => ({
-        y: l.y,
-        words: l.words.filter(
-          w => w.x0 >= mid
-        )
-      }))
-      .filter(
-        l => l.words.length > 0
-      );
-
-    orderedLines = [
-      ...left,
-      ...right
-    ];
-  } else {
-    orderedLines = lines;
-  }
+      : [...lines].sort(
+          (a, b) =>
+            b.y - a.y
+        );
 
   const outputLines: string[] = [];
 
@@ -395,31 +480,40 @@ export function extractPageChordProText(
     i < orderedLines.length;
     i++
   ) {
-    const line = orderedLines[i];
-    const next = orderedLines[i + 1];
+    const line =
+      orderedLines[i];
+
+    const next =
+      orderedLines[i + 1];
 
     if (isChordLine(line)) {
-      const gapToNext = next
-        ? Math.abs(line.y - next.y)
-        : Infinity;
+      const gapToNext =
+        next
+          ? Math.abs(
+              line.y - next.y
+            )
+          : Infinity;
 
       const pairsWithNext =
         !!next &&
         !isChordLine(next) &&
-        gapToNext < MAX_PAIR_GAP;
+        gapToNext <
+          MAX_PAIR_GAP;
 
       if (pairsWithNext) {
         outputLines.push(
           mergeChordLyricLines(
             line,
-            next!
+            next
           )
         );
 
         i++;
       } else {
         outputLines.push(
-          formatInstrumentalLine(line)
+          formatInstrumentalLine(
+            line
+          )
         );
       }
     } else {
@@ -435,7 +529,7 @@ export function extractPageChordProText(
 }
 
 /**
- * Ponto de entrada para extração pré-alinhada.
+ * Entrada principal da extração pré-alinhada.
  */
 export async function extractPreAlignedPageText(
   page: any
@@ -465,7 +559,7 @@ export async function extractPreAlignedPageText(
 }
 
 // ---------------------------------------------------------------------------
-// MODO OFÍCIO/LAUDES
+// MODO OFÍCIO / LAUDES
 // ---------------------------------------------------------------------------
 
 export interface LiturgySection {
@@ -475,28 +569,34 @@ export interface LiturgySection {
   isProperOfDay?: boolean;
 }
 
-const DAY_NAME_CANON: Record<
-  string,
-  string
-> = {
-  DOMINGO: 'Domingo',
-  'SEGUNDA-FEIRA':
-    'Segunda-feira',
-  'TERÇA-FEIRA':
-    'Terça-feira',
-  'TERCA-FEIRA':
-    'Terça-feira',
-  'QUARTA-FEIRA':
-    'Quarta-feira',
-  'QUINTA-FEIRA':
-    'Quinta-feira',
-  'SEXTA-FEIRA':
-    'Sexta-feira',
-  'SÁBADO':
-    'Sábado',
-  SABADO:
-    'Sábado'
-};
+const DAY_NAME_CANON:
+  Record<string, string> = {
+    DOMINGO: 'Domingo',
+
+    'SEGUNDA-FEIRA':
+      'Segunda-feira',
+
+    'TERÇA-FEIRA':
+      'Terça-feira',
+
+    'TERCA-FEIRA':
+      'Terça-feira',
+
+    'QUARTA-FEIRA':
+      'Quarta-feira',
+
+    'QUINTA-FEIRA':
+      'Quinta-feira',
+
+    'SEXTA-FEIRA':
+      'Sexta-feira',
+
+    'SÁBADO':
+      'Sábado',
+
+    SABADO:
+      'Sábado'
+  };
 
 function normalizeDayHeader(
   romanNumeral: string,
@@ -548,7 +648,13 @@ const HEADING_RE = {
     /^Ant\.?\s*\d*\b/i,
 
   altVersion:
-    /^\(\s*\d+[ªa]\s*(op[cç][ãa]o|melodia)\s*\)$/i
+    /^\(?\s*\d+[ºªa]?\s*(op[cç][ãa]o|melodia)\s*\)?$/i,
+
+  optionNamed:
+    /^(?:Op[cç][ãa]o\s+.+|Miserere(?:\s*\(\s*Salmo\s*50(?:\(51\))?\s*\))?)$/i,
+
+  extraMelodyTitle:
+    /^Op[cç][õo]es\s+extras\s+de\s+melodia/i
 };
 
 function isAnyHeadingLine(
@@ -556,7 +662,9 @@ function isAnyHeadingLine(
 ): boolean {
   return Object.values(
     HEADING_RE
-  ).some(re => re.test(text));
+  ).some(re =>
+    re.test(text)
+  );
 }
 
 export interface LiturgyPageResult {
@@ -579,55 +687,25 @@ export function segmentLiturgyOfHoursPage(
     | string[]
     | null
 ): LiturgyPageResult {
-  const mid = pageWidth / 2;
-
-  const crossesMid = lines.some(
-    l =>
-      l.words.some(
-        w =>
-          w.x0 < mid - 10 &&
-          w.x1 > mid + 10
-      )
-  );
-
-  let orderedLines: PdfLine[];
-
-  if (
-    !crossesMid &&
+  /*
+   * CORREÇÃO PRINCIPAL PARA LAUDES:
+   *
+   * Nunca mais usamos uma linha centralizada do cabeçalho para decidir
+   * que a página inteira possui uma única coluna.
+   */
+  const orderedLines =
     lines.length > 4
-  ) {
-    const left = lines
-      .map(l => ({
-        y: l.y,
-        words: l.words.filter(
-          w => w.x0 < mid
+      ? orderTwoColumnPage(
+          lines,
+          pageWidth
         )
-      }))
-      .filter(
-        l => l.words.length > 0
-      );
+      : [...lines].sort(
+          (a, b) =>
+            b.y - a.y
+        );
 
-    const right = lines
-      .map(l => ({
-        y: l.y,
-        words: l.words.filter(
-          w => w.x0 >= mid
-        )
-      }))
-      .filter(
-        l => l.words.length > 0
-      );
-
-    orderedLines = [
-      ...left,
-      ...right
-    ];
-  } else {
-    orderedLines = lines;
-  }
-
-  const sections: LiturgySection[] =
-    [];
+  const sections:
+    LiturgySection[] = [];
 
   let current:
     | LiturgySection
@@ -635,8 +713,10 @@ export function segmentLiturgyOfHoursPage(
     ? {
         title:
           carryOverSection.title,
+
         hasChords:
           carryOverSection.hasChords,
+
         contentLines: []
       }
     : null;
@@ -656,15 +736,12 @@ export function segmentLiturgyOfHoursPage(
         ]
       : [];
 
-  // IMPORTANTE:
-  //
-  // Não descartamos mais versões alternativas.
-  //
-  // Antes existia uma lógica com `skippingAltVersion`
-  // que fazia a segunda opção de melodia desaparecer.
-  //
-  // Agora todas as opções encontradas no PDF são preservadas
-  // dentro da mesma peça.
+  /*
+   * TODAS as versões de melodia são preservadas.
+   *
+   * Não existe mais nenhuma lógica que descarte a segunda,
+   * terceira ou demais opções.
+   */
   let checkNextLineForSubtitle =
     false;
 
@@ -701,8 +778,12 @@ export function segmentLiturgyOfHoursPage(
 
     current = {
       title,
-      hasChords: isPsalmType,
+
+      hasChords:
+        isPsalmType,
+
       contentLines: [],
+
       isProperOfDay
     };
 
@@ -766,6 +847,15 @@ export function segmentLiturgyOfHoursPage(
 
     if (
       !chordLine &&
+      HEADING_RE.extraMelodyTitle.test(
+        plainText
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      !chordLine &&
       HEADING_RE.salmodia.test(
         plainText
       )
@@ -813,6 +903,43 @@ export function segmentLiturgyOfHoursPage(
           .trim(),
         true
       );
+
+      continue;
+    }
+
+    /*
+     * Miserere pertence ao Salmo 50 e é preservado como
+     * alternativa dentro do mesmo canto.
+     */
+    if (
+      !chordLine &&
+      /^Miserere\s*\(\s*Salmo\s*50(?:\(51\))?\s*\)$/i.test(
+        plainText
+      )
+    ) {
+      if (
+        current &&
+        /^Salmo\s*50/i.test(
+          current.title
+        )
+      ) {
+        current.contentLines.push(
+          `— ${plainText} —`
+        );
+
+        bodyStarted = true;
+      } else {
+        startSection(
+          'Salmo 50(51)',
+          true
+        );
+
+        current!.contentLines.push(
+          `— ${plainText} —`
+        );
+
+        bodyStarted = true;
+      }
 
       continue;
     }
@@ -934,41 +1061,40 @@ export function segmentLiturgyOfHoursPage(
       continue;
     }
 
-    // ============================================================
-    // OPÇÕES EXTRAS DE MELODIA
-    // ============================================================
-    //
-    // Antes desta correção, existia uma lógica que fazia:
-    //
-    //   primeira opção -> mantém
-    //   segunda opção -> começa a descartar
-    //   terceira opção -> também descarta
-    //
-    // Isso fazia desaparecer as melodias alternativas do PDF.
-    //
-    // Agora o marcador é preservado e o conteúdo seguinte continua
-    // pertencendo à mesma peça.
-    //
-    // Exemplo:
-    //
-    // (2ª Opção)
-    //
-    // G       B7    C
-    // Ó Pai, dá-me...
-    //
-    // fica dentro do mesmo Salmo/Hino.
-    //
+    /*
+     * ============================================================
+     * TODAS AS OPÇÕES DE MELODIA
+     * ============================================================
+     *
+     * Exemplos presentes nos PDFs:
+     *
+     * (1º Opção)
+     * (2º Opção)
+     * (2ª Opção)
+     * Opção Canto 34 e 600
+     * Miserere (Salmo 50)
+     *
+     * Elas ficam dentro do mesmo canto.
+     */
     if (
       !chordLine &&
-      HEADING_RE.altVersion.test(
-        plainText
+      (
+        HEADING_RE.altVersion.test(
+          plainText
+        ) ||
+        HEADING_RE.optionNamed.test(
+          plainText
+        )
       )
     ) {
       if (current) {
         current.contentLines.push(
-          formatMixedTextLine(
-            line.words
-          )
+          `— ${plainText
+            .replace(
+              /^\(|\)$/g,
+              ''
+            )
+            .trim()} —`
         );
 
         bodyStarted = true;
@@ -977,8 +1103,9 @@ export function segmentLiturgyOfHoursPage(
       continue;
     }
 
-    // Uma linha de subtítulo temático pode vir logo após o cabeçalho
-    // "Salmo N"/"Cântico" e antes do corpo cifrado.
+    /*
+     * Subtítulo que aparece entre o título e o corpo cifrado.
+     */
     if (
       checkNextLineForSubtitle
     ) {
@@ -999,11 +1126,12 @@ export function segmentLiturgyOfHoursPage(
     }
 
     if (chordLine) {
-      const gapToNext = next
-        ? Math.abs(
-            line.y - next.y
-          )
-        : Infinity;
+      const gapToNext =
+        next
+          ? Math.abs(
+              line.y - next.y
+            )
+          : Infinity;
 
       const nextPlainText =
         next
@@ -1060,7 +1188,9 @@ export function segmentLiturgyOfHoursPage(
 
   return {
     sections,
+
     dayTitle,
+
     pendingAntiphon:
       pendingAntiphonLines
   };
