@@ -475,7 +475,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
                   // Responsório breve levam o incipit (primeira linha de letra) no
                   // título, pra diferenciar peças de mesmo nome genérico entre si
                   // (ex.: "Hino — Ó Criador do Universo" em vez de só "Hino").
-                  const wantsIncipit = !isProper && (
+                  const wantsIncipit = !isProper && !s.isContinuation && (
                     s.title === 'Hino' ||
                     /^C[âa]ntico\b/i.test(s.title) ||
                     /^Respons[oó]rio breve\b/i.test(s.title)
