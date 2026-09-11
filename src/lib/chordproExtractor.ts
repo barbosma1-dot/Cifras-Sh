@@ -736,7 +736,10 @@ const HEADING_RE = {
     /^\(?\s*(?:Op[cç][ãa]o\s+[^()]+?|Miserere(?:\s*\(\s*Salmo\s*50(?:\(51\))?\s*\))?)\s*\)?$/i,
 
   extraMelodyTitle:
-    /^Op[cç][õo]es\s+extras\s+de\s+melodia/i
+    /^Op[cç][õo]es\s+extras\s+de\s+melodia/i,
+
+  numberedExtraOption:
+    /^\d+\.\s+(?:(?:C[âa]ntico|Salmo)\b.+?)?—\s*(?:\d+[ºªa°]?\s*Op[cç][ãa]o|confer[êe]ncia\s+das?\s+\d+\s+vers[ãa]o).*$/i
 };
 
 function isAnyHeadingLine(
@@ -1145,7 +1148,41 @@ export function segmentLiturgyOfHoursPage(
 
     /*
      * ============================================================
-     * TODAS AS OPÇÕES DE MELODIA
+     * NUMBERED EXTRA MELODY OPTIONS (novo)
+     * ============================================================
+     *
+     * Exemplos no PDF de complemento:
+     *
+     * 1. Cântico de Habacuc (Hab 3,2-4.13a.15-19) — 2ª Opção
+     * 2. Salmo 99 (100) — 1ª Opção
+     * 3. Salmo 99 (100) — 2ª Opção
+     * 4. Salmo 50 (51) — conferência das 3 versões
+     *
+     * Elas são seções NOVAS e isoladas, não sub-versões de um
+     * cântico existente.
+     */
+    if (
+      !chordLine &&
+      HEADING_RE.numberedExtraOption.test(
+        plainText
+      )
+    ) {
+      const titleMatch = plainText.match(
+        /^\d+\.\s+(.+?)(?:\s*—\s*(?:\d+[ºªa°]?\s*Op[cç][ãa]o|confer[êe]ncia.*))?$/i
+      );
+
+      const title = titleMatch
+        ? titleMatch[1].trim()
+        : plainText;
+
+      startSection(title, true);
+
+      continue;
+    }
+
+    /*
+     * ============================================================
+     * TODAS AS OPÇÕES DE MELODIA (versão antiga, mantida)
      * ============================================================
      *
      * Exemplos presentes nos PDFs:
