@@ -739,7 +739,7 @@ const HEADING_RE = {
     /^Op[cç][õo]es\s+extras\s+de\s+melodia/i,
 
   numberedExtraOption:
-    /^\d+\.\s+(?:(?:C[âa]ntico|Salmo)\b.+?)?—\s*(?:\d+[ºªa°]?\s*Op[cç][ãa]o|confer[êe]ncia\s+das?\s+\d+\s+vers[ãa]o).*$/i
+    /^\d+\.\s+(?:(?:C[âa]ntico|Salmo)\b.+?)?—\s*(?:\d+[ºªa°]?\s*Op[cç][ãa]o|confer[êe]ncia\s+das?\s+\d+\s+vers(?:[ãa]o|[õo]es)).*$/i
 };
 
 function isAnyHeadingLine(
