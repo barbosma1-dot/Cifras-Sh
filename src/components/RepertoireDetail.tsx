@@ -870,7 +870,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                         <button
                           key={section}
                           onClick={() => openAddingMode(section)}
-                          className="px-2 py-1 bg-slate-50 text-slate-400 rounded-lg text-[8px] font-bold uppercase hover:bg-brand-blue/5 hover:text-brand-blue transition-colors border border-transparent hover:border-brand-blue/20"
+                          className="px-2.5 py-1.5 bg-slate-50 text-slate-400 rounded-lg text-[11px] font-bold uppercase hover:bg-brand-blue/5 hover:text-brand-blue transition-colors border border-transparent hover:border-brand-blue/20"
                         >
                           + {section}{hasItems ? ` (${sectionItems.length})` : ''}
                         </button>
