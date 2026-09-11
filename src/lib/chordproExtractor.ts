@@ -213,115 +213,150 @@ export function groupWordsIntoLines(
     return rawLines;
   }
 
-  const mid = pageWidth / 2;
-
-  const spanningWords: PdfWord[] = [];
-  const columnWords: PdfWord[] = [];
-
-  for (const line of rawLines) {
-    if (isSpanningLine(line, pageWidth)) {
-      spanningWords.push(...line.words);
-    } else {
-      columnWords.push(...line.words);
-    }
-  }
-
-  const leftWords = columnWords.filter(
-    w => (w.x0 + w.x1) / 2 < mid
-  );
-
-  const rightWords = columnWords.filter(
-    w => (w.x0 + w.x1) / 2 >= mid
-  );
-
-  return [
-    ...groupWordsByYOnly(spanningWords),
-    ...groupWordsByYOnly(leftWords),
-    ...groupWordsByYOnly(rightWords)
-  ];
+  return orderTwoColumnPage(rawLines, pageWidth);
 }
 
 /**
- * NOVA CORREÇÃO:
+ * Decide se a página realmente possui duas colunas independentes.
  *
- * Organiza corretamente uma página de PDF com duas colunas.
+ * É importante NÃO considerar uma linha longa de uma única coluna como
+ * "linha centralizada". Páginas de Leitura, Preces e Oração ocupam a largura
+ * inteira da folha e precisam continuar em ordem vertical normal.
+ */
+function hasTwoColumnLayout(
+  lines: PdfLine[],
+  pageWidth: number
+): boolean {
+  const mid = pageWidth / 2;
+  let pairedRows = 0;
+
+  for (const line of lines) {
+    if (!line.words.length) continue;
+
+    const left = line.words.filter(
+      w => (w.x0 + w.x1) / 2 < mid
+    );
+    const right = line.words.filter(
+      w => (w.x0 + w.x1) / 2 >= mid
+    );
+
+    if (!left.length || !right.length) continue;
+
+    const leftMaxX = Math.max(
+      ...left.map(w => w.x1)
+    );
+    const rightMinX = Math.min(
+      ...right.map(w => w.x0)
+    );
+
+    // Uma distância real entre os dois blocos indica duas colunas.
+    // Uma frase longa de uma coluna, ao contrário, atravessa o centro
+    // sem deixar esse vão.
+    if (rightMinX - leftMaxX >= 20) {
+      pairedRows++;
+    }
+  }
+
+  return pairedRows >= 8;
+}
+
+/**
+ * Organiza uma página em ordem de leitura.
  *
- * O problema anterior era que uma linha centralizada do cabeçalho podia
- * atravessar o meio da página. Isso fazia o algoritmo concluir que a página
- * não possuía duas colunas e então misturava:
+ * Para página de uma coluna: Y descendente, normalmente.
  *
- * coluna esquerda
- * coluna direita
- * coluna esquerda
- * coluna direita
+ * Para duas colunas:
+ *   1. mantém o cabeçalho/textos de largura total na posição vertical real;
+ *   2. detecta o trecho em que existem duas colunas simultâneas;
+ *   3. lê a coluna esquerda inteira e depois a direita;
+ *   4. mantém novamente, no final, qualquer linha de largura total (como a
+ *      antífona de fechamento).
  *
- * Agora:
- *
- * 1. linhas realmente centralizadas são separadas;
- * 2. coluna esquerda é processada inteira;
- * 3. coluna direita é processada inteira.
- *
- * Isso é especialmente importante nos PDFs de Laudes enviados.
+ * Isso evita dois bugs diferentes ao mesmo tempo: misturar colunas na mesma
+ * linha e colocar textos de uma coluna inteira ANTES do título da seção.
  */
 function orderTwoColumnPage(
   lines: PdfLine[],
   pageWidth: number
 ): PdfLine[] {
+  const cleaned = lines
+    .filter(line => line.words.length > 0)
+    .sort((a, b) => b.y - a.y);
+
+  if (!hasTwoColumnLayout(cleaned, pageWidth)) {
+    return cleaned;
+  }
+
   const mid = pageWidth / 2;
 
-  const spanning: PdfLine[] = [];
-  const left: PdfLine[] = [];
-  const right: PdfLine[] = [];
-
-  for (const line of lines) {
-    if (!line.words.length) continue;
-
-    if (isSpanningLine(line, pageWidth)) {
-      spanning.push(line);
-      continue;
-    }
-
-    const minX = Math.min(
-      ...line.words.map(w => w.x0)
+  // Uma linha só é considerada parte do corpo de duas colunas quando há
+  // palavras dos dois lados E existe um vão real entre as duas colunas.
+  // Assim, uma frase longa que atravessa o centro não inicia falsamente o
+  // corpo de duas colunas.
+  const pairedRows = cleaned.filter(line => {
+    const left = line.words.filter(
+      w => (w.x0 + w.x1) / 2 < mid
+    );
+    const right = line.words.filter(
+      w => (w.x0 + w.x1) / 2 >= mid
     );
 
-    const maxX = Math.max(
-      ...line.words.map(w => w.x1)
+    if (!left.length || !right.length) return false;
+
+    const leftMaxX = Math.max(
+      ...left.map(w => w.x1)
+    );
+    const rightMinX = Math.min(
+      ...right.map(w => w.x0)
     );
 
-    const lineCenter =
-      (minX + maxX) / 2;
+    return rightMinX - leftMaxX >= 20;
+  });
 
-    if (lineCenter < mid) {
-      left.push(line);
-    } else {
-      right.push(line);
+  if (pairedRows.length < 3) {
+    return cleaned;
+  }
+
+  const bodyTopY = Math.min(
+    ...pairedRows.map(line => line.y)
+  );
+  const bodyBottomY = Math.max(
+    ...pairedRows.map(line => line.y)
+  );
+
+  const topLines = cleaned.filter(
+    line => line.y < bodyTopY - Y_TOLERANCE
+  );
+  const bodyLines = cleaned.filter(
+    line =>
+      line.y >= bodyTopY - Y_TOLERANCE &&
+      line.y <= bodyBottomY + Y_TOLERANCE
+  );
+  const bottomLines = cleaned.filter(
+    line => line.y > bodyBottomY + Y_TOLERANCE
+  );
+
+  const leftWords: PdfWord[] = [];
+  const rightWords: PdfWord[] = [];
+
+  for (const line of bodyLines) {
+    for (const word of line.words) {
+      if ((word.x0 + word.x1) / 2 < mid) {
+        leftWords.push(word);
+      } else {
+        rightWords.push(word);
+      }
     }
   }
 
-  spanning.sort(
-    (a, b) => b.y - a.y
-  );
+  const leftBody = groupWordsByYOnly(leftWords);
+  const rightBody = groupWordsByYOnly(rightWords);
 
-  left.sort(
-    (a, b) => b.y - a.y
-  );
-
-  right.sort(
-    (a, b) => b.y - a.y
-  );
-
-  /*
-   * Ordem final:
-   *
-   * cabeçalhos centralizados
-   * coluna esquerda
-   * coluna direita
-   */
   return [
-    ...spanning,
-    ...left,
-    ...right
+    ...topLines,
+    ...leftBody,
+    ...rightBody,
+    ...bottomLines
   ];
 }
 
@@ -753,6 +788,36 @@ function isAnyHeadingLine(
   );
 }
 
+/**
+ * Remove apenas o número de página impresso no rodapé.
+ * Não usamos esta regra para números dentro de títulos (ex.: Salmo 50(51))
+ * nem para opções de melodia como "1. ...".
+ */
+function isPrintedPageNumber(
+  line: PdfLine,
+  pageWidth: number
+): boolean {
+  const text = line.words
+    .map(w => w.text)
+    .join(' ')
+    .trim();
+
+  if (!/^\d{1,4}$/.test(text)) {
+    return false;
+  }
+
+  const minX = Math.min(
+    ...line.words.map(w => w.x0)
+  );
+  const maxX = Math.max(
+    ...line.words.map(w => w.x1)
+  );
+
+  // No PDF de Laudes o número fica isolado no rodapé, à direita.
+  return minX >= pageWidth * 0.80 &&
+    maxX >= pageWidth * 0.85;
+}
+
 export interface LiturgyPageResult {
   sections: LiturgySection[];
 
@@ -790,31 +855,71 @@ export function segmentLiturgyOfHoursPage(
             b.y - a.y
         );
 
+  // Se a página possui um cabeçalho de seção próprio, não ativamos o
+  // carry-over antes dele. Isso evita jogar epígrafes/antífonas iniciais
+  // da nova seção dentro da música da página anterior.
+  const pageContainsSectionHeading = orderedLines.some(line => {
+    const text = line.words.map(w => w.text).join(' ').trim();
+    return !isChordLine(line) && (
+      HEADING_RE.invitatorio.test(text) ||
+      HEADING_RE.hino.test(text) ||
+      HEADING_RE.salmo.test(text) ||
+      HEADING_RE.canticoEvangelico.test(text) ||
+      HEADING_RE.cantico.test(text) ||
+      HEADING_RE.leitura.test(text) ||
+      HEADING_RE.responsorio.test(text) ||
+      HEADING_RE.preces.test(text) ||
+      HEADING_RE.oracao.test(text) ||
+      HEADING_RE.numberedExtraOption.test(text)
+    );
+  });
+
   const sections:
     LiturgySection[] = [];
 
-  let current:
-    | LiturgySection
-    | null = carryOverSection
+  // A seção da página anterior é apenas uma CANDIDATA a continuação.
+  // Não podemos anexá-la imediatamente: a página pode começar com um
+  // epígrafe/texto e só depois apresentar o cabeçalho de uma nova seção.
+  let carryOverCandidate = carryOverSection
     ? {
-        title:
-          carryOverSection.title,
-
-        hasChords:
-          carryOverSection.hasChords,
-
-        contentLines: [],
-
-        isContinuation: true
+        title: carryOverSection.title,
+        hasChords: carryOverSection.hasChords
       }
     : null;
 
-  let currentIsPsalmType =
-    carryOverSection?.hasChords ??
-    false;
+  let current: LiturgySection | null = null;
 
-  let bodyStarted =
-    !!carryOverSection;
+  let currentIsPsalmType = false;
+
+  let bodyStarted = false;
+
+  let sawNewSectionHeading = false;
+
+  let checkNextLineForSubtitle = false;
+
+  const activateCarryOver = () => {
+    if (!carryOverCandidate || current || sawNewSectionHeading) {
+      return;
+    }
+
+    current = {
+      title: carryOverCandidate.title,
+      hasChords: carryOverCandidate.hasChords,
+      contentLines: [],
+      isContinuation: true
+    };
+
+    currentIsPsalmType = carryOverCandidate.hasChords;
+    bodyStarted = false;
+    checkNextLineForSubtitle = carryOverCandidate.hasChords;
+
+    if (pendingAntiphonLines.length > 0) {
+      current.contentLines.push(...pendingAntiphonLines);
+      pendingAntiphonLines = [];
+    }
+
+    carryOverCandidate = null;
+  };
 
   let pendingAntiphonLines:
     string[] =
@@ -830,8 +935,6 @@ export function segmentLiturgyOfHoursPage(
    * Não existe mais nenhuma lógica que descarte a segunda,
    * terceira ou demais opções.
    */
-  let checkNextLineForSubtitle =
-    false;
 
   let dayTitle:
     | string
@@ -862,6 +965,8 @@ export function segmentLiturgyOfHoursPage(
     isPsalmType: boolean,
     isProperOfDay = false
   ) => {
+    sawNewSectionHeading = true;
+    carryOverCandidate = null;
     closeCurrent();
 
     current = {
@@ -915,6 +1020,10 @@ export function segmentLiturgyOfHoursPage(
 
     const chordLine =
       isChordLine(line);
+
+    if (!chordLine && isPrintedPageNumber(line, pageWidth)) {
+      continue;
+    }
 
     if (!chordLine) {
       const dayMatch =
@@ -1287,6 +1396,16 @@ export function segmentLiturgyOfHoursPage(
         isChordLine(next)
       ) {
         continue;
+      }
+    }
+
+    if (!current && carryOverCandidate && !sawNewSectionHeading) {
+      // Para uma página sem cabeçalho próprio, uma linha musical é prova
+      // forte de que a peça anterior realmente continuou. Para páginas que
+      // têm um novo cabeçalho, aguardamos esse cabeçalho e descartamos a
+      // candidata, evitando vazamento de texto entre seções.
+      if (chordLine || !pageContainsSectionHeading) {
+        activateCarryOver();
       }
     }
 
