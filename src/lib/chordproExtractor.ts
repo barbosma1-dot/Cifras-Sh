@@ -211,6 +211,33 @@ export function formatInstrumentalLine(line: PdfLine): string {
   return result;
 }
 
+// Em algumas peças (sobretudo antífonas e cânticos em prosa "corrida"), o
+// acorde não fica numa linha própria acima da letra — ele é digitado dentro
+// da própria linha de texto, na mesma altura de base (ex.: PDF traz "a
+// noiva, a" e "F", "C/E", "D" todos no mesmo y, antes de "esposa do
+// Cordeiro!" continuar na linha seguinte). Como isChordLine só reconhece uma
+// linha inteira majoritariamente feita de acordes (>=80%), essas linhas
+// mistas (poucos tokens de acorde perdidos em meio a muita letra) nunca
+// batem no critério e caíam direto como texto puro — os acordes apareciam
+// soltos, sem colchete ("...a F C/E D esposa...") em vez de convertidos pro
+// formato ChordPro ("...a [F][C/E][D] esposa..."). Esta função varre
+// qualquer linha (mista ou não) e colcheta cada token que parece acorde.
+//
+// Exceção: a raiz isolada "A" ou "E" sozinha (sem qualidade/extensão) quase
+// sempre é o artigo/conjunção comum do português ("A cifra...", "E o
+// Senhor...") e não um acorde real; fora de uma linha de acorde dedicada
+// (que já teria sido tratada por isChordLine/mergeChordLyricLines antes de
+// chegar aqui), colchetar esses dois de forma solta gera mais falso positivo
+// do que acerto, então ficam de fora.
+const AMBIGUOUS_ALONE_ROOT = /^[AE]$/;
+
+export function formatMixedTextLine(words: PdfWord[]): string {
+  return words
+    .map(w => (isChordToken(w.text) && !AMBIGUOUS_ALONE_ROOT.test(w.text) ? `[${w.text}]` : w.text))
+    .join(' ')
+    .trim();
+}
+
 /**
  * Extrai a primeira linha de letra "de verdade" (sem colchete de acorde) do
  * conteúdo já segmentado de uma peça — usada para compor o incipit no título
@@ -267,7 +294,7 @@ export function extractPageChordProText(lines: PdfLine[], pageWidth: number): st
         outputLines.push(formatInstrumentalLine(line));
       }
     } else {
-      outputLines.push(line.words.map(w => w.text).join(' '));
+      outputLines.push(formatMixedTextLine(line.words));
     }
   }
 
@@ -402,13 +429,25 @@ function isAnyHeadingLine(text: string): boolean {
 export interface LiturgyPageResult {
   sections: LiturgySection[];
   dayTitle: string | null;
+  // Antífona de ABERTURA lida nesta página mas ainda não anexada a nenhum
+  // Salmo/Cântico — acontece quando a antífona é a(s) última(s) linha(s) da
+  // página e o cabeçalho do Salmo/Cântico que ela introduz só aparece na
+  // página seguinte (comum quando a quebra de página cai bem entre a
+  // antífona e o corpo cifrado). Sem repassar isso pro `carryOverPendingAntiphon`
+  // da PRÓXIMA chamada, essa antífona era descartada silenciosamente — o
+  // Salmo/Cântico nascia sem ela, e a antífona "sumia" (ou, pior, quando a
+  // IA/outro fluxo reprocessava essa mesma antífona solta, ela podia virar
+  // uma cifra própria). Vazio quando toda antífona lida nesta página já foi
+  // consumida por uma peça iniciada na mesma página.
+  pendingAntiphon: string[];
 }
 
 export function segmentLiturgyOfHoursPage(
   lines: PdfLine[],
   pageWidth: number,
   carryOverSection?: { title: string; hasChords: boolean } | null,
-  carryOverDayTitle?: string | null
+  carryOverDayTitle?: string | null,
+  carryOverPendingAntiphon?: string[] | null
 ): LiturgyPageResult {
   const mid = pageWidth / 2;
   const crossesMid = lines.some(l => l.words.some(w => w.x0 < mid - 10 && w.x1 > mid + 10));
@@ -432,7 +471,7 @@ export function segmentLiturgyOfHoursPage(
     : null;
   let currentIsPsalmType = carryOverSection?.hasChords ?? false;
   let bodyStarted = !!carryOverSection; // já estava "no meio" da peça ao virar a página
-  let pendingAntiphonLines: string[] = [];
+  let pendingAntiphonLines: string[] = carryOverPendingAntiphon ? [...carryOverPendingAntiphon] : [];
   let skippingAltVersion = false;
   let sawAltVersionMarkerOnce = false;
   let checkNextLineForSubtitle = false;
@@ -493,11 +532,11 @@ export function segmentLiturgyOfHoursPage(
       if (currentIsPsalmType && bodyStarted) {
         // fechamento: a mesma antífona reimpressa depois do salmo/cântico —
         // entra como últimas linhas da peça que está fechando, não vira item novo.
-        current!.contentLines.push(plainText);
+        current!.contentLines.push(formatMixedTextLine(line.words));
         closeCurrent();
       } else {
         // abertura: fica pendente até a próxima peça com acorde (Salmo/Cântico).
-        pendingAntiphonLines.push(plainText);
+        pendingAntiphonLines.push(formatMixedTextLine(line.words));
       }
       continue;
     }
@@ -538,11 +577,11 @@ export function segmentLiturgyOfHoursPage(
       }
       bodyStarted = true;
     } else {
-      current.contentLines.push(plainText);
+      current.contentLines.push(formatMixedTextLine(line.words));
       bodyStarted = true;
     }
   }
 
   closeCurrent();
-  return { sections, dayTitle };
+  return { sections, dayTitle, pendingAntiphon: pendingAntiphonLines };
 }
