@@ -255,28 +255,112 @@ export function extractFirstLyricLine(contentLines: string[]): string {
   return '';
 }
 
+// Vão mínimo (em unidades do PDF) exigido bem no centro da página para
+// considerar que ali existe um "gutter" real de duas colunas — ver
+// `splitLineAtGutter`/`orderLinesByColumn` logo abaixo para a explicação
+// completa do bug que isso corrige. Calibrado contra as coordenadas reais de
+// páginas de Ofício/Laudes: vãos de coluna genuínos medidos ficaram entre
+// ~20 e ~280 unidades; o maior "quase-cruzamento" de cabeçalho/rodapé de
+// largura total medido (texto corrido de uma linha só, sem coluna nenhuma)
+// ficou em ~4 unidades (o espaço normal entre duas palavras vizinhas que por
+// coincidência caem uma de cada lado do centro). 15 fica com folga segura
+// entre os dois grupos nos casos reais observados.
+const MID_GUTTER_THRESHOLD = 15;
+
+/**
+ * Se `line` tiver um vão vazio de pelo menos `MID_GUTTER_THRESHOLD` unidades
+ * bem no meio da página (nenhuma palavra ali, uma parte inteira de palavras
+ * terminando antes do centro e a próxima só começando bem depois dele),
+ * devolve as palavras já divididas em esquerda/direita. Caso contrário (linha
+ * de largura total sem vão real no centro — cabeçalho/rodapé corrente, texto
+ * corrido de página de coluna única etc.), devolve `null` e a linha NÃO deve
+ * ser dividida.
+ */
+function splitLineAtGutter(line: PdfLine, mid: number): { left: PdfWord[]; right: PdfWord[] } | null {
+  const sorted = [...line.words].sort((a, b) => a.x0 - b.x0);
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+    if (a.x1 <= mid && b.x0 >= mid && b.x0 - a.x1 >= MID_GUTTER_THRESHOLD) {
+      return { left: sorted.slice(0, i + 1), right: sorted.slice(i + 1) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Reordena as linhas de uma página em ordem de leitura real, respeitando
+ * layout de duas colunas quando ele realmente existir (regra 5 da skill).
+ *
+ * BUG CORRIGIDO — o primeiro dos "dois bugs em cadeia" deste arquivo: a
+ * versão anterior decidia "a página inteira tem duas colunas?" checando se
+ * ALGUMA PALAVRA cruzava sozinha o centro da página (x0 antes do meio E x1
+ * depois do meio, dentro da MESMA palavra) — sinal pensado para achar um
+ * título largo centralizado tipo "II SEXTA-FEIRA — LAUDES" e, ao achar,
+ * tratar a página como coluna única (não dividir). O problema: esse
+ * cabeçalho corrente se repete em TODA página do documento (e o rodapé com o
+ * nome da peça também), então essa checagem batia sempre — a página NUNCA
+ * era dividida em colunas, mesmo quando o corpo da peça genuinamente usava
+ * duas colunas lado a lado (ex.: duas harmonizações diferentes do Salmo
+ * 50(51), ou do Salmo 147 B) — os acordes de uma coluna eram então lidos ao
+ * lado da letra da OUTRA coluna, produzindo cifra fora de ordem/desalinhada.
+ *
+ * A correção: em vez de uma decisão única "página inteira tem 2 colunas?",
+ * decide LINHA A LINHA se aquela linha específica tem um vão real de coluna
+ * bem no centro (ver `splitLineAtGutter`). Um cabeçalho largo centralizado
+ * não tem esse vão (a própria palavra ocupa o centro, ou — no caso do
+ * rodapé — há só o espaço normal de ~2-4 unidades entre duas palavras
+ * vizinhas); linhas de corpo em duas colunas genuínas, medidas neste
+ * documento, têm vãos de ~20 a ~280 unidades no centro. Linhas sem vão real
+ * passam intactas, na ordem original (preservando cabeçalho/rodapé
+ * corrente inteiros, sem fragmentar); sequências consecutivas de linhas COM
+ * vão são acumuladas e, ao encontrar a próxima linha sem vão (ou o fim da
+ * página), a coluna esquerda acumulada é despejada inteira antes da
+ * direita, reiniciando o acúmulo depois. Isso cobre o caso comum de um
+ * cabeçalho/rodapé de largura total entre (ou ao redor) de blocos de duas
+ * colunas sem embaralhar a ordem de leitura de cada coluna.
+ *
+ * Limitação aceita (rara, cosmética): se uma linha do fim de uma coluna não
+ * tiver nenhuma palavra correspondente na outra coluna naquela altura (uma
+ * coluna terminou um pouco antes/depois da outra bem no fim da página), ela
+ * não tem vão pra detectar e acaba sendo despejada como linha solta na
+ * posição em que aparece, em vez de anexada ao fim da coluna a que
+ * pertence — na prática, um verso residual de 1 linha pode ficar deslocado
+ * bem no fim da página nesse caso extremo.
+ */
+function orderLinesByColumn(lines: PdfLine[], pageWidth: number): PdfLine[] {
+  const mid = pageWidth / 2;
+  const result: PdfLine[] = [];
+  let leftBuf: PdfLine[] = [];
+  let rightBuf: PdfLine[] = [];
+
+  const flush = () => {
+    result.push(...leftBuf, ...rightBuf);
+    leftBuf = [];
+    rightBuf = [];
+  };
+
+  for (const line of lines) {
+    const split = splitLineAtGutter(line, mid);
+    if (split) {
+      leftBuf.push({ y: line.y, words: split.left });
+      rightBuf.push({ y: line.y, words: split.right });
+    } else {
+      flush();
+      result.push(line);
+    }
+  }
+  flush();
+
+  return result;
+}
+
 /**
  * Monta o texto ChordPro (já com os acordes posicionados corretamente) de uma
  * página inteira, a partir das linhas agrupadas por `groupWordsIntoLines`.
- * Detecta duas colunas (regra 5 da skill): se nenhuma linha cruza o centro da
- * página, lê a coluna esquerda inteira antes da direita.
  */
 export function extractPageChordProText(lines: PdfLine[], pageWidth: number): string {
-  const mid = pageWidth / 2;
-  const crossesMid = lines.some(l => l.words.some(w => w.x0 < mid - 10 && w.x1 > mid + 10));
-
-  let orderedLines: PdfLine[];
-  if (!crossesMid && lines.length > 4) {
-    const left = lines
-      .map(l => ({ y: l.y, words: l.words.filter(w => w.x0 < mid) }))
-      .filter(l => l.words.length > 0);
-    const right = lines
-      .map(l => ({ y: l.y, words: l.words.filter(w => w.x0 >= mid) }))
-      .filter(l => l.words.length > 0);
-    orderedLines = [...left, ...right];
-  } else {
-    orderedLines = lines;
-  }
+  const orderedLines = orderLinesByColumn(lines, pageWidth);
 
   const outputLines: string[] = [];
   for (let i = 0; i < orderedLines.length; i++) {
@@ -449,21 +533,14 @@ export function segmentLiturgyOfHoursPage(
   carryOverDayTitle?: string | null,
   carryOverPendingAntiphon?: string[] | null
 ): LiturgyPageResult {
-  const mid = pageWidth / 2;
-  const crossesMid = lines.some(l => l.words.some(w => w.x0 < mid - 10 && w.x1 > mid + 10));
-
-  let orderedLines: PdfLine[];
-  if (!crossesMid && lines.length > 4) {
-    const left = lines
-      .map(l => ({ y: l.y, words: l.words.filter(w => w.x0 < mid) }))
-      .filter(l => l.words.length > 0);
-    const right = lines
-      .map(l => ({ y: l.y, words: l.words.filter(w => w.x0 >= mid) }))
-      .filter(l => l.words.length > 0);
-    orderedLines = [...left, ...right];
-  } else {
-    orderedLines = lines;
-  }
+  // Mesma correção de detecção de colunas usada em `extractPageChordProText`
+  // — ver comentário completo em `orderLinesByColumn` acima. Sem isso, esta
+  // função (que roda o mesmo "orderedLines" através da máquina de estados de
+  // segmentação abaixo) sofria do mesmo bug: cabeçalho/rodapé corrente
+  // presente em toda página fazia a página nunca ser dividida em colunas,
+  // então o corpo de peças em duas colunas genuínas (Salmo 50(51), Salmo 147
+  // B) era lido fora de ordem.
+  const orderedLines = orderLinesByColumn(lines, pageWidth);
 
   const sections: LiturgySection[] = [];
   let current: LiturgySection | null = carryOverSection
@@ -530,12 +607,36 @@ export function segmentLiturgyOfHoursPage(
 
     if (!chordLine && HEADING_RE.antifona.test(plainText)) {
       if (currentIsPsalmType && bodyStarted) {
-        // fechamento: a mesma antífona reimpressa depois do salmo/cântico —
-        // entra como últimas linhas da peça que está fechando, não vira item novo.
+        // fechamento: a mesma antífona reimpressa depois do corpo do
+        // salmo/cântico — entra como últimas linhas da peça que está
+        // fechando, não vira item novo.
         current!.contentLines.push(formatMixedTextLine(line.words));
         closeCurrent();
+      } else if (current && currentIsPsalmType) {
+        // BUG CORRIGIDO — o segundo dos "dois bugs em cadeia" deste arquivo:
+        // abertura de uma peça que JÁ ESTÁ ABERTA nesta mesma página (o
+        // cabeçalho "Salmo N"/"Cântico" acabou de ser lido por `startSection`
+        // logo acima; `current` existe, mas o corpo cifrado ainda não
+        // começou, por isso `bodyStarted` é false). Antes, esse caso caía no
+        // mesmo `else` genérico usado para antífona "solta" (quando NENHUMA
+        // peça está aberta ainda e o cabeçalho só aparece na página
+        // seguinte) — a antífona de abertura era desviada pra fila global
+        // `pendingAntiphonLines` em vez de virar conteúdo da peça que já
+        // estava aberta. Essa fila só é consumida no próximo `startSection`,
+        // então a antífona acabava grudada na peça ERRADA (a seguinte) ou,
+        // se nenhuma outra peça aparecesse depois na mesma página, sumia da
+        // peça atual — e ao ser reprocessada solta em outro fluxo, podia
+        // virar uma cifra própria (era essa a causa de antífonas surgindo
+        // como itens separados no caderno). Correção: entra direto no
+        // conteúdo da peça atual. Marcamos `bodyStarted = true` para que, se
+        // essa MESMA antífona for reimpressa mais adiante (fechamento), a
+        // condição acima já a reconheça corretamente.
+        current.contentLines.push(formatMixedTextLine(line.words));
+        bodyStarted = true;
       } else {
-        // abertura: fica pendente até a próxima peça com acorde (Salmo/Cântico).
+        // abertura genuína "solta": nenhuma peça aberta ainda nesta página
+        // (o cabeçalho do Salmo/Cântico que essa antífona introduz só vai
+        // aparecer na página seguinte) — fica pendente até lá.
         pendingAntiphonLines.push(formatMixedTextLine(line.words));
       }
       continue;
@@ -577,7 +678,18 @@ export function segmentLiturgyOfHoursPage(
       }
       bodyStarted = true;
     } else {
-      current.contentLines.push(formatMixedTextLine(line.words));
+      // BUG ADICIONAL encontrado ao validar a correção acima contra o PDF
+      // real (não fazia parte dos dois bugs em cadeia originais, mas causava
+      // o mesmo sintoma de "cifra confusa"): `formatMixedTextLine` colcheta
+      // qualquer token que passe no regex de acorde, mesmo em peças SEM
+      // acorde nenhum (Leitura breve/Responsório breve/Preces/Oração, com
+      // `hasChords: false`) — texto corrido em português tem palavras curtas
+      // que coincidem com nomes de acorde (o exemplo real deste PDF:
+      // "Em" — preposição comum — bate com o acorde "Mi menor"), e essas
+      // peças viravam prosa com colchetes soltos tipo "[Em] vossas mãos,
+      // Senhor...". Só formata como ChordPro quando a peça atual realmente
+      // tem acorde; senão mantém o texto puro da linha.
+      current.contentLines.push(current.hasChords ? formatMixedTextLine(line.words) : plainText);
       bodyStarted = true;
     }
   }
