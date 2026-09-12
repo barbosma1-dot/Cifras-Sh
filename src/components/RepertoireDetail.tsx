@@ -64,6 +64,10 @@ const ROLES = [
   'Violoncelo', 'Violino', 'Flauta', 'Bateria', 'Outro'
 ];
 
+// Tons disponíveis pra trocar o tom só dentro de um repertório (bemóis, que é
+// o padrão usado nas cifras existentes — ex.: "Ab" na tela de repertórios).
+const KEY_OPTIONS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+
 const REPERTOIRE_SECTIONS: Record<string, string[]> = {
   'Missa': [
     'Canto de Entrada', 'Motivação', 'Kyrie', 'Glória', 'Salmo', 'Aclamação', 
@@ -76,8 +80,10 @@ const REPERTOIRE_SECTIONS: Record<string, string[]> = {
   'Generico': ['Geral']
 };
 
+type RepertoireDisplayItem = Chord & { item_id: string, section: string, display_key?: string | null };
+
 export default function RepertoireDetail({ repertoire, profile, onBack }: RepertoireDetailProps) {
-  const [items, setItems] = useState<(Chord & { item_id: string, section: string })[]>([]);
+  const [items, setItems] = useState<RepertoireDisplayItem[]>([]);
   const [availableChords, setAvailableChords] = useState<Chord[]>([]);
   const [missionMembers, setMissionMembers] = useState<UserProfile[]>([]);
   const [currentResponsibleId, setCurrentResponsibleId] = useState<string | null>(repertoire.responsible_id);
@@ -87,8 +93,8 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   const [isAddingMode, setIsAddingMode] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [targetSection, setTargetSection] = useState<string>('');
-  const [selectedChord, setSelectedChord] = useState<Chord | null>(null);
-  const [editingChord, setEditingChord] = useState<Chord | null>(null);
+  const [selectedChord, setSelectedChord] = useState<RepertoireDisplayItem | null>(null);
+  const [editingChord, setEditingChord] = useState<RepertoireDisplayItem | null>(null);
   const [exporting, setExporting] = useState(false);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
@@ -370,6 +376,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
             id,
             order_index,
             section,
+            display_key,
             chords (*)
           `)
           .eq('repertoire_id', repertoire.id)
@@ -384,7 +391,8 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
         ...d.chords,
         item_id: d.id,
         section: d.section || 'Geral',
-        order_index: d.order_index
+        order_index: d.order_index,
+        display_key: d.display_key ?? null
       }));
 
       const sectionOrder = REPERTOIRE_SECTIONS[repertoire.type] || 
@@ -444,13 +452,34 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
     }
   }
 
+  /**
+   * Muda o tom só dentro DESTE repertório (não mexe na cifra original/global).
+   * `newKey === ''` limpa a sobreposição e volta a usar o tom original da cifra.
+   * Atualização otimista: a UI muda na hora, e desfaz se o salvamento falhar.
+   */
+  const handleUpdateItemKey = async (itemId: string, newKey: string) => {
+    const valueToSave = newKey === '' ? null : newKey;
+    const previous = items;
+    setItems(prev => prev.map(it => it.item_id === itemId ? { ...it, display_key: valueToSave } : it));
+    try {
+      const { error } = await supabase
+        .from('repertoire_items')
+        .update({ display_key: valueToSave })
+        .eq('id', itemId);
+      if (error) throw error;
+    } catch (err: any) {
+      setItems(previous);
+      setNotification({ message: 'Erro ao salvar o tom: ' + err.message, type: 'error' });
+    }
+  };
+
   const openAddingMode = (section: string) => {
     setTargetSection(section);
     setEditingItemId(null);
     setIsAddingMode(true);
   };
 
-  const openEditMode = (item: Chord & { item_id: string, section: string }) => {
+  const openEditMode = (item: RepertoireDisplayItem) => {
     setTargetSection(item.section);
     setEditingItemId(item.item_id);
     setIsAddingMode(true);
@@ -824,9 +853,31 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                              </div>
                             <div className="flex items-center gap-1.5 transition-opacity opacity-100">
                                <Eye className="w-3 h-3 text-slate-300" />
-                               <span className="px-1 py-0.5 bg-slate-100 text-slate-500 rounded text-[7px] font-bold">
-                                  {item.original_key}
-                               </span>
+                               {isGuest ? (
+                                 <span className="px-1 py-0.5 bg-slate-100 text-slate-500 rounded text-[7px] font-bold">
+                                    {item.display_key || item.original_key}
+                                 </span>
+                               ) : (
+                                 <select
+                                   value={item.display_key || ''}
+                                   onClick={(e) => e.stopPropagation()}
+                                   onChange={(e) => {
+                                     e.stopPropagation();
+                                     handleUpdateItemKey(item.item_id, e.target.value);
+                                   }}
+                                   title="Tom só neste repertório (não altera a cifra original)"
+                                   className={`px-1 py-0.5 rounded text-[7px] font-bold border-0 focus:outline-none focus:ring-1 focus:ring-brand-blue cursor-pointer ${
+                                     item.display_key && item.display_key !== item.original_key
+                                       ? 'bg-brand-orange/10 text-brand-orange'
+                                       : 'bg-slate-100 text-slate-500'
+                                   }`}
+                                 >
+                                   <option value="">{item.original_key} (original)</option>
+                                   {KEY_OPTIONS.map(k => (
+                                     <option key={k} value={k}>{k}</option>
+                                   ))}
+                                 </select>
+                               )}
                                {!isGuest && (
                                  <button 
                                    onClick={(e) => {
