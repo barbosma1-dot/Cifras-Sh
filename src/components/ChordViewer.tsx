@@ -838,6 +838,98 @@ export default function ChordViewer({
     setScrollSpeed
   ] = useState(0);
 
+  // Metrônomo: toca o beat pelo alto-falante/fone do celular, usando o BPM e
+  // compasso cadastrados na cifra. Usa Web Audio API com um agendador
+  // "lookahead" para manter o tempo preciso mesmo com o app em segundo plano.
+  const [metronomeOn, setMetronomeOn] = useState(false);
+  const [metronomeBpm, setMetronomeBpm] = useState(chord.bpm || 96);
+  const metronomeBpmRef = useRef(metronomeBpm);
+  useEffect(() => {
+    metronomeBpmRef.current = metronomeBpm;
+  }, [metronomeBpm]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const nextNoteTimeRef = useRef(0);
+  const currentBeatRef = useRef(0);
+  const metronomeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setMetronomeBpm(chord.bpm || 96);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chord.id]);
+
+  const beatsPerMeasure = (() => {
+    const num = parseInt((chord.time_signature || '4/4').split('/')[0], 10);
+    return Number.isFinite(num) && num > 0 ? num : 4;
+  })();
+
+  const scheduleClick = (beatNumber: number, time: number) => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const isAccent = beatNumber % beatsPerMeasure === 0;
+    osc.frequency.value = isAccent ? 1500 : 1000;
+    gain.gain.setValueAtTime(isAccent ? 0.5 : 0.3, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(time);
+    osc.stop(time + 0.05);
+  };
+
+  const metronomeScheduler = () => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    const scheduleAheadTime = 0.1; // segundos
+    while (nextNoteTimeRef.current < ctx.currentTime + scheduleAheadTime) {
+      scheduleClick(currentBeatRef.current, nextNoteTimeRef.current);
+      const secondsPerBeat = 60.0 / metronomeBpmRef.current;
+      nextNoteTimeRef.current += secondsPerBeat;
+      currentBeatRef.current = (currentBeatRef.current + 1) % beatsPerMeasure;
+    }
+    metronomeTimerRef.current = window.setTimeout(metronomeScheduler, 25);
+  };
+
+  const toggleMetronome = () => {
+    if (metronomeOn) {
+      setMetronomeOn(false);
+      if (metronomeTimerRef.current) {
+        clearTimeout(metronomeTimerRef.current);
+        metronomeTimerRef.current = null;
+      }
+      audioCtxRef.current?.close();
+      audioCtxRef.current = null;
+      return;
+    }
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    audioCtxRef.current = ctx;
+    currentBeatRef.current = 0;
+    nextNoteTimeRef.current = ctx.currentTime + 0.05;
+    setMetronomeOn(true);
+    metronomeScheduler();
+  };
+
+  // Ao trocar de música ou fechar a tela, garante que o metrônomo pare.
+  useEffect(() => {
+    return () => {
+      if (metronomeTimerRef.current) clearTimeout(metronomeTimerRef.current);
+      audioCtxRef.current?.close();
+    };
+  }, []);
+
+  // Ao trocar de música, para o metrônomo (o BPM/compasso mudam de uma
+  // cifra pra outra, então não faz sentido manter o clique tocando).
+  useEffect(() => {
+    if (metronomeTimerRef.current) {
+      clearTimeout(metronomeTimerRef.current);
+      metronomeTimerRef.current = null;
+    }
+    audioCtxRef.current?.close();
+    audioCtxRef.current = null;
+    setMetronomeOn(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chord.id]);
+
   const [
     showTools,
     setShowTools
@@ -1506,6 +1598,41 @@ export default function ChordViewer({
                 </button>
               </div>
             </div>
+
+            {/* Metrônomo: toca o beat pelo alto-falante/fone, no BPM e
+                compasso cadastrados na cifra. Só aparece se a cifra tiver
+                um BPM salvo. */}
+            {!!chord.bpm && (
+              <div className="px-4 pb-4 flex justify-center">
+                <div className="flex items-center gap-2 bg-white/10 rounded-xl p-1">
+                  <button
+                    onClick={toggleMetronome}
+                    className={`p-1.5 rounded-lg ${metronomeOn ? 'bg-brand-orange text-white' : 'hover:bg-white/10'}`}
+                    title={metronomeOn ? 'Parar metrônomo' : 'Tocar metrônomo'}
+                  >
+                    {metronomeOn ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  </button>
+                  <button
+                    onClick={() => setMetronomeBpm(b => Math.max(20, b - 1))}
+                    className="px-2 py-1.5 hover:bg-white/10 rounded-lg text-sm font-bold"
+                  >
+                    -
+                  </button>
+                  <span className="px-2 py-1 text-xs font-mono bg-white/10 rounded-lg min-w-[4.5rem] text-center">
+                    {metronomeBpm} BPM
+                  </span>
+                  <button
+                    onClick={() => setMetronomeBpm(b => Math.min(300, b + 1))}
+                    className="px-2 py-1.5 hover:bg-white/10 rounded-lg text-sm font-bold"
+                  >
+                    +
+                  </button>
+                  <span className="px-2 py-1 text-[10px] font-mono text-white/60">
+                    {chord.time_signature || '4/4'}
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="px-4 pb-4 grid grid-cols-2 gap-2 text-xs">
               <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
