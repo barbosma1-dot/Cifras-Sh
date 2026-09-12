@@ -100,6 +100,8 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     categories: chord?.category ? chord.category.split(',').map(c => c.trim()) : ['Missa'],
     content: chord?.content || '',
     original_key: chord?.originalKey || chord?.original_key || 'C',
+    bpm: chord?.bpm ? String(chord.bpm) : '',
+    time_signature: chord?.time_signature || '4/4',
     youtube_url: chord?.youtubeUrl || chord?.youtube_url || '',
     audio_url: chord?.audio_url || '',
     attachment_url: chord?.attachment_url || '',
@@ -668,6 +670,8 @@ ${form.content}`;
         category: form.categories.join(', '),
         content: form.content,
         original_key: form.original_key,
+        bpm: form.bpm ? parseInt(form.bpm, 10) : null,
+        time_signature: form.time_signature,
         youtube_url: form.youtube_url,
         audio_url: primaryAudioUrl,
         attachment_url: primaryAttachmentUrl,
@@ -941,6 +945,37 @@ ${form.content}`;
                     {searchingYoutube ? <Loader2 className="w-4 h-4 animate-spin" /> : <Youtube className="w-4 h-4" />}
                     BUSCAR
                   </button>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-sm font-bold text-slate-700 mb-1 flex items-center gap-2">
+                    <Music className="w-4 h-4 text-brand-orange" />
+                    BPM (Metrônomo)
+                  </label>
+                  <input
+                    type="number"
+                    min={20}
+                    max={300}
+                    placeholder="Ex: 96"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl font-mono"
+                    value={form.bpm}
+                    onChange={e => setForm({...form, bpm: e.target.value})}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Compasso</label>
+                  <select
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl font-mono bg-white"
+                    value={form.time_signature}
+                    onChange={e => setForm({...form, time_signature: e.target.value})}
+                  >
+                    <option value="4/4">4/4</option>
+                    <option value="2/2">2/2</option>
+                    <option value="3/4">3/4</option>
+                    <option value="6/8">6/8</option>
+                  </select>
                 </div>
               </div>
 
