@@ -45,6 +45,8 @@ export interface Chord {
   content: string;
   original_key: string;
   originalKey?: string; // Legacy support
+  bpm?: number | null;
+  time_signature?: string; // '4/4' | '2/2' | '3/4' | '6/8'
   youtube_url?: string;
   youtubeUrl?: string; // Legacy support
   audio_url?: string;
