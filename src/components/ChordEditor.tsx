@@ -73,6 +73,43 @@ async function uploadFileResumable(
   });
 }
 
+// Upload de áudio via GitHub (Cloudflare Pages Function /api/upload-audio),
+// substituindo o Supabase Storage para esse tipo de anexo — ver
+// functions/api/upload-audio.ts. O arquivo (já comprimido no navegador por
+// compressAudioFile) é convertido pra base64 e mandado como JSON; a Function
+// commita no repositório GitHub e devolve a URL pública do jsDelivr.
+async function uploadAudioToGithub(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+
+  // Conversão pra base64 em blocos, em vez de String.fromCharCode(...bytes)
+  // de uma vez só — pra um áudio de vários MB, espalhar todos os bytes como
+  // argumentos de uma chamada de função pode estourar o limite de argumentos
+  // do motor JS ("Maximum call stack size exceeded").
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  const contentBase64 = btoa(binary);
+
+  const response = await fetch('/api/upload-audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, contentBase64 }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      `GITHUB_AUDIO_UPLOAD::${errorData.error || errorData.details || 'Falha ao enviar áudio pro GitHub'}`
+    );
+  }
+
+  const data = await response.json();
+  return data.url as string;
+}
+
 interface ChordEditorProps {
   chord: Chord | null;
   onClose: () => void;
@@ -580,9 +617,39 @@ ${form.content}`;
       }
 
       for (const att of attachments) {
-        if (att.isNew && att.file) {
+        if (att.isNew && att.file && att.type === 'audio') {
+          // Áudio: sobe pro GitHub (via Cloudflare Pages Function), não mais
+          // pro Supabase Storage — ver uploadAudioToGithub() acima e
+          // functions/api/upload-audio.ts.
           const file = att.file;
-          const bucket = att.type === 'audio' ? 'audio' : 'attachments';
+          const MAX_ATTEMPTS = 2;
+          let lastErr: any = null;
+          let url: string | null = null;
+
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+              url = await uploadAudioToGithub(file);
+              lastErr = null;
+              break;
+            } catch (err: any) {
+              lastErr = err;
+              console.warn(`Upload de áudio "${file.name}" pro GitHub falhou (tentativa ${attempt}):`, err);
+              if (attempt < MAX_ATTEMPTS) await new Promise(r => setTimeout(r, attempt * 800));
+            }
+          }
+
+          if (lastErr || !url) {
+            throw lastErr || new Error('GITHUB_AUDIO_UPLOAD::Falha desconhecida ao enviar áudio.');
+          }
+
+          finalAttachments.push({
+            name: att.name,
+            url,
+            type: 'audio'
+          });
+        } else if (att.isNew && att.file) {
+          const file = att.file;
+          const bucket = 'attachments';
           const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
           const fileName = `${Math.random().toString(36).substring(2)}_${cleanName}`;
           const filePath = `${att.type}/${fileName}`;
@@ -723,7 +790,9 @@ ${form.content}`;
       console.error('Erro ao salvar cifra:', error);
       let errorMsg = error.message || 'Verifique sua conexão';
 
-      if (errorMsg.startsWith('FAILED_TO_FETCH::')) {
+      if (errorMsg.startsWith('GITHUB_AUDIO_UPLOAD::')) {
+        errorMsg = `Falha ao enviar o áudio pro GitHub: ${errorMsg.replace('GITHUB_AUDIO_UPLOAD::', '')}. Verifique se GITHUB_AUDIO_TOKEN, GITHUB_AUDIO_OWNER e GITHUB_AUDIO_REPO estão configurados em Cloudflare Pages > Settings > Environment variables, e se o token ainda é válido.`;
+      } else if (errorMsg.startsWith('FAILED_TO_FETCH::')) {
         errorMsg = 'Não foi possível conectar ao Supabase (Failed to fetch). Causas comuns: 1) o projeto Supabase está pausado por inatividade (acesse o painel e reative); 2) as variáveis VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY não estão configuradas no Cloudflare Pages; 3) o domínio do site não está liberado em CORS no Supabase; 4) sua internet caiu no meio do envio.';
       } else if (errorMsg.includes('Failed to fetch')) {
         // O PRECHECK (listar o bucket) já tinha passado — ou seja, o bucket
