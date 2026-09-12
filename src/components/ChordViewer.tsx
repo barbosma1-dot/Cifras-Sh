@@ -1091,6 +1091,41 @@ export default function ChordViewer({
     >
       {/* O restante da interface original do ChordViewer permanece igual. */}
 
+      {/* Navegação entre músicas do repertório: botões flutuantes nas laterais,
+          sempre visíveis (inclusive no modo imersivo), para avançar/voltar
+          sem precisar fechar a cifra. Só aparecem quando a cifra foi aberta
+          a partir de um repertório com mais de uma música. */}
+      {allChords && allChords.length > 1 && (
+        <>
+          {currentIndex > 0 && (
+            <button
+              onClick={handlePrev}
+              title={`Anterior: ${allChords[currentIndex - 1].title}`}
+              className="
+                fixed left-1 md:left-3 top-1/2 -translate-y-1/2 z-[65]
+                p-2 rounded-full bg-slate-900/40 hover:bg-slate-900/60
+                text-white backdrop-blur-sm transition-colors
+              "
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
+          {nextChord && (
+            <button
+              onClick={handleNext}
+              title={`Próxima: ${nextChord.title}`}
+              className="
+                fixed right-1 md:right-3 top-1/2 -translate-y-1/2 z-[65]
+                p-2 rounded-full bg-slate-900/40 hover:bg-slate-900/60
+                text-white backdrop-blur-sm transition-colors
+              "
+            >
+              <ArrowRight className="w-5 h-5" />
+            </button>
+          )}
+        </>
+      )}
+
       {/* Header Controls */}
       <AnimatePresence>
         {!immersive && (
@@ -1148,6 +1183,9 @@ export default function ChordViewer({
 
                 <p className="text-xs text-white/60 truncate">
                   {chord.artist}
+                  {allChords && allChords.length > 1 && currentIndex > -1 && (
+                    <span className="text-white/40"> · {currentIndex + 1} de {allChords.length}</span>
+                  )}
                 </p>
               </div>
 
