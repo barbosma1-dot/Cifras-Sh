@@ -1091,41 +1091,6 @@ export default function ChordViewer({
     >
       {/* O restante da interface original do ChordViewer permanece igual. */}
 
-      {/* Navegação entre músicas do repertório: botões flutuantes nas laterais,
-          sempre visíveis (inclusive no modo imersivo), para avançar/voltar
-          sem precisar fechar a cifra. Só aparecem quando a cifra foi aberta
-          a partir de um repertório com mais de uma música. */}
-      {allChords && allChords.length > 1 && (
-        <>
-          {currentIndex > 0 && (
-            <button
-              onClick={handlePrev}
-              title={`Anterior: ${allChords[currentIndex - 1].title}`}
-              className="
-                fixed left-1 md:left-3 top-1/2 -translate-y-1/2 z-[65]
-                p-2 rounded-full bg-slate-900/40 hover:bg-slate-900/60
-                text-white backdrop-blur-sm transition-colors
-              "
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-          )}
-          {nextChord && (
-            <button
-              onClick={handleNext}
-              title={`Próxima: ${nextChord.title}`}
-              className="
-                fixed right-1 md:right-3 top-1/2 -translate-y-1/2 z-[65]
-                p-2 rounded-full bg-slate-900/40 hover:bg-slate-900/60
-                text-white backdrop-blur-sm transition-colors
-              "
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
-          )}
-        </>
-      )}
-
       {/* Header Controls */}
       <AnimatePresence>
         {!immersive && (
@@ -1494,6 +1459,34 @@ export default function ChordViewer({
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden bg-slate-800 text-white"
           >
+            {/* Navegar entre as músicas do repertório: mesmo painel do
+                controle de tom, para não sobrepor o texto da cifra. */}
+            {allChords && allChords.length > 1 && (
+              <div className="px-4 pt-4 flex justify-center">
+                <div className="flex items-center gap-2 bg-white/10 rounded-xl p-1">
+                  <button
+                    onClick={handlePrev}
+                    disabled={currentIndex <= 0}
+                    title={currentIndex > 0 ? `Anterior: ${allChords[currentIndex - 1].title}` : undefined}
+                    className="p-1.5 hover:bg-white/10 rounded-lg disabled:opacity-30 disabled:hover:bg-transparent"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <span className="px-2 py-1 text-xs font-mono bg-brand-orange rounded-lg min-w-[4.5rem] text-center">
+                    {currentIndex + 1} de {allChords.length}
+                  </span>
+                  <button
+                    onClick={handleNext}
+                    disabled={!nextChord}
+                    title={nextChord ? `Próxima: ${nextChord.title}` : undefined}
+                    className="p-1.5 hover:bg-white/10 rounded-lg disabled:opacity-30 disabled:hover:bg-transparent"
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="p-4 flex justify-center md:hidden">
               <div className="flex items-center gap-1 bg-white/10 rounded-xl p-1">
                 <button
