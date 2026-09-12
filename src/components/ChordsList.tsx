@@ -924,41 +924,55 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             </button>
 
             {isCategoryDropdownOpen && (
-              <div className="absolute z-40 mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden right-0 md:left-0">
-                <div className="relative p-2 border-b border-slate-100">
-                  <Search className="absolute left-5 top-4.5 w-4 h-4 text-slate-300" />
-                  <input
-                    autoFocus
-                    type="text"
-                    placeholder="Buscar categoria..."
-                    value={categorySearchTerm}
-                    onChange={(e) => setCategorySearchTerm(e.target.value)}
-                    className="w-full pl-8 pr-2 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium outline-none focus:border-brand-orange"
-                  />
-                </div>
-                <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                  <button
-                    type="button"
-                    onClick={() => { setSelectedCategory('all'); setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
-                    className={`w-full text-left px-4 py-2 text-xs font-bold hover:bg-slate-50 transition-colors ${selectedCategory === 'all' ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
-                  >
-                    Todas Categorias
-                  </button>
-                  {categories
-                    .filter(cat => cat.toLowerCase().includes(categorySearchTerm.toLowerCase()))
-                    .map(cat => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => { setSelectedCategory(cat); setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
-                        className={`w-full text-left px-4 py-2 text-xs font-bold hover:bg-slate-50 transition-colors truncate ${selectedCategory === cat ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  {categories.filter(cat => cat.toLowerCase().includes(categorySearchTerm.toLowerCase())).length === 0 && (
-                    <p className="px-4 py-3 text-[11px] text-slate-400 italic">Nenhuma categoria encontrada</p>
-                  )}
+              // `fixed` + fundo (backdrop) em vez de `absolute` ancorado no botão:
+              // um painel `absolute` dentro do fluxo normal da página ficava
+              // ilegível no celular — sem fundo garantidamente opaco, o texto
+              // dos itens da lista por trás aparecia por baixo/ao lado dele, e
+              // como o campo de busca tinha `autoFocus`, o teclado abrindo
+              // deslocava a página e desalinhava o painel (ver print do bug).
+              // `fixed inset-0` cobre a tela inteira, então nada some atrás.
+              <div
+                className="fixed inset-0 z-[160] bg-slate-900/40 flex items-start justify-center p-4 pt-20"
+                onClick={() => { setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-xs bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden"
+                >
+                  <div className="relative p-3 border-b border-slate-100">
+                    <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <input
+                      type="text"
+                      placeholder="Buscar categoria..."
+                      value={categorySearchTerm}
+                      onChange={(e) => setCategorySearchTerm(e.target.value)}
+                      className="w-full pl-9 pr-2 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium outline-none focus:border-brand-orange"
+                    />
+                  </div>
+                  <div className="max-h-72 overflow-y-auto custom-scrollbar">
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedCategory('all'); setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
+                      className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 transition-colors ${selectedCategory === 'all' ? 'text-brand-orange bg-orange-50' : 'text-slate-700'}`}
+                    >
+                      Todas Categorias
+                    </button>
+                    {categories
+                      .filter(cat => cat.toLowerCase().includes(categorySearchTerm.toLowerCase()))
+                      .map(cat => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => { setSelectedCategory(cat); setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
+                          className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 transition-colors truncate ${selectedCategory === cat ? 'text-brand-orange bg-orange-50' : 'text-slate-700'}`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    {categories.filter(cat => cat.toLowerCase().includes(categorySearchTerm.toLowerCase())).length === 0 && (
+                      <p className="px-4 py-3 text-xs text-slate-400 italic">Nenhuma categoria encontrada</p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -980,17 +994,28 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             </button>
 
             {isRecentDropdownOpen && (
-              <div className="absolute z-40 mt-2 w-52 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden right-0 md:left-0">
-                {(Object.keys(RECENT_FILTER_LABELS) as Array<typeof recentFilter>).map(key => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => { setRecentFilter(key); setIsRecentDropdownOpen(false); }}
-                    className={`w-full text-left px-4 py-2 text-xs font-bold hover:bg-slate-50 transition-colors ${recentFilter === key ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
-                  >
-                    {RECENT_FILTER_LABELS[key]}
-                  </button>
-                ))}
+              // Mesmo motivo do painel de Categorias acima: `fixed` + fundo
+              // em vez de `absolute` ancorado no botão, pra nunca ficar
+              // ilegível com conteúdo da lista aparecendo por trás/ao lado.
+              <div
+                className="fixed inset-0 z-[160] bg-slate-900/40 flex items-start justify-center p-4 pt-20"
+                onClick={() => setIsRecentDropdownOpen(false)}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-xs bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden"
+                >
+                  {(Object.keys(RECENT_FILTER_LABELS) as Array<typeof recentFilter>).map(key => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => { setRecentFilter(key); setIsRecentDropdownOpen(false); }}
+                      className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 transition-colors ${recentFilter === key ? 'text-brand-orange bg-orange-50' : 'text-slate-700'}`}
+                    >
+                      {RECENT_FILTER_LABELS[key]}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
