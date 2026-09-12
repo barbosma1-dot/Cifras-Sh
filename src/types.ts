@@ -86,6 +86,10 @@ export interface RepertoireItem {
   chord_id: string;
   section: string;
   order_index: number;
+  // Tom só para este repertório — sobrepõe o `original_key` global da cifra
+  // ao visualizá-la a partir deste repertório específico. `null`/ausente =
+  // usa o tom original da cifra.
+  display_key?: string | null;
 }
 
 export type AttendanceStatus = 'confirmed' | 'declined' | 'tentative' | 'none';
