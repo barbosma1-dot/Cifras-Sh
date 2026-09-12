@@ -668,16 +668,68 @@ function processContent(
   return elements;
 }
 
+// Tom só de um item de repertório específico (não da cifra global) — ver
+// RepertoireItem.display_key em types.ts.
+type ChordWithDisplayKey = Chord & { display_key?: string | null };
+
 interface ChordViewerProps {
-  chord: Chord;
+  chord: ChordWithDisplayKey;
   onClose: () => void;
-  allChords?: Chord[];
+  allChords?: ChordWithDisplayKey[];
   onSwitchChord?: (
-    c: Chord
+    c: ChordWithDisplayKey
   ) => void;
   onEdit?: (
-    chord: Chord
+    chord: ChordWithDisplayKey
   ) => void;
+}
+
+/** Índice (0-11) da nota, aceitando nomenclatura em inglês/latina, sustenido/bemol.
+ * Ignora sufixos como "m" (menor) — só a fundamental importa pro transporte. */
+function getNoteIndex(key: string): number {
+  const notesEnglish = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const notesEnglishFlat = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+  const notesLatin = ['Dó', 'Dó#', 'Ré', 'Ré#', 'Mi', 'Fá', 'Fá#', 'Sol', 'Sol#', 'Lá', 'Lá#', 'Si'];
+  const notesLatinFlat = ['Dó', 'Réb', 'Ré', 'Mib', 'Mi', 'Fá', 'Solb', 'Sol', 'Láb', 'Lá', 'Sib', 'Si'];
+
+  const match = key.trim().match(
+    /^([A-G][b#]?|Dó[#]?|Ré[b#]?|Mi[b]?|Fá[#]?|Sol[b#]?|Lá[b#]?|Si[b]?)/
+  );
+  const note = match ? match[1] : key.trim();
+
+  let idx = notesEnglish.indexOf(note);
+  if (idx === -1) idx = notesEnglishFlat.indexOf(note);
+  if (idx === -1) idx = notesLatin.indexOf(note);
+  if (idx === -1) idx = notesLatinFlat.indexOf(note);
+  return idx;
+}
+
+/** Diferença em semitons entre o tom original da cifra e o tom desejado
+ * (ex.: tom deste repertório). Retorna 0 se algum dos dois não for reconhecido. */
+function getSemitoneDiff(originalKey: string | undefined, targetKey: string | undefined): number {
+  if (!originalKey || !targetKey) return 0;
+  const from = getNoteIndex(originalKey);
+  const to = getNoteIndex(targetKey);
+  if (from === -1 || to === -1) return 0;
+  return ((to - from) % 12 + 12) % 12;
+}
+
+/** Converte um link do YouTube (watch?v=, youtu.be/, shorts/, ou já embed)
+ * numa URL de embed. Retorna null se não conseguir reconhecer o formato
+ * (nesse caso o botão cai pra um link "abrir no YouTube"). */
+function getYoutubeEmbedUrl(url: string): string | null {
+  try {
+    const patterns = [
+      /(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtu\.be\/|youtube\.com\/embed\/)([\w-]{11})/
+    ];
+    for (const p of patterns) {
+      const m = url.match(p);
+      if (m) return `https://www.youtube.com/embed/${m[1]}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export default function ChordViewer({
@@ -695,7 +747,15 @@ export default function ChordViewer({
   const [
     semitones,
     setSemitones
-  ] = useState(0);
+  ] = useState(() => getSemitoneDiff(chord.original_key, chord.display_key ?? undefined));
+
+  // Ao trocar de música (ex.: navegando pelo repertório com onSwitchChord),
+  // reaplica o tom certo pra cada uma: o do repertório (display_key), se
+  // houver, senão o original da própria cifra.
+  useEffect(() => {
+    setSemitones(getSemitoneDiff(chord.original_key, chord.display_key ?? undefined));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chord.id, chord.display_key]);
 
   const [
     useFlats,
@@ -1382,6 +1442,175 @@ export default function ChordViewer({
         )}
       </AnimatePresence>
 
+      {/* Painel de Ferramentas — o botão da engrenagem (Settings2) só
+          trocava a própria cor até agora; não existia nenhum painel ligado
+          a `showTools`. Aqui entram os controles que no desktop já existiam
+          (fixos, "hidden md:flex") mas no celular não tinham como ser
+          acessados: transpor, tamanho da fonte, espaçamento, notação,
+          sustenido/bemol e colunas. */}
+      <AnimatePresence>
+        {showTools && !immersive && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden bg-slate-800 text-white"
+          >
+            <div className="p-4 flex justify-center md:hidden">
+              <div className="flex items-center gap-1 bg-white/10 rounded-xl p-1">
+                <button
+                  onClick={() => setSemitones(s => s - 1)}
+                  className="px-3 py-1.5 hover:bg-white/10 rounded-lg text-sm font-bold"
+                >
+                  -
+                </button>
+                <span className="px-2 py-1 text-xs font-mono bg-brand-orange rounded-lg min-w-[3rem] text-center">
+                  {semitones > 0 ? '+' : ''}{semitones} ST
+                </span>
+                <button
+                  onClick={() => setSemitones(s => s + 1)}
+                  className="px-3 py-1.5 hover:bg-white/10 rounded-lg text-sm font-bold"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 pb-4 grid grid-cols-2 gap-2 text-xs">
+              <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
+                <span className="font-bold">Fonte</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setFontSize(s => Math.max(10, s - 1))} className="px-2 py-0.5 hover:bg-white/20 rounded font-bold">-</button>
+                  <span className="font-mono w-8 text-center">{fontSize}px</span>
+                  <button onClick={() => setFontSize(s => Math.min(32, s + 1))} className="px-2 py-0.5 hover:bg-white/20 rounded font-bold">+</button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
+                <span className="font-bold">Espaço</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setLineSpacing(s => Math.max(1, Math.round((s - 0.1) * 10) / 10))} className="px-2 py-0.5 hover:bg-white/20 rounded font-bold">-</button>
+                  <span className="font-mono w-8 text-center">{lineSpacing.toFixed(1)}</span>
+                  <button onClick={() => setLineSpacing(s => Math.min(3, Math.round((s + 0.1) * 10) / 10))} className="px-2 py-0.5 hover:bg-white/20 rounded font-bold">+</button>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setNotationSystem(n => n === 'english' ? 'latin' : 'english')}
+                className="flex items-center justify-between bg-white/10 hover:bg-white/20 rounded-xl px-3 py-2 font-bold"
+              >
+                <span>Notação</span>
+                <span className="font-mono">{notationSystem === 'english' ? 'C D E' : 'Dó Ré Mi'}</span>
+              </button>
+
+              <button
+                onClick={() => setUseFlats(f => !f)}
+                className="flex items-center justify-between bg-white/10 hover:bg-white/20 rounded-xl px-3 py-2 font-bold"
+              >
+                <span>Acidentes</span>
+                <span className="font-mono">{useFlats ? 'Bemóis' : 'Sustenidos'}</span>
+              </button>
+
+              <button
+                onClick={() => setColumns(c => !c)}
+                className="col-span-2 flex items-center justify-between bg-white/10 hover:bg-white/20 rounded-xl px-3 py-2 font-bold"
+              >
+                <span>Duas colunas</span>
+                <span className="font-mono">{columns ? 'Ativado' : 'Desativado'}</span>
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Painel do YouTube — mesmo caso: `showYoutube` só mudava a cor do
+          próprio botão, sem nenhum vídeo embutido em lugar nenhum. */}
+      <AnimatePresence>
+        {showYoutube && chord.youtube_url && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden bg-black"
+          >
+            <div className="aspect-video max-w-2xl mx-auto">
+              {getYoutubeEmbedUrl(chord.youtube_url) ? (
+                <iframe
+                  src={getYoutubeEmbedUrl(chord.youtube_url) as string}
+                  className="w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  title="YouTube"
+                />
+              ) : (
+                <a
+                  href={chord.youtube_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-center h-full text-white underline text-sm"
+                >
+                  Abrir vídeo no YouTube
+                </a>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Painel de Mídias e Anexos — mesmo caso de `showMedia`, sem nenhum
+          conteúdo ligado ao estado até agora. */}
+      <AnimatePresence>
+        {showMedia && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden bg-slate-800 text-white"
+          >
+            <div className="p-4 space-y-3">
+              {chord.audio_url && (
+                <div>
+                  <p className="text-[10px] font-bold text-white/60 uppercase mb-1">Áudio</p>
+                  <audio controls src={chord.audio_url} className="w-full" />
+                </div>
+              )}
+              {chord.attachment_url && (
+                <a
+                  href={chord.attachment_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 rounded-xl px-3 py-2 text-sm font-bold"
+                >
+                  <FileText className="w-4 h-4" /> Abrir anexo
+                </a>
+              )}
+              {Array.isArray(chord.attachments) && chord.attachments.map((att, i) => (
+                <div key={att.id || i}>
+                  {att.type === 'audio' ? (
+                    <div>
+                      <p className="text-[10px] font-bold text-white/60 uppercase mb-1">{att.name}</p>
+                      <audio controls src={att.url} className="w-full" />
+                    </div>
+                  ) : (
+                    <a
+                      href={att.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-2 bg-white/10 hover:bg-white/20 rounded-xl px-3 py-2 text-sm font-bold"
+                    >
+                      <FileText className="w-4 h-4" /> {att.name}
+                    </a>
+                  )}
+                </div>
+              ))}
+              {!chord.audio_url && !chord.attachment_url && (!chord.attachments || chord.attachments.length === 0) && (
+                <p className="text-white/50 text-sm text-center py-2">Nenhuma mídia anexada.</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Conteúdo do viewer */}
       <div
         ref={scrollRef}
@@ -1420,6 +1649,64 @@ export default function ChordViewer({
 
       {/* Controles inferiores e demais painéis da versão original continuam
           funcionando normalmente. */}
+
+      {/* Modal "Adicionar ao Caderno" — `showBookSelector` já buscava os
+          cadernos (fetchUserBooks) e `handleAddToBook` já salvava, mas não
+          havia nenhuma tela que os usasse. */}
+      {showBookSelector && (
+        <div
+          className="fixed inset-0 z-[170] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowBookSelector(false)}
+        >
+          <div
+            className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-black text-slate-800 mb-4">Adicionar ao Caderno</h3>
+            {loadingBooks ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-brand-blue" />
+              </div>
+            ) : userBooks.length === 0 ? (
+              <p className="text-slate-400 text-sm text-center py-4">Você ainda não tem nenhum caderno.</p>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar">
+                {userBooks.map(book => (
+                  <button
+                    key={book.id}
+                    onClick={() => handleAddToBook(book.id)}
+                    disabled={addingToBook === book.id}
+                    className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-left font-bold text-slate-700 disabled:opacity-50 transition-colors"
+                  >
+                    {book.name}
+                    {addingToBook === book.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-brand-blue" />
+                    ) : (
+                      <Check className="w-4 h-4 text-slate-300" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setShowBookSelector(false)}
+              className="w-full mt-4 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Notificação — o estado e o timer de auto-fechar já existiam, mas
+          nada renderizava a mensagem na tela. */}
+      {notification && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] px-5 py-3 rounded-2xl shadow-xl border animate-in slide-in-from-bottom-4 flex items-center gap-2 font-bold text-sm ${
+          notification.type === 'success' ? 'bg-emerald-500 text-white border-emerald-400' : 'bg-red-500 text-white border-red-400'
+        }`}>
+          {notification.message}
+        </div>
+      )}
     </motion.div>
   );
 }
