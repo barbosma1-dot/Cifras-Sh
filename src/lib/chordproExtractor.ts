@@ -693,6 +693,13 @@ export interface LiturgySection {
   contentLines: string[];
   isProperOfDay?: boolean;
   isContinuation?: boolean;
+  // Sufixo de opção de melodia (ex.: "Opção 1") de um Hino com arranjos
+  // alternativos. Fica separado do título porque o título final precisa
+  // levar o incipit ENTRE o nome e o sufixo — "Hino — {incipit} — Opção N"
+  // — e o incipit só é conhecido depois, quando PDFImporter.tsx já extraiu
+  // o conteúdo. Ver uso em startSection (bloco HEADING_RE.hino) e em
+  // PDFImporter.tsx (composição do título final).
+  titleSuffix?: string;
 }
 
 const DAY_NAME_CANON:
@@ -987,7 +994,8 @@ export function segmentLiturgyOfHoursPage(
   const startSection = (
     title: string,
     isPsalmType: boolean,
-    isProperOfDay = false
+    isProperOfDay = false,
+    titleSuffix?: string
   ) => {
     sawNewSectionHeading = true;
     carryOverCandidate = null;
@@ -1001,7 +1009,9 @@ export function segmentLiturgyOfHoursPage(
 
       contentLines: [],
 
-      isProperOfDay
+      isProperOfDay,
+
+      titleSuffix
     };
 
     if (
@@ -1119,21 +1129,26 @@ export function segmentLiturgyOfHoursPage(
         plainText
       )
     ) {
-      // Título "Hino" sozinho quando não há sufixo de opção; quando há
-      // ("HINO — OPÇÃO 1", "HINO — OPÇÃO 2"...), usa o cabeçalho completo
-      // como título — cada opção é um Hino DIFERENTE (arranjo próprio),
-      // não uma repetição do mesmo, e títulos diferentes evitam que
-      // apareçam como duplicatas umas das outras mais adiante (app/IA).
-      const hasOptionSuffix =
-        /[—–-]\s*Op[cç][ãa]o\s*\d+/i.test(
-          plainText
-        );
+      // O título da seção fica sempre "Hino" — o número da opção
+      // ("HINO — OPÇÃO 1", "HINO — OPÇÃO 2"...) é extraído à parte em
+      // titleSuffix, e não colado direto no título aqui. Cada opção
+      // continua sendo um Hino DIFERENTE (arranjo próprio), mas o
+      // título final (montado em PDFImporter.tsx) precisa do formato
+      // "Hino — {incipit} — Opção N", com o incipit ENTRE o nome e o
+      // número da opção — por isso o sufixo não pode ir já embutido no
+      // título aqui, só é conhecido o incipit depois de extrair o
+      // conteúdo da seção.
+      const optionMatch = plainText.match(
+        /[—–-]\s*Op[cç][ãa]o\s*(\d+)/i
+      );
 
       startSection(
-        hasOptionSuffix
-          ? plainText.trim()
-          : 'Hino',
-        true
+        'Hino',
+        true,
+        false,
+        optionMatch
+          ? `Opção ${optionMatch[1]}`
+          : undefined
       );
 
       continue;
