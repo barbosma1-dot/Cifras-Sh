@@ -744,7 +744,11 @@ const HEADING_RE = {
     /^Invitat[oó]rio$/i,
 
   hino:
-    /^Hino$/i,
+    // Sem o sufixo opcional, "HINO — OPÇÃO 1/2/3" (Hinos com arranjos
+    // musicais alternativos, cada um impresso com esse cabeçalho completo)
+    // não batia aqui — a linha inteira caía como conteúdo comum e ficava
+    // grudada na seção anterior (Invitatório), em vez de abrir um Hino novo.
+    /^Hino\b(?:\s*[—–-]\s*Op[cç][ãa]o\s*\d+)?$/i,
 
   salmodia:
     /^Salmodia$/i,
@@ -1115,8 +1119,20 @@ export function segmentLiturgyOfHoursPage(
         plainText
       )
     ) {
+      // Título "Hino" sozinho quando não há sufixo de opção; quando há
+      // ("HINO — OPÇÃO 1", "HINO — OPÇÃO 2"...), usa o cabeçalho completo
+      // como título — cada opção é um Hino DIFERENTE (arranjo próprio),
+      // não uma repetição do mesmo, e títulos diferentes evitam que
+      // apareçam como duplicatas umas das outras mais adiante (app/IA).
+      const hasOptionSuffix =
+        /[—–-]\s*Op[cç][ãa]o\s*\d+/i.test(
+          plainText
+        );
+
       startSection(
-        'Hino',
+        hasOptionSuffix
+          ? plainText.trim()
+          : 'Hino',
         true
       );
 
