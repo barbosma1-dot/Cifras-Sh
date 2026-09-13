@@ -761,7 +761,7 @@ const HEADING_RE = {
     /^Salmodia$/i,
 
   salmo:
-    /^Salmo\s+\d/i,
+    /^Salmo\s+\d|^Salmo\s*[—–-]/i,
 
   canticoEvangelico:
     /^C[âa]ntico\s+evang[eé]lico\b/i,
@@ -796,6 +796,20 @@ const HEADING_RE = {
   numberedExtraOption:
     /^\d+\.\s+(?:(?:C[âa]ntico|Salmo)\b.+?)?—\s*(?:\d+[ºªa°]?\s*Op[cç][ãa]o|confer[êe]ncia\s+das?\s+\d+\s+vers(?:[ãa]o|[õo]es)).*$/i
 };
+
+/**
+ * Alguns PDFs (ex.: Laudes numeradas "1. Invitatório", "2. Hino",
+ * "9. Preces", "10. Oração") imprimem um índice numérico colado ao
+ * nome da seção. Sem remover esse prefixo, os regexes de cabeçalho
+ * (que exigem o nome da seção sozinho no início da linha) não batem
+ * e a página inteira cai no caminho por IA, perdendo/mesclando
+ * seções. Removemos apenas o prefixo "N. " — nunca usado para
+ * números dentro de títulos, como "Salmo 50(51)" — antes de testar
+ * contra os cabeçalhos de seção conhecidos.
+ */
+function stripOrdinalPrefix(text: string): string {
+  return text.replace(/^\d{1,2}\.\s+/, '');
+}
 
 function isAnyHeadingLine(
   text: string
@@ -891,16 +905,17 @@ export function segmentLiturgyOfHoursPage(
   // da nova seção dentro da música da página anterior.
   const pageContainsSectionHeading = orderedLines.some(line => {
     const text = line.words.map(w => w.text).join(' ').trim();
+    const textNoOrdinal = stripOrdinalPrefix(text);
     return !isChordLine(line) && (
-      HEADING_RE.invitatorio.test(text) ||
-      HEADING_RE.hino.test(text) ||
-      HEADING_RE.salmo.test(text) ||
-      HEADING_RE.canticoEvangelico.test(text) ||
-      HEADING_RE.cantico.test(text) ||
-      HEADING_RE.leitura.test(text) ||
-      HEADING_RE.responsorio.test(text) ||
-      HEADING_RE.preces.test(text) ||
-      HEADING_RE.oracao.test(text) ||
+      HEADING_RE.invitatorio.test(textNoOrdinal) ||
+      HEADING_RE.hino.test(textNoOrdinal) ||
+      HEADING_RE.salmo.test(textNoOrdinal) ||
+      HEADING_RE.canticoEvangelico.test(textNoOrdinal) ||
+      HEADING_RE.cantico.test(textNoOrdinal) ||
+      HEADING_RE.leitura.test(textNoOrdinal) ||
+      HEADING_RE.responsorio.test(textNoOrdinal) ||
+      HEADING_RE.preces.test(textNoOrdinal) ||
+      HEADING_RE.oracao.test(textNoOrdinal) ||
       HEADING_RE.numberedExtraOption.test(text)
     );
   });
@@ -1061,11 +1076,26 @@ export function segmentLiturgyOfHoursPage(
     const next =
       orderedLines[i + 1];
 
-    const plainText =
+    const plainTextRaw =
       line.words
         .map(w => w.text)
         .join(' ')
         .trim();
+
+    // Remove o "N. " de índice ("1. Invitatório", "9. Preces"...) e,
+    // quando o cabeçalho vem no formato composto "Salmo — <título>" /
+    // "Cântico — <título>" (usado por algumas Laudes numeradas), fica
+    // só com o título real, igual ao que aparece de novo no corpo do
+    // salmo/cântico logo abaixo. Ver stripOrdinalPrefix.
+    const plainText =
+      stripOrdinalPrefix(plainTextRaw)
+        // "Salmo — Salmo 89 (90)" -> "Salmo 89 (90)" (remove a
+        // palavra "Salmo" duplicada, mantendo o título real).
+        .replace(/^Salmo\s*[—–-]\s*/i, '')
+        // "Cântico — Is 42,10-16" -> "Cântico Is 42,10-16" (mantém a
+        // palavra "Cântico", só troca o travessão por espaço, para
+        // ficar igual ao cabeçalho repetido no corpo do cântico).
+        .replace(/^(C[âa]ntico)\s*[—–-]\s*(?!evang)/i, '$1 ');
 
     const chordLine =
       isChordLine(line);
