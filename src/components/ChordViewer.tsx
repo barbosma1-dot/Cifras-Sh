@@ -732,6 +732,20 @@ function getYoutubeEmbedUrl(url: string): string | null {
   }
 }
 
+/** Converte um link do Spotify (track, album ou playlist) numa URL de embed
+ * oficial (open.spotify.com/embed/...) — toca direto no app, sem precisar de
+ * chave de API (é o player público do Spotify). Retorna null se não
+ * reconhecer o formato (cai pro link "abrir no Spotify"). */
+function getSpotifyEmbedUrl(url: string): string | null {
+  try {
+    const m = url.match(/open\.spotify\.com\/(track|album|playlist|episode)\/([a-zA-Z0-9]+)/);
+    if (m) return `https://open.spotify.com/embed/${m[1]}/${m[2]}`;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ChordViewer({
   chord,
   onClose,
@@ -792,6 +806,11 @@ export default function ChordViewer({
   const [
     showYoutube,
     setShowYoutube
+  ] = useState(false);
+
+  const [
+    showSpotify,
+    setShowSpotify
   ] = useState(false);
 
   const [
@@ -1183,6 +1202,40 @@ export default function ChordViewer({
     >
       {/* O restante da interface original do ChordViewer permanece igual. */}
 
+      {/* Botão de sair do modo imersivo/tela cheia — antes não existia
+          NENHUMA forma de sair (o header com o botão de fechar fica
+          escondido junto com o resto quando `immersive` liga), então uma
+          vez dentro só dava pra sair fechando a aba/voltando pelo sistema.
+          Fica bem discreto (alta transparência) pra não atrapalhar a
+          leitura, mas sempre visível e clicável num canto fixo. */}
+      <AnimatePresence>
+        {immersive && (
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.35 }}
+            whileHover={{ opacity: 0.9 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setImmersive(false)}
+            title="Sair da tela cheia"
+            className="
+              fixed
+              top-3
+              right-3
+              z-[70]
+              p-2.5
+              rounded-full
+              bg-black/40
+              text-white
+              backdrop-blur-sm
+              shadow-lg
+            "
+          >
+            <Minimize2 className="w-5 h-5" />
+          </motion.button>
+        )}
+      </AnimatePresence>
+
       {/* Header Controls */}
       <AnimatePresence>
         {!immersive && (
@@ -1425,6 +1478,28 @@ export default function ChordViewer({
                     title="YouTube"
                   >
                     <Youtube
+                      className="w-6 h-6"
+                    />
+                  </button>
+                )}
+
+                {chord.spotify_url && (
+                  <button
+                    onClick={() => setShowSpotify(!showSpotify)}
+                    className={`
+                      p-2
+                      rounded-lg
+                      transition-colors
+                      shrink-0
+                      ${
+                        showSpotify
+                          ? 'bg-emerald-500 text-white'
+                          : 'hover:bg-white/10'
+                      }
+                    `}
+                    title="Spotify"
+                  >
+                    <Music2
                       className="w-6 h-6"
                     />
                   </button>
@@ -1708,6 +1783,42 @@ export default function ChordViewer({
                   className="flex items-center justify-center h-full text-white underline text-sm"
                 >
                   Abrir vídeo no YouTube
+                </a>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Painel do Spotify — mesma ideia do painel do YouTube acima, com o
+          player público de embed do próprio Spotify (não precisa de chave
+          de API pra tocar prévia/faixa completa de quem tem o app/conta). */}
+      <AnimatePresence>
+        {showSpotify && chord.spotify_url && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden bg-black"
+          >
+            <div className="max-w-2xl mx-auto p-2">
+              {getSpotifyEmbedUrl(chord.spotify_url) ? (
+                <iframe
+                  src={getSpotifyEmbedUrl(chord.spotify_url) as string}
+                  className="w-full rounded-xl"
+                  height="152"
+                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                  loading="lazy"
+                  title="Spotify"
+                />
+              ) : (
+                <a
+                  href={chord.spotify_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-center h-20 text-white underline text-sm"
+                >
+                  Abrir no Spotify
                 </a>
               )}
             </div>
