@@ -3,7 +3,10 @@ import { supabase } from '../lib/supabase';
 import {
   Mail,
   Lock,
-  Loader2
+  Loader2,
+  User,
+  MapPin,
+  Sparkles
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -11,6 +14,8 @@ export default function Login() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [city, setCity] = useState('');
 
   const [isRegister, setIsRegister] =
     useState(false);
@@ -38,15 +43,43 @@ export default function Login() {
 
       if (isRegister) {
 
+        // Nome e cidade agora são obrigatórios no cadastro (pedido: dá pra
+        // saber quem é e de onde é cada novo usuário só de bater o olho).
+        if (!fullName.trim() || !city.trim()) {
+          setError('Nome e cidade são obrigatórios para se cadastrar.');
+          setLoading(false);
+          return;
+        }
+
         const {
+          data: signUpData,
           error: signUpError
         } = await supabase.auth.signUp({
           email,
-          password
+          password,
+          options: {
+            data: {
+              full_name: fullName.trim(),
+              city: city.trim(),
+            },
+          },
         });
 
         if (signUpError) {
           throw signUpError;
+        }
+
+        // Grava nome e cidade direto no perfil também (além do metadata do
+        // signUp acima) — assim funciona independente de o gatilho
+        // `handle_new_user` do banco já conhecer ou não a coluna `city`.
+        if (signUpData.user?.id) {
+          await supabase.from('user_profiles').upsert([{
+            id: signUpData.user.id,
+            email,
+            full_name: fullName.trim(),
+            display_name: fullName.trim(),
+            city: city.trim(),
+          }]);
         }
 
         setMessage(
@@ -156,10 +189,67 @@ export default function Login() {
             : 'Acesse seu repertório e cifras'}
         </p>
 
+        {/* AVISO GRANDE — diferencia bem a aba de CADASTRE-SE da de login,
+            deixando claro de cara que nome e cidade são obrigatórios aqui
+            (pedido explícito: sem isso passava despercebido que era um
+            cadastro "diferente" do login comum). */}
+        {isRegister && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 flex items-start gap-3 bg-brand-orange/10 border-2 border-brand-orange/30 rounded-xl p-4"
+          >
+            <Sparkles className="w-6 h-6 text-brand-orange shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-brand-orange text-sm uppercase tracking-wide">Novo cadastro</p>
+              <p className="text-sm text-slate-600">É obrigatório informar seu <strong>nome</strong> e sua <strong>cidade</strong> para criar a conta.</p>
+            </div>
+          </motion.div>
+        )}
+
         <form
           onSubmit={handleSubmit}
           className="space-y-4"
         >
+
+          {/* NOME E CIDADE — só no cadastro */}
+          {isRegister && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Nome completo
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-blue focus:border-transparent outline-none"
+                    placeholder="Seu nome completo"
+                    value={fullName}
+                    onChange={e => setFullName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Cidade
+                </label>
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-blue focus:border-transparent outline-none"
+                    placeholder="Sua cidade"
+                    value={city}
+                    onChange={e => setCity(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           {/* EMAIL */}
           <div>
