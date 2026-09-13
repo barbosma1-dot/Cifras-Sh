@@ -90,6 +90,12 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Filtro de categoria na busca de "adicionar música" (a mesma ideia já
+  // existente na lista principal de cifras — ChordsList.tsx — estava
+  // faltando aqui, o que obrigava rolar a biblioteca inteira pra achar,
+  // por exemplo, só as músicas de "Adoração").
+  const [addSearchCategory, setAddSearchCategory] = useState<string>('all');
+  const [isAddCategoryDropdownOpen, setIsAddCategoryDropdownOpen] = useState(false);
   const [isAddingMode, setIsAddingMode] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [targetSection, setTargetSection] = useState<string>('');
@@ -598,21 +604,51 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
     return content.replace(/\[.*?\]/g, ' ');
   };
 
-  const filteredLibrary = availableChords.filter(c => {
-    const searchTerms = normalizedSearch(searchQuery).split(/\s+/).filter(t => t.length > 0);
-    
-    if (searchTerms.length === 0) return true;
+  const addSearchCategories = Array.from(
+    new Set(
+      availableChords.flatMap(c => (c.category ? c.category.split(',').map(cat => cat.trim()) : []))
+    )
+  ).filter((c): c is string => !!c && c.length > 0).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
-    const titleNorm = normalizedSearch(c.title);
-    const artistNorm = normalizedSearch(c.artist);
-    const contentNorm = c.content ? normalizedSearch(stripChords(c.content)) : '';
+  const filteredLibrary = availableChords
+    .filter(c => {
+      const searchTerms = normalizedSearch(searchQuery).split(/\s+/).filter(t => t.length > 0);
 
-    return searchTerms.every(term => 
-      titleNorm.includes(term) || 
-      artistNorm.includes(term) || 
-      contentNorm.includes(term)
-    );
-  });
+      const chordCategories = c.category ? c.category.split(',').map(cat => cat.trim()) : [];
+      const matchesCategory = addSearchCategory === 'all' || chordCategories.includes(addSearchCategory);
+      if (!matchesCategory) return false;
+
+      if (searchTerms.length === 0) return true;
+
+      const titleNorm = normalizedSearch(c.title);
+      const artistNorm = normalizedSearch(c.artist);
+      const contentNorm = c.content ? normalizedSearch(stripChords(c.content)) : '';
+
+      return searchTerms.every(term => 
+        titleNorm.includes(term) || 
+        artistNorm.includes(term) || 
+        contentNorm.includes(term)
+      );
+    })
+    .sort((a, b) => {
+      // Título que contém as palavras buscadas aparece primeiro (antes só
+      // ficava na ordem em que `availableChords` chegou do banco, então uma
+      // música que batia o termo escondido na letra podia aparecer antes da
+      // que o usuário via de cara que era pelo título).
+      const searchTerms = normalizedSearch(searchQuery).split(/\s+/).filter(t => t.length > 0);
+      if (searchTerms.length === 0) return a.title.localeCompare(b.title, 'pt-BR');
+      const titleRank = (c: Chord) => {
+        const titleNorm = normalizedSearch(c.title);
+        if (searchTerms.every(term => titleNorm.includes(term))) return 0;
+        const artistNorm = normalizedSearch(c.artist);
+        if (searchTerms.every(term => artistNorm.includes(term))) return 1;
+        return 2;
+      };
+      const ra = titleRank(a);
+      const rb = titleRank(b);
+      if (ra !== rb) return ra - rb;
+      return a.title.localeCompare(b.title, 'pt-BR');
+    });
 
   return (
     <div className="space-y-6">
@@ -777,17 +813,54 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
             <div className="flex justify-center p-20"><Loader2 className="animate-spin text-brand-blue" /></div>
           ) : isAddingMode ? (
             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-                <input 
-                  id="repertoire-chord-search"
-                  type="text"
-                  placeholder="Buscar na biblioteca (título, artista ou letra)..."
-                  className="w-full pl-12 pr-4 py-4 bg-white border border-slate-100 rounded-2xl shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  autoFocus
-                />
+              <div className="flex gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                  <input 
+                    id="repertoire-chord-search"
+                    type="text"
+                    placeholder="Buscar na biblioteca (título, artista ou letra)..."
+                    className="w-full pl-12 pr-4 py-4 bg-white border border-slate-100 rounded-2xl shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddCategoryDropdownOpen(prev => !prev)}
+                    title={addSearchCategory === 'all' ? 'Todas Categorias' : addSearchCategory}
+                    className={`h-full px-4 py-4 rounded-2xl border shadow-sm flex items-center gap-2 text-xs font-black uppercase tracking-wider transition-colors ${addSearchCategory !== 'all' ? 'bg-brand-blue/10 border-brand-blue/30 text-brand-blue' : 'bg-white border-slate-100 text-slate-500'}`}
+                  >
+                    <span className="max-w-[120px] truncate">{addSearchCategory === 'all' ? 'Categoria' : addSearchCategory}</span>
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                  {isAddCategoryDropdownOpen && (
+                    <div className="absolute right-0 mt-2 w-56 max-h-72 overflow-y-auto bg-white rounded-2xl shadow-xl border border-slate-100 z-20 custom-scrollbar">
+                      <button
+                        type="button"
+                        onClick={() => { setAddSearchCategory('all'); setIsAddCategoryDropdownOpen(false); }}
+                        className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 transition-colors ${addSearchCategory === 'all' ? 'text-brand-orange bg-orange-50' : 'text-slate-700'}`}
+                      >
+                        Todas Categorias
+                      </button>
+                      {addSearchCategories.map(cat => (
+                        <button
+                          type="button"
+                          key={cat}
+                          onClick={() => { setAddSearchCategory(cat); setIsAddCategoryDropdownOpen(false); }}
+                          className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 transition-colors truncate ${addSearchCategory === cat ? 'text-brand-orange bg-orange-50' : 'text-slate-700'}`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                      {addSearchCategories.length === 0 && (
+                        <p className="px-4 py-3 text-xs text-slate-400 italic">Nenhuma categoria encontrada</p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
