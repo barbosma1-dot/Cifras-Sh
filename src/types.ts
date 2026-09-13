@@ -9,6 +9,8 @@ export interface UserProfile {
   photo_url?: string;
   photoURL?: string; // Legacy support
   whatsapp?: string;
+  city?: string;
+  full_name?: string;
   role: UserRole;
   mission_id?: string;
   missionId?: string; // Legacy support
@@ -48,6 +50,7 @@ export interface Chord {
   bpm?: number | null;
   time_signature?: string; // '4/4' | '2/2' | '3/4' | '6/8'
   youtube_url?: string;
+  spotify_url?: string;
   youtubeUrl?: string; // Legacy support
   audio_url?: string;
   attachment_url?: string;
