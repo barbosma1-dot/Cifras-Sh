@@ -767,6 +767,27 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
       if (recentFilter !== 'all') {
         return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
       }
+
+      // Com busca ativa, prioriza título: cifra cujo TÍTULO contém as
+      // palavras digitadas aparece antes de uma que só bateu por artista ou
+      // por dentro da letra (antes disso a ordem ficava só alfabética,
+      // então uma cifra que batia o termo em algum verso perdido no meio da
+      // letra podia aparecer antes da música que o usuário via bem que
+      // estava procurando pelo título).
+      const searchTerms = normalizedSearch(searchTerm).split(/\s+/).filter(t => t.length > 0);
+      if (searchTerms.length > 0) {
+        const titleRank = (c: Chord) => {
+          const titleNorm = normalizedSearch(c.title);
+          if (searchTerms.every(term => titleNorm.includes(term))) return 0; // título contém tudo
+          const artistNorm = normalizedSearch(c.artist);
+          if (searchTerms.every(term => artistNorm.includes(term))) return 1; // artista contém tudo
+          return 2; // só bateu no conteúdo/letra
+        };
+        const ra = titleRank(a);
+        const rb = titleRank(b);
+        if (ra !== rb) return ra - rb;
+      }
+
       return 0; // mantém a ordem alfabética já vinda da query
     });
 
