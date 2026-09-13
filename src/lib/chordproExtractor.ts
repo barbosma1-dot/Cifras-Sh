@@ -1139,6 +1139,32 @@ export function segmentLiturgyOfHoursPage(
       continue;
     }
 
+    /*
+     * Cabeçalhos numerados compostos ("3. Salmo — Salmo 89 (90)",
+     * "5. Salmo — Salmo 134 (135),1-12", "4. Cântico — Is 42,10-16")
+     * são apenas um índice — o título de verdade ("Salmo 89 (90)",
+     * "Cântico Is 42,10-16"...) volta a aparecer sozinho, sem número,
+     * logo antes dos acordes. Se abríssemos seção já aqui, essa
+     * segunda aparição do título dispararia HEADING_RE.salmo/cantico
+     * de novo e fecharia esta seção prematuramente — sobrando uma
+     * seção órfã só com a antífona de abertura, separada do corpo.
+     * Por isso ignoramos esta linha e deixamos a antífona (que vem
+     * em seguida) esperar em pendingAntiphonLines até o título real.
+     */
+    if (
+      !chordLine &&
+      (
+        /^\d{1,2}\.\s+Salmo\s*[—–-]/i.test(
+          plainTextRaw
+        ) ||
+        /^\d{1,2}\.\s+C[âa]ntico\s*[—–-]\s*(?!evang)/i.test(
+          plainTextRaw
+        )
+      )
+    ) {
+      continue;
+    }
+
     if (
       !chordLine &&
       HEADING_RE.invitatorio.test(
