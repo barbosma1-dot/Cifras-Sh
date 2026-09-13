@@ -166,11 +166,17 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
     }
 
     if (missionIds.length === 0) {
-      // Tenta buscar repertórios públicos ou onde o usuário é responsável
+      // Usuário solo (sem missão vinculada): só o que ele mesmo criou. NÃO
+      // incluir `is_public.eq.true` aqui — esse campo existe só pra permitir
+      // que o LINK direto de compartilhamento (?repertoireId=..., tratado à
+      // parte em App.tsx/fetchPublicRepertoire) funcione pra quem abre o link
+      // sem estar logado. Incluir na listagem geral fazia todo repertório que
+      // alguém já compartilhou (o botão "Compartilhar" marca is_public=true
+      // permanentemente) aparecer pra QUALQUER usuário solo do app inteiro.
       const { data: fallbackReps } = await supabase
         .from('repertoires')
         .select('*')
-        .or(`is_public.eq.true,responsible_id.eq.${userId}`)
+        .eq('responsible_id', userId)
         .order('date', { ascending: false });
       setRepertoires(fallbackReps || []);
       return;
@@ -223,8 +229,13 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
 
 
   const handleCreate = async () => {
-    if (!newName || !newMissionId) {
-      setNotification({ message: 'Preencha o nome e selecione a missão.', type: 'error' });
+    // Missão só é obrigatória pra quem tem missão vinculada. Usuário solo
+    // (sem missão) cria um repertório pessoal, visível só pra ele mesmo —
+    // antes, essa validação bloqueava esse fluxo inteiro (missões.length===0
+    // nunca preenche newMissionId, então !newMissionId era sempre true e o
+    // solo nunca conseguia criar repertório algum).
+    if (!newName || (missions.length > 0 && !newMissionId)) {
+      setNotification({ message: missions.length > 0 ? 'Preencha o nome e selecione a missão.' : 'Preencha o nome.', type: 'error' });
       return;
     }
 
@@ -235,7 +246,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
           name: newName,
           type: newType,
           date: newDate,
-          mission_id: newMissionId,
+          mission_id: missions.length > 0 ? newMissionId : null,
           color: newColor,
           responsible_id: profile?.id || (profile as any)?.uid
         }]);
