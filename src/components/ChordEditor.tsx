@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Globe, Youtube, Music, Save, Loader2, FileText, Sparkles, Plus, Search } from 'lucide-react';
+import { X, Globe, Youtube, Music, Music2, Save, Loader2, FileText, Sparkles, Plus, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
@@ -140,6 +140,7 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     bpm: chord?.bpm ? String(chord.bpm) : '',
     time_signature: chord?.time_signature || '4/4',
     youtube_url: chord?.youtubeUrl || chord?.youtube_url || '',
+    spotify_url: chord?.spotify_url || '',
     audio_url: chord?.audio_url || '',
     attachment_url: chord?.attachment_url || '',
   });
@@ -740,6 +741,7 @@ ${form.content}`;
         bpm: form.bpm ? parseInt(form.bpm, 10) : null,
         time_signature: form.time_signature,
         youtube_url: form.youtube_url,
+        spotify_url: form.spotify_url,
         audio_url: primaryAudioUrl,
         attachment_url: primaryAttachmentUrl,
         attachments: finalAttachments,
@@ -1015,6 +1017,19 @@ ${form.content}`;
                     BUSCAR
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1 flex items-center gap-2">
+                  <Music2 className="w-4 h-4 text-emerald-500" />
+                  Link Spotify
+                </label>
+                <input
+                  className="w-full px-4 py-2 border border-slate-200 rounded-xl"
+                  placeholder="https://open.spotify.com/track/..."
+                  value={form.spotify_url}
+                  onChange={e => setForm({...form, spotify_url: e.target.value})}
+                />
               </div>
 
               <div className="flex gap-2">
