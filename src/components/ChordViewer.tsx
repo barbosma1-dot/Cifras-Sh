@@ -1288,7 +1288,7 @@ export default function ChordViewer({
 
               <div className="min-w-0 flex-1">
                 <h2 className="font-bold text-lg leading-tight truncate">
-                  {chord.title}
+                  {chord.title || 'Sem música definida'}
                 </h2>
 
                 <p className="text-xs text-white/60 truncate">
@@ -1904,14 +1904,27 @@ export default function ChordViewer({
               lineSpacing
           }}
         >
-          {processContent(
-            chord.content || '',
-            semitones,
-            useFlats,
-            showChords,
-            notationSystem,
-            fontSize,
-            lineSpacing
+          {chord.content ? (
+            processContent(
+              chord.content,
+              semitones,
+              useFlats,
+              showChords,
+              notationSystem,
+              fontSize,
+              lineSpacing
+            )
+          ) : (
+            // Antes, uma cifra sem `content` (seção do repertório ainda sem
+            // música definida, ou cifra removida da biblioteca) caía aqui e
+            // ficava tudo em branco, sem nenhuma explicação — pior ainda pra
+            // quem abre o link público sem estar logado, sem acesso a nenhum
+            // outro contexto do app.
+            <div className="flex flex-col items-center justify-center text-center py-16 text-white/50">
+              <Music className="w-8 h-8 mb-3 opacity-60" />
+              <p className="font-bold text-white/70">Nenhuma letra ou cifra disponível</p>
+              <p className="text-sm mt-1">Essa música ainda não foi definida para esta seção do repertório.</p>
+            </div>
           )}
         </div>
       </div>
