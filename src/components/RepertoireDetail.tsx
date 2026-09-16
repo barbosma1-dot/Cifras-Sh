@@ -911,21 +911,37 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                        )}
                     </div>
                     <div className="bg-white rounded-xl border border-slate-50 shadow-sm divide-y divide-slate-50 overflow-hidden">
-                       {sectionItems.map((item, idx) => (
+                       {sectionItems.map((item, idx) => {
+                         // Item "vazio": a seção foi criada mas nenhuma música foi
+                         // atribuída a ela ainda (chord_id nulo / cifra apagada). Antes,
+                         // isso renderizava uma linha em branco clicável que abria o
+                         // ChordViewer com título e letra vazios — uma tela toda branca,
+                         // sem nenhuma explicação, especialmente ruim pra quem abre o
+                         // link público sem o app e não tem como saber o que houve.
+                         const hasContent = !!(item.id && item.title);
+                         return (
                          <div 
                             key={item.item_id} 
-                            onClick={() => setSelectedChord(item)}
-                            className="p-1.5 px-2.5 hover:bg-slate-50 flex items-center gap-2 group/item transition-all cursor-pointer"
+                            onClick={() => hasContent && setSelectedChord(item)}
+                            className={`p-1.5 px-2.5 flex items-center gap-2 group/item transition-all ${
+                              hasContent ? 'hover:bg-slate-50 cursor-pointer' : 'cursor-default opacity-60'
+                            }`}
                           >
                             <div className="w-4 h-4 flex items-center justify-center bg-slate-50 text-slate-300 rounded-sm text-[8px] font-bold">
                                {idx + 1}
                             </div>
                             <div className="flex-1 overflow-hidden">
-                                <p className="font-bold text-slate-700 text-[14px] leading-none group-hover/item:text-brand-blue transition-colors truncate">{item.title}</p>
-                                <p className="text-[7px] text-slate-400 font-medium uppercase truncate leading-none mt-0.5">{item.artist}</p>
+                                {hasContent ? (
+                                  <>
+                                    <p className="font-bold text-slate-700 text-[14px] leading-none group-hover/item:text-brand-blue transition-colors truncate">{item.title}</p>
+                                    <p className="text-[7px] text-slate-400 font-medium uppercase truncate leading-none mt-0.5">{item.artist}</p>
+                                  </>
+                                ) : (
+                                  <p className="text-[11px] italic text-slate-400 leading-none">Música ainda não definida</p>
+                                )}
                              </div>
                             <div className="flex items-center gap-1.5 transition-opacity opacity-100">
-                               <Eye className="w-3 h-3 text-slate-300" />
+                               {hasContent && <Eye className="w-3 h-3 text-slate-300" />}
                                {isGuest ? (
                                  <span className="px-1 py-0.5 bg-slate-100 text-slate-500 rounded text-[7px] font-bold">
                                     {item.display_key || item.original_key}
@@ -977,7 +993,8 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                )}
                             </div>
                          </div>
-                       ))}
+                         );
+                       })}
                     </div>
                   </div>
                 );
@@ -1015,8 +1032,15 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
              </h3>
              <div className="space-y-4">
                 <button 
-                  onClick={() => items.length > 0 && setSelectedChord(items[0])}
-                  disabled={items.length === 0}
+                  onClick={() => {
+                    // Pula seções ainda sem música definida (chord_id nulo) em vez de
+                    // sempre abrir items[0] — antes, se o Canto de Entrada estivesse
+                    // vazio, o botão abria o ChordViewer em branco, sem nenhuma cifra
+                    // pra mostrar, o que parecia uma tela quebrada pra quem clicava.
+                    const firstPlayable = items.find(it => it.id && it.title);
+                    if (firstPlayable) setSelectedChord(firstPlayable);
+                  }}
+                  disabled={!items.some(it => it.id && it.title)}
                   className="w-full p-4 bg-brand-blue-light text-white font-black rounded-2xl text-left flex items-center justify-between hover:bg-brand-blue-light/90 shadow-lg shadow-brand-blue-light/20 transition-all active:scale-[0.98] disabled:opacity-50"
                 >
                   <span className="flex items-center gap-3">
