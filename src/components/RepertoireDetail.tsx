@@ -978,7 +978,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                             <div className="flex items-center gap-1.5 transition-opacity opacity-100">
                                {hasContent && <Eye className="w-3 h-3 text-slate-300" />}
                                {isGuest ? (
-                                 <span className="px-1 py-0.5 bg-slate-100 text-slate-500 rounded text-[7px] font-bold">
+                                 <span className="px-2 py-1 bg-brand-blue/10 text-brand-blue rounded-md text-[11px] font-black">
                                     {item.display_key || item.original_key}
                                  </span>
                                ) : (
@@ -990,10 +990,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                      handleUpdateItemKey(item.item_id, e.target.value);
                                    }}
                                    title="Tom só neste repertório (não altera a cifra original)"
-                                   className={`px-1 py-0.5 rounded text-[7px] font-bold border-0 focus:outline-none focus:ring-1 focus:ring-brand-blue cursor-pointer ${
+                                   className={`px-2 py-1 rounded-md text-[11px] font-black border-0 focus:outline-none focus:ring-1 focus:ring-brand-blue cursor-pointer ${
                                      item.display_key && item.display_key !== item.original_key
                                        ? 'bg-brand-orange/10 text-brand-orange'
-                                       : 'bg-slate-100 text-slate-500'
+                                       : 'bg-brand-blue/10 text-brand-blue'
                                    }`}
                                  >
                                    <option value="">{item.original_key} (original)</option>
