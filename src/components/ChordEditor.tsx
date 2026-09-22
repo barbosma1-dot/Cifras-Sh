@@ -122,14 +122,13 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
   const [loading, setLoading] = useState(false);
   const [scraping, setScraping] = useState(false);
   const [searchingYoutube, setSearchingYoutube] = useState(false);
-  const [convertingAI, setConvertingAI] = useState(false);
+  const [convertingAI, setConvertingAI] = useState(false); // usado também pelo botão único "FORMATAR COM IA"
   const [showPDFImporter, setShowPDFImporter] = useState(false);
   const [categories, setCategories] = useState<string[]>(['Missa', 'Laudes', 'Oração', 'Outros']);
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
   const [newCategory, setNewCategory] = useState('');
   const [categorySearch, setCategorySearch] = useState('');
   
-  const [extractingMetadata, setExtractingMetadata] = useState(false);
   
   const [form, setForm] = useState({
     title: chord?.title || '',
@@ -278,72 +277,24 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     }
   };
 
-  const extractMetadataWithAI = async () => {
+  // Botão único "FORMATAR COM IA": extrai título/artista/tom (quando
+  // identificáveis no texto colado) E converte para ChordPro numa ÚNICA
+  // chamada, no mesmo padrão (modelo, prompt, endpoint) do importador de
+  // PDF — antes eram duas chamadas separadas (EXTRAIR INFO + CHORDPRO) no
+  // endpoint /api/ai-proxy com um modelo mais lento, o que deixava o fluxo
+  // perceptivelmente mais devagar e com um resultado de formatação diferente
+  // do obtido ao importar um PDF.
+  const formatWithAI = async () => {
     if (!form.content.trim()) {
       setNotification({ message: 'Cole o conteúdo da cifra primeiro.', type: 'error' });
       return;
     }
-    
-    setExtractingMetadata(true);
-    
-    try {
-      const prompt = `Analise o texto abaixo e extraia:
-      1. Título da Música
-      2. Nome do Artista
-      3. Tom (Key) - Ex: C, G, Am, Eb
-      
-      Retorne APENAS um JSON no formato:
-      {"title": "...", "artist": "...", "key": "..."}
-      
-      TEXTO:
-      ${form.content.substring(0, 2000)}`;
 
-      const response = await fetch('/api/ai-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          responseMimeType: 'application/json'
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.details || errorData.error || 'Erro no proxy de IA');
-      }
-      const dataJson = await response.json();
-      const text = dataJson.text;
-
-      if (text) {
-        const data = JSON.parse(text);
-        setForm(prev => ({
-          ...prev,
-          title: data.title || prev.title,
-          artist: data.artist || prev.artist,
-          original_key: data.key || prev.original_key
-        }));
-        setNotification({ message: 'Informações extraídas com sucesso!', type: 'success' });
-        
-        if (data.title && data.artist) {
-          searchYoutube(data.title, data.artist);
-        }
-      }
-    } catch (error) {
-      console.error('AI Metadata Extraction failed:', error);
-      setNotification({ message: 'Não foi possível extrair as informações automaticamente.', type: 'error' });
-    } finally {
-      setExtractingMetadata(false);
-    }
-  };
-
-  const convertToChordProWithAI = async () => {
-    if (!form.content.trim()) return;
-    
     setConvertingAI(true);
-    
+
     try {
       const prompt = `Você é um Analista de Cifras Litúrgicas sênior especializado em transcrição musical de ALTA FIDELIDADE para o formato ChordPro (.chopro).
-Sua missão é converter a cifra abaixo com PRECISÃO CIRÚRGICA, garantindo que o alinhamento dos acordes com as sílabas seja PERFEITO.
+Sua missão é (1) identificar título, artista e tom da música, se estiverem escritos no texto, e (2) converter a cifra abaixo com PRECISÃO CIRÚRGICA, garantindo que o alinhamento dos acordes com as sílabas seja PERFEITO.
 
 ### REGRAS DE OURO (CRÍTICO):
 1. ALINHAMENTO CHORDPRO (CRÍTICO — ERRO MUITO COMUM): O texto de origem normalmente traz o acorde numa linha SEPARADA, ACIMA da linha de letra, alinhado pela posição horizontal (coluna) da sílaba onde ele cai — esse é só o jeito de ESCREVER, não o formato de saída. Você NUNCA deve reproduzir essas duas linhas separadamente no resultado. Sempre que uma linha de acordes estiver posicionada acima de uma linha de LETRA (texto cantável), você deve: (a) olhar a posição horizontal de cada acorde em relação às letras da linha de baixo, (b) FUNDIR as duas linhas em UMA ÚNICA linha de saída, inserindo cada acorde entre colchetes imediatamente antes do caractere/sílaba sobre a qual ele estava posicionado, e (c) descartar a linha de acordes separada — ela não deve sobrar no resultado. Isso vale mesmo que o espaçamento pareça "impreciso"; use o seu melhor julgamento de qual sílaba cada acorde acompanha.
@@ -370,40 +321,54 @@ Sua missão é converter a cifra abaixo com PRECISÃO CIRÚRGICA, garantindo que
 3. LIMPEZA: Remova linhas de tablaturas puras (que usam ---, |---, etc.), números de página e anotações manuais que não fazem parte da cifra.
 4. ESTRUTURA: Marque o início do refrão com uma linha contendo apenas "Refrão:" e feche o bloco com uma linha contendo apenas "Fim" logo após a última linha do refrão. NÃO use {soc}/{eoc} nem tags como [REFRÃO] — o app só reconhece o padrão "Refrão:" / "Fim". Para outras seções, use rótulos simples em linha própria, como "Intro", "Estrofe", "Ponte", "Solo".
 5. CIFRA SEM LETRA (GRADE DE ACORDES POR COMPASSO): Se a cifra inteira for apenas uma sequência de acordes por compasso, sem nenhuma letra (comum em cifras de banda/instrumental) — ex.: "D/F# | % | G | Gm |" ou "-a- F | C | Am | G |" — preserve fielmente cada linha de compasso tal como está, mas SEMPRE aplicando a REGRA DE COLCHETE da regra 2 acima. Preserve os rótulos de seção como estão (ex.: "-Intro-", "-a1-", "-chorus-", "-c bridge-", "-fim-").
+6. TÍTULO/ARTISTA/TOM: Se houver um título, nome de artista/autor/ministério, ou indicação de tom (Ex: "Tom: G") escritos no início do texto colado, separados da letra, extraia-os para os campos correspondentes. Se não houver essa informação explícita no texto, devolva string vazia — NÃO invente nem deduza a partir da letra.
 
 DIFERENCIAÇÃO DE LINHAS:
 - LINHAS DE ACORDES: Compostas por letras A-G, números, #, b, e extensões (m, 7, sus4, add9).
 - LINHAS DE LETRA: Contêm artigos, preposições e palavras comuns em português.
 
-RETORNO:
-Retorne APENAS o conteúdo convertido final. Sem explicações ou markdown.
+### FORMATO DE SAÍDA (Obrigatório):
+Retorne APENAS um objeto JSON, sem blocos de código Markdown, seguindo este esquema:
+{
+  "title": "Título da música, se identificável no texto; senão string vazia",
+  "artist": "Autor/artista/ministério, se identificável no texto; senão string vazia",
+  "original_key": "Tom, se identificável no texto (Ex: G, Am, F#m); senão string vazia",
+  "content": "A cifra completa convertida para ChordPro, seguindo as regras acima"
+}
 
 CIFRA PARA CONVERSÃO:
 ${form.content}`;
 
-      const response = await fetch('/api/ai-proxy', {
+      const response = await fetch('/api/extract-text', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          // model: 'gemini-3-flash-preview' - Removed to use server default
-        })
+        body: JSON.stringify({ content: form.content, prompt })
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.details || errorData.error || 'Erro no proxy de IA');
+        throw new Error(errorData.details || errorData.error || 'Erro na formatação por IA');
       }
-      const dataJson = await response.json();
-      const text = dataJson.text;
-      
-      if (text) {
-        const cleanedText = text.replace(/```chordpro|```/g, '').trim();
-        setForm(prev => ({ ...prev, content: cleanedText }));
+      const data = await response.json();
+
+      setForm(prev => ({
+        ...prev,
+        title: data.title || prev.title,
+        artist: data.artist || prev.artist,
+        original_key: data.original_key || prev.original_key,
+        content: data.content || prev.content
+      }));
+      setNotification({ message: 'Cifra formatada com sucesso!', type: 'success' });
+
+      const finalTitle = data.title || form.title;
+      const finalArtist = data.artist || form.artist;
+      if (finalTitle && finalArtist) {
+        searchYoutube(finalTitle, finalArtist);
       }
     } catch (error) {
-      console.error('AI Conversion failed:', error);
+      console.error('AI Formatting failed:', error);
       setForm(prev => ({ ...prev, content: convertToChordPro(prev.content) }));
+      setNotification({ message: 'Não foi possível formatar com IA — aplicado o formatador local.', type: 'error' });
     } finally {
       setConvertingAI(false);
     }
@@ -1235,21 +1200,12 @@ ${form.content}`;
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={extractMetadataWithAI}
-                    disabled={extractingMetadata || !form.content}
-                    className="text-[10px] bg-brand-blue/10 px-3 py-1 rounded-lg text-brand-blue font-black hover:bg-brand-blue hover:text-white transition-all flex items-center gap-1 disabled:opacity-50"
-                  >
-                    {extractingMetadata ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                    EXTRAIR INFO (IA)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={convertToChordProWithAI}
+                    onClick={formatWithAI}
                     disabled={convertingAI || !form.content}
                     className="text-[10px] bg-brand-orange/10 px-3 py-1 rounded-lg text-brand-orange font-black hover:bg-brand-orange hover:text-white transition-all flex items-center gap-1 disabled:opacity-50"
                   >
                     {convertingAI ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                    CHORDPRO (IA)
+                    FORMATAR COM IA
                   </button>
                 </div>
               </div>
