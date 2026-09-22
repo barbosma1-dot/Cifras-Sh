@@ -73,6 +73,8 @@ export interface Repertoire {
   chord_ids: string[];
   is_public: boolean;
   created_at: any;
+  youtube_playlist_url?: string | null;
+  spotify_playlist_url?: string | null;
 }
 
 export interface UserNotification {
