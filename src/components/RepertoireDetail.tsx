@@ -31,7 +31,9 @@ import {
   Download,
   CheckCircle,
   Trash,
-  WifiOff
+  WifiOff,
+  Youtube,
+  ListMusic
 } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
 import { UserProfile, Repertoire, Chord, RepertoireAttendance, AttendanceStatus } from '../types';
@@ -300,7 +302,9 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
     name: repertoire.name,
     type: repertoire.type,
     date: repertoire.date,
-    color: repertoire.color || 'white'
+    color: repertoire.color || 'white',
+    youtubePlaylistUrl: repertoire.youtube_playlist_url || '',
+    spotifyPlaylistUrl: repertoire.spotify_playlist_url || ''
   });
 
   const COLORS = [
@@ -320,7 +324,9 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
           name: editForm.name,
           type: editForm.type,
           date: editForm.date,
-          color: editForm.color
+          color: editForm.color,
+          youtube_playlist_url: editForm.youtubePlaylistUrl.trim() || null,
+          spotify_playlist_url: editForm.spotifyPlaylistUrl.trim() || null
         })
         .eq('id', repertoire.id);
       
@@ -777,6 +783,30 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                     ))}
                   </div>
                 </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
+                    <Youtube className="w-3.5 h-3.5" /> Playlist do YouTube
+                  </label>
+                  <input
+                    type="url"
+                    value={editForm.youtubePlaylistUrl}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, youtubePlaylistUrl: e.target.value }))}
+                    placeholder="https://www.youtube.com/playlist?list=..."
+                    className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-brand-blue/20 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
+                    <ListMusic className="w-3.5 h-3.5" /> Playlist do Spotify
+                  </label>
+                  <input
+                    type="url"
+                    value={editForm.spotifyPlaylistUrl}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, spotifyPlaylistUrl: e.target.value }))}
+                    placeholder="https://open.spotify.com/playlist/..."
+                    className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-brand-blue/20 text-sm"
+                  />
+                </div>
               </div>
               <div className="flex gap-3 mt-8">
                 <button onClick={() => setIsEditingBaseInfo(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-xl">Cancelar</button>
@@ -1122,6 +1152,40 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                      </button>
                    )}
                 </div>
+
+                {(repertoire.youtube_playlist_url || repertoire.spotify_playlist_url) && (
+                  <div className="pt-4 border-t border-slate-50 space-y-2">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Playlists</p>
+                    {repertoire.youtube_playlist_url && (
+                      <a
+                        href={repertoire.youtube_playlist_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full p-4 bg-red-50 text-red-600 font-bold rounded-2xl text-left flex items-center justify-between hover:bg-red-100 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Youtube className="w-4 h-4" />
+                          Playlist YouTube
+                        </span>
+                        <ExternalLink className="w-4 h-4 opacity-50" />
+                      </a>
+                    )}
+                    {repertoire.spotify_playlist_url && (
+                      <a
+                        href={repertoire.spotify_playlist_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full p-4 bg-emerald-50 text-emerald-600 font-bold rounded-2xl text-left flex items-center justify-between hover:bg-emerald-100 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <ListMusic className="w-4 h-4" />
+                          Playlist Spotify
+                        </span>
+                        <ExternalLink className="w-4 h-4 opacity-50" />
+                      </a>
+                    )}
+                  </div>
+                )}
 
                 {(repertoire.type === 'Missa' || repertoire.type === 'Laudes') && (
                   <div className="pt-4 border-t border-slate-50 space-y-2">
