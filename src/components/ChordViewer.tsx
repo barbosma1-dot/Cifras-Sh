@@ -1926,6 +1926,42 @@ export default function ChordViewer({
               <p className="text-sm mt-1">Essa música ainda não foi definida para esta seção do repertório.</p>
             </div>
           )}
+
+          {/* Botão para avançar para a próxima música do repertório/caderno,
+              posicionado logo após a letra — some quando não há próxima. */}
+          {nextChord && (
+            <button
+              onClick={handleNext}
+              className="
+                w-full
+                mt-10
+                mb-4
+                flex
+                items-center
+                justify-between
+                gap-3
+                bg-white/10
+                hover:bg-white/20
+                border
+                border-white/10
+                rounded-2xl
+                px-5
+                py-4
+                text-left
+                transition-colors
+              "
+            >
+              <div className="overflow-hidden">
+                <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider">
+                  Próxima música
+                </p>
+                <p className="font-bold text-white truncate">
+                  {nextChord.title}
+                </p>
+              </div>
+              <ArrowRight className="w-5 h-5 text-white/70 shrink-0" />
+            </button>
+          )}
         </div>
       </div>
 
