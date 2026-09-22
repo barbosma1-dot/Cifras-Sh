@@ -127,6 +127,54 @@ async function startServer() {
     }
   });
 
+  // API Route for pasted-text chord/lyric extraction + ChordPro formatting
+  // (o equivalente em texto do /api/extract-pdf acima — usado pelo botão
+  // único "FORMATAR COM IA" do editor manual).
+  app.post("/api/extract-text", async (req, res) => {
+    const { content, prompt } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    const keyCheck = checkApiKey(apiKey);
+    if (!keyCheck.valid) {
+      console.error("[Text Extract]", keyCheck.message);
+      return res.status(500).json({ error: keyCheck.message });
+    }
+
+    if (!content || typeof content !== "string" || !content.trim()) {
+      return res.status(400).json({ error: "Conteúdo é obrigatório." });
+    }
+
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({
+        apiKey: apiKey!,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
+
+      const result = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      });
+
+      const text = result.text || "";
+      const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
+      res.json(JSON.parse(cleanJson));
+    } catch (error: any) {
+      console.error("Text Extraction error:", error.message);
+      let details = error.message;
+      if (details.includes("API key not valid")) {
+        details = "Chave de API inválida. Por favor, verifique a GEMINI_API_KEY nas configurações de Segredos.";
+      } else if (details.includes("quota") || details.includes("429") || details.includes("RESOURCE_EXHAUSTED")) {
+        details = "Limite de uso gratuito da IA excedido. Aguarde alguns minutos e tente novamente.";
+      }
+      res.status(500).json({ error: "Falha na formatação por IA", details });
+    }
+  });
+
   // API Route for Cifra Club Scraper
   app.post("/api/scrape-cifraclub", async (req, res) => {
     const { url } = req.body;
