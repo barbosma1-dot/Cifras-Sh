@@ -934,7 +934,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                 return (
                   <div key={section} className="group">
                     <div className="flex justify-between items-center mb-1 px-0.5">
-                       <h3 className="text-[13px] font-black text-slate-600 uppercase tracking-wider">{section}</h3>
+                       <h3 className="text-[13px] font-black text-brand-blue uppercase tracking-wider">{section}</h3>
                        {!isGuest && (
                          <button 
                            onClick={() => openAddingMode(section)}
@@ -978,7 +978,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                             <div className="flex items-center gap-1.5 transition-opacity opacity-100">
                                {hasContent && <Eye className="w-3 h-3 text-slate-300" />}
                                {isGuest ? (
-                                 <span className="px-2 py-1 bg-brand-blue/10 text-brand-blue rounded-md text-[11px] font-black">
+                                 <span className="px-2 py-1 bg-slate-100 text-slate-500 rounded-md text-[11px] font-black">
                                     {item.display_key || item.original_key}
                                  </span>
                                ) : (
@@ -993,7 +993,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                    className={`px-2 py-1 rounded-md text-[11px] font-black border-0 focus:outline-none focus:ring-1 focus:ring-brand-blue cursor-pointer ${
                                      item.display_key && item.display_key !== item.original_key
                                        ? 'bg-brand-orange/10 text-brand-orange'
-                                       : 'bg-brand-blue/10 text-brand-blue'
+                                       : 'bg-slate-100 text-slate-500'
                                    }`}
                                  >
                                    <option value="">{item.original_key} (original)</option>
