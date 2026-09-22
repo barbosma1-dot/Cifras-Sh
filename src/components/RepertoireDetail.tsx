@@ -864,25 +864,60 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
               </div>
 
               <div className="grid grid-cols-1 gap-3 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-                {filteredLibrary.map(chord => (
-                  <div key={chord.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-brand-blue/30 transition-all">
+                {filteredLibrary.map(chord => {
+                  // Marca visualmente uma música que já está na seção sendo
+                  // editada (targetSection), pra não ficar sem indicação de
+                  // qual já foi escolhida antes de tentar adicionar de novo.
+                  // Ao trocar uma música (swapItem), a própria música que
+                  // está sendo trocada não conta como "já selecionada".
+                  const alreadyInSection = items.some(i =>
+                    i.id === chord.id &&
+                    i.section === targetSection &&
+                    (!editingItemId || i.item_id !== editingItemId)
+                  );
+                  return (
+                  <div
+                    key={chord.id}
+                    className={`p-4 rounded-2xl border flex items-center justify-between group transition-all ${
+                      alreadyInSection
+                        ? 'bg-emerald-50 border-emerald-200'
+                        : 'bg-white border-slate-100 hover:border-brand-blue/30'
+                    }`}
+                  >
                     <div className="flex items-center gap-4">
-                       <div className="w-10 h-10 bg-slate-50 flex items-center justify-center rounded-xl text-slate-400 group-hover:text-brand-blue group-hover:bg-brand-blue/5 transition-all">
-                         <Music className="w-5 h-5" />
+                       <div className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all ${
+                         alreadyInSection
+                           ? 'bg-emerald-100 text-emerald-600'
+                           : 'bg-slate-50 text-slate-400 group-hover:text-brand-blue group-hover:bg-brand-blue/5'
+                       }`}>
+                         {alreadyInSection ? <CheckCircle className="w-5 h-5" /> : <Music className="w-5 h-5" />}
                        </div>
                        <div>
                          <p className="font-bold text-slate-800">{chord.title}</p>
                          <p className="text-xs text-slate-500">{chord.artist} • {chord.original_key || 'N/A'}</p>
+                         {alreadyInSection && (
+                           <p className="text-[11px] font-bold text-emerald-600 uppercase mt-0.5">Já está nesta seção</p>
+                         )}
                        </div>
                     </div>
-                    <button 
-                      onClick={() => editingItemId ? swapItem(chord) : addItem(chord)}
-                      className="p-3 bg-brand-blue/5 text-brand-blue rounded-xl hover:bg-brand-blue hover:text-white transition-all"
-                    >
-                      {editingItemId ? <Pencil className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
-                    </button>
+                    {alreadyInSection ? (
+                      <span
+                        className="p-3 text-emerald-500"
+                        title="Esta música já está nesta seção"
+                      >
+                        <CheckCircle className="w-5 h-5" />
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => editingItemId ? swapItem(chord) : addItem(chord)}
+                        className="p-3 bg-brand-blue/5 text-brand-blue rounded-xl hover:bg-brand-blue hover:text-white transition-all"
+                      >
+                        {editingItemId ? <Pencil className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                      </button>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
                 {filteredLibrary.length === 0 && (
                   <div className="text-center py-20 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
                     <p className="text-slate-400 italic">Nenhuma música encontrada na busca.</p>
@@ -899,11 +934,11 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                 return (
                   <div key={section} className="group">
                     <div className="flex justify-between items-center mb-1 px-0.5">
-                       <h3 className="text-[7px] font-black text-slate-300 uppercase tracking-[0.3em] opacity-60">{section}</h3>
+                       <h3 className="text-[13px] font-black text-slate-600 uppercase tracking-wider">{section}</h3>
                        {!isGuest && (
                          <button 
                            onClick={() => openAddingMode(section)}
-                           className="flex items-center gap-1 px-2 py-1 bg-brand-blue/5 text-brand-blue rounded-lg text-[8px] font-bold uppercase hover:bg-brand-blue hover:text-white transition-all"
+                           className="flex items-center gap-1 px-2 py-1 bg-brand-blue/5 text-brand-blue rounded-lg text-[10px] font-bold uppercase hover:bg-brand-blue hover:text-white transition-all"
                          >
                            <Plus className="w-3 h-3" />
                            Adicionar
