@@ -33,6 +33,19 @@ import {
 } from 'motion/react';
 import { supabase } from '../lib/supabase';
 
+// Ícone da "logo" do Spotify (círculo + três ondas), desenhado como SVG
+// próprio — a mesma ideia de usar um ícone de marca pra indicar visualmente
+// "isto abre o Spotify" (igual ao ícone `Youtube` do lucide-react já usado
+// ao lado, que também é só uma representação/identificação da marca, não
+// uma imagem oficial baixada do Spotify).
+function SpotifyIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.72-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // MELHORIAS PARA MELLODIAS ALTERNATIVAS
 // ---------------------------------------------------------------------------
@@ -717,19 +730,35 @@ function getSemitoneDiff(originalKey: string | undefined, targetKey: string | un
 /** Converte um link do YouTube (watch?v=, youtu.be/, shorts/, ou já embed)
  * numa URL de embed. Retorna null se não conseguir reconhecer o formato
  * (nesse caso o botão cai pra um link "abrir no YouTube"). */
-function getYoutubeEmbedUrl(url: string): string | null {
+function extractYoutubeVideoId(url: string): string | null {
   try {
-    const patterns = [
+    const m = url.match(
       /(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtu\.be\/|youtube\.com\/embed\/)([\w-]{11})/
-    ];
-    for (const p of patterns) {
-      const m = url.match(p);
-      if (m) return `https://www.youtube.com/embed/${m[1]}`;
-    }
-    return null;
+    );
+    return m ? m[1] : null;
   } catch {
     return null;
   }
+}
+
+function getYoutubeEmbedUrl(url: string): string | null {
+  const id = extractYoutubeVideoId(url);
+  // modestbranding+rel=0 reduzem a marca do YouTube nos controles do player,
+  // mas o card de "Assista no YouTube" com os ícones de compartilhar/assistir
+  // mais tarde que aparece ANTES de dar play em faixas de canais "Tópicos"
+  // (áudio oficial gerado automaticamente pelo YouTube/selo/gravadora) é
+  // controlado pelo dono do vídeo e pelo próprio YouTube dentro do iframe —
+  // como é um domínio diferente (cross-origin), não tem como o nosso site
+  // enxergar ou substituir esses botões por outros nossos.
+  return id ? `https://www.youtube.com/embed/${id}?modestbranding=1&rel=0` : null;
+}
+
+/** Link da página normal (não embed) do vídeo no YouTube — é lá que existe o
+ * botão nativo "Salvar" (adicionar a uma playlist), que não está disponível
+ * dentro do player embutido. */
+function getYoutubeWatchUrl(url: string): string | null {
+  const id = extractYoutubeVideoId(url);
+  return id ? `https://www.youtube.com/watch?v=${id}` : null;
 }
 
 /** Converte um link do Spotify (track, album ou playlist) numa URL de embed
@@ -1493,13 +1522,13 @@ export default function ChordViewer({
                       shrink-0
                       ${
                         showSpotify
-                          ? 'bg-emerald-500 text-white'
+                          ? 'bg-[#1DB954] text-white'
                           : 'hover:bg-white/10'
                       }
                     `}
                     title="Spotify"
                   >
-                    <Music2
+                    <SpotifyIcon
                       className="w-6 h-6"
                     />
                   </button>
@@ -1786,6 +1815,25 @@ export default function ChordViewer({
                 </a>
               )}
             </div>
+            {/* O botão nativo de "assistir mais tarde"/compartilhar que
+                aparece dentro do player embutido é do próprio YouTube — não
+                dá pra trocar por um botão nosso (vídeo de outro domínio,
+                dentro de um iframe). Este botão abaixo abre a página real do
+                vídeo no YouTube, onde existe o botão "Salvar" de verdade
+                para adicionar a uma playlist. */}
+            {getYoutubeWatchUrl(chord.youtube_url) && (
+              <div className="max-w-2xl mx-auto px-2 pb-2 pt-1 bg-black">
+                <a
+                  href={getYoutubeWatchUrl(chord.youtube_url) as string}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-center gap-2 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-colors"
+                >
+                  <Youtube className="w-4 h-4" />
+                  Adicionar a uma playlist no YouTube
+                </a>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1806,7 +1854,7 @@ export default function ChordViewer({
                 <iframe
                   src={getSpotifyEmbedUrl(chord.spotify_url) as string}
                   className="w-full rounded-xl"
-                  height="152"
+                  height="352"
                   allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
                   loading="lazy"
                   title="Spotify"
@@ -1821,6 +1869,20 @@ export default function ChordViewer({
                   Abrir no Spotify
                 </a>
               )}
+              {/* O player embutido do Spotify não tem botão de "adicionar à
+                  playlist" (limitação da própria plataforma, igual ao
+                  YouTube acima). Este botão abre a faixa na página real do
+                  Spotify, onde dá pra usar o "..." → "Adicionar à playlist"
+                  (inclusive criar uma nova ali mesmo). */}
+              <a
+                href={chord.spotify_url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 flex items-center justify-center gap-2 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] text-white font-bold text-xs rounded-xl transition-colors"
+              >
+                <SpotifyIcon className="w-4 h-4" />
+                Criar ou adicionar à playlist no Spotify
+              </a>
             </div>
           </motion.div>
         )}
@@ -1940,26 +2002,26 @@ export default function ChordViewer({
                 items-center
                 justify-between
                 gap-3
-                bg-white/10
-                hover:bg-white/20
-                border
-                border-white/10
+                bg-brand-blue
+                hover:bg-brand-blue/90
                 rounded-2xl
                 px-5
                 py-4
                 text-left
+                shadow-lg
+                shadow-brand-blue/20
                 transition-colors
               "
             >
               <div className="overflow-hidden">
-                <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider">
+                <p className="text-[10px] font-bold text-white/70 uppercase tracking-wider">
                   Próxima música
                 </p>
                 <p className="font-bold text-white truncate">
                   {nextChord.title}
                 </p>
               </div>
-              <ArrowRight className="w-5 h-5 text-white/70 shrink-0" />
+              <ArrowRight className="w-5 h-5 text-white shrink-0" />
             </button>
           )}
         </div>
