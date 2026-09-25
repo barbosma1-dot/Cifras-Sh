@@ -1930,7 +1930,15 @@ export default function ChordViewer({
               <X className="w-5 h-5" />
             </motion.button>
 
-            <div className="p-4 space-y-3">
+            {/* max-h + overflow-y-auto próprios: sem isto, o painel só cresce
+                (a animação de altura vai até `auto` = altura total do
+                conteúdo) e fica FORA da área rolável da página — que é só o
+                bloco da letra/cifra logo abaixo. Com muitos áudios, o painel
+                passava da altura da tela e os últimos itens ficavam
+                inacessíveis, sem nenhum jeito de rolar até eles. Mesmo
+                padrão de `max-h-80 overflow-y-auto` já usado no modal
+                "Adicionar ao Caderno" mais abaixo neste arquivo. */}
+            <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto overscroll-contain custom-scrollbar">
               {chord.audio_url && (
                 <div>
                   <p className="text-[10px] font-bold text-white/60 uppercase mb-1">Áudio</p>
