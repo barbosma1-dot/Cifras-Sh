@@ -1898,6 +1898,38 @@ export default function ChordViewer({
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden bg-slate-800 text-white"
           >
+            {/* Botão de fechar fixo — com muitos áudios/anexos na lista (caso
+                de "ver todos os arquivos relacionados"), o painel fica mais
+                alto que a tela e o botão de alternar lá em cima (ícone verde
+                na barra de ferramentas) sai de vista ao rolar pra baixo. Sem
+                nenhum controle de fechar dentro do próprio painel, não tinha
+                como "desligar" essa tela sem rolar de volta até o topo. Este
+                botão é `fixed`, então continua alcançável em qualquer ponto
+                da rolagem — mesma ideia do botão de sair do modo imersivo
+                logo acima. */}
+            <motion.button
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMedia(false)}
+              title="Fechar mídias e anexos"
+              className="
+                fixed
+                bottom-4
+                right-4
+                z-[70]
+                p-3
+                rounded-full
+                bg-emerald-600
+                text-white
+                shadow-lg
+                hover:bg-emerald-700
+                transition-colors
+              "
+            >
+              <X className="w-5 h-5" />
+            </motion.button>
+
             <div className="p-4 space-y-3">
               {chord.audio_url && (
                 <div>
