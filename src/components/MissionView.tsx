@@ -159,59 +159,37 @@ export default function MissionView({ profile, setProfile, onSelectMission, onVi
       const code = joinCode.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       console.log('Tentando entrar na missão com código:', code);
 
-      const { data: mData, error: mError } = await supabase
-        .from('missions')
-        .select('*')
-        .eq('invite_code', code)
-        .maybeSingle();
-      
-      if (mError) {
-        console.error('Erro na busca da missão:', mError);
-        setNotification({ 
-          message: `Erro na busca: ${mError.message}`, 
-          type: 'error' 
-        });
-        setLoading(false);
-        return;
-      }
-
-      if (!mData) {
-        setNotification({ message: 'Código inválido ou missão inexistente.', type: 'error' });
-        setLoading(false);
-        return;
-      }
-
       const userId = profile.id || profile.uid || (profile as any).id;
-
       if (!userId) {
         setNotification({ message: 'Erro de autenticação. Tente sair e entrar novamente.', type: 'error' });
         setLoading(false);
         return;
       }
 
-      // Inserir na tabela de membros
-      const { error: joinError } = await supabase
-        .from('mission_members')
-        .insert([{
-          user_id: userId,
-          mission_id: mData.id,
-          role: 'member'
-        }]);
-      
+      // RPC SECURITY DEFINER (ver MIGRATION_PROTECAO_CONVITE_LINK.sql): localiza a
+      // missão pelo código e associa o próprio usuário como 'member'.
+      const { data: res, error: joinError } = await supabase.rpc('join_mission_by_code', { p_code: code });
+
       if (joinError) {
-        if (joinError.code === '42501') {
-          setNotification({ message: 'Sem permissão para entrar na missão. Peça ao administrador para aplicar a correção de acesso no Supabase.', type: 'error' });
-        } else if (joinError.code === '23505') {
-          setNotification({ message: 'Você já faz parte desta missão.', type: 'error' });
+        console.error('Erro ao entrar na missão:', joinError);
+        if (joinError.code === 'PGRST202' || joinError.code === '42883') {
+          setNotification({ message: 'Função de convite ausente no banco. Peça ao administrador para aplicar a migration MIGRATION_PROTECAO_CONVITE_LINK.sql no Supabase.', type: 'error' });
+        } else if (joinError.code === '42501') {
+          setNotification({ message: 'Sessão inválida. Saia e entre novamente.', type: 'error' });
         } else {
-          throw joinError;
+          setNotification({ message: 'Erro ao entrar na missão: ' + joinError.message, type: 'error' });
         }
-      } else {
-        setNotification({ message: `Sucesso! Agora você faz parte da missão: ${mData.name}`, type: 'success' });
-        if (profile) {
-          setProfile({...profile, missionId: mData.id, mission_id: mData.id});
-        }
+      } else if (res?.status === 'invalid_code') {
+        setNotification({ message: 'Código inválido ou missão inexistente.', type: 'error' });
+      } else if (res?.status === 'already_member') {
+        setNotification({ message: 'Você já faz parte desta missão.', type: 'error' });
+      } else if (res?.status === 'joined') {
+        setNotification({ message: `Sucesso! Agora você faz parte da missão: ${res.mission_name}`, type: 'success' });
+        setProfile({ ...profile, missionId: res.mission_id, mission_id: res.mission_id } as any);
+        setJoinCode('');
         await fetchUserMissions();
+      } else {
+        setNotification({ message: 'Resposta inesperada ao entrar na missão.', type: 'error' });
       }
     } catch (e: any) {
       console.error('Erro ao entrar na missão:', e);
