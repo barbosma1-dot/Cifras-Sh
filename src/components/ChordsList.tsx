@@ -50,6 +50,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
   const [searchTerm, setSearchTerm] = useState('');
   const [activeBookId, setActiveBookId] = useState<string | null>(initialBookId || null);
   const [bookTitle, setBookTitle] = useState<string | null>(null);
+  // Cadernos protegidos (Laudes / Cantai a Deus): só o ADM altera. Espelha a RLS do Supabase.
+  const [isProtectedBook, setIsProtectedBook] = useState(false);
+  const isAppAdmin = profile?.email === 'barbosma1@gmail.com' || profile?.role === 'admin';
+  const blockedProtected = isProtectedBook && !isAppAdmin;
+  const canModifyChords = !blockedProtected && !!profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '');
   
   const [selectedChord, setSelectedChord] = useState<Chord | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -289,7 +294,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
 
   useEffect(() => {
-    if (triggerNewChord && triggerNewChord > 0) {
+    if (triggerNewChord && triggerNewChord > 0 && !blockedProtected) {
       setEditingChord(null);
       setIsEditorOpen(true);
     }
@@ -297,8 +302,17 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
 
   async function fetchBookInfo() {
     if (!activeBookId) return;
-    const { data } = await supabase.from('chord_books').select('name').eq('id', activeBookId).single();
-    if (data) setBookTitle(data.name);
+    let { data, error } = await supabase.from('chord_books').select('name, is_protected').eq('id', activeBookId).single();
+    if (error) {
+      // Coluna is_protected ainda não existe (migração não aplicada): cai no critério por nome.
+      ({ data } = await supabase.from('chord_books').select('name').eq('id', activeBookId).single() as any);
+    }
+    if (data) {
+      setBookTitle(data.name);
+      setIsProtectedBook(
+        (data as any).is_protected ?? /laudes|cantai\s+a\s+deus/i.test(data.name || '')
+      );
+    }
   }
 
   async function fetchChords() {
@@ -867,6 +881,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                 : 'Sem conexão com a internet.'}
             </div>
           )}
+          {!blockedProtected && (
           <div className="w-full mt-2">
             <button 
               onClick={() => setIsAddChordModalOpen(true)}
@@ -876,6 +891,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               ADICIONAR CIFRA A ESTE CADERNO
             </button>
           </div>
+          )}
         </div>
       )}
 
@@ -896,7 +912,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
         {/* Ações — botões reduzidos a ícones, mesma linha, cores originais mantidas.
             O nome de cada ação aparece via tooltip nativo (title) ao passar o mouse. */}
         <div className="flex flex-wrap items-center gap-2">
-          {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+          {canModifyChords && (
             <button
               onClick={() => setIsPDFImporterOpen(true)}
               title="Importar PDF"
@@ -907,7 +923,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             </button>
           )}
 
-          {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && duplicateGroups.length > 0 && (
+          {canModifyChords && duplicateGroups.length > 0 && (
             <button
               onClick={() => setIsDuplicatesModalOpen(true)}
               title="Duplicadas"
@@ -921,7 +937,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             </button>
           )}
 
-          {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+          {canModifyChords && (
             <button
               onClick={fillMissingYoutubeLinksBulk}
               disabled={isBulkYoutubeRunning}
@@ -1111,7 +1127,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                     <Youtube className="w-3.5 h-3.5" />
                   </div>
                 )}
-                {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                {canModifyChords && (
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1124,7 +1140,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                     <Edit3 className="w-4 h-4" />
                   </button>
                 )}
-                {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+                {canModifyChords && (
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1140,7 +1156,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
             </div>
           ))}
           
-          {profile && ['admin', 'editor', 'coordinator', 'moderator'].includes(profile.role || '') && (
+          {canModifyChords && (
             <button 
               onClick={() => {
                 setEditingChord(null);
@@ -1172,11 +1188,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           onClose={() => setSelectedChord(null)} 
           allChords={filteredChords}
           onSwitchChord={(c) => setSelectedChord(c)}
-          onEdit={(c) => {
+          onEdit={canModifyChords ? (c) => {
             setSelectedChord(null);
             setEditingChord(c);
             setIsEditorOpen(true);
-          }}
+          } : undefined}
         />
       )}
 
