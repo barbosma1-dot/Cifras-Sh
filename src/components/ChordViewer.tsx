@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useBackButton } from '../hooks/useBackButton';
 import {
   X,
@@ -25,7 +25,8 @@ import {
   Music,
   FileText,
   Pencil,
-  Share2
+  Share2,
+  MoreVertical
 } from 'lucide-react';
 import { Chord, ChordBook } from '../types';
 import {
@@ -697,6 +698,8 @@ interface ChordViewerProps {
   onEdit?: (
     chord: ChordWithDisplayKey
   ) => void;
+  /** Acesso via link compartilhado: somente visualização (sem editar/adicionar). */
+  readOnly?: boolean;
 }
 
 /** Índice (0-11) da nota, aceitando nomenclatura em inglês/latina, sustenido/bemol.
@@ -782,8 +785,12 @@ export default function ChordViewer({
   onClose,
   allChords,
   onSwitchChord,
-  onEdit
+  onEdit: onEditProp,
+  readOnly = false
 }: ChordViewerProps) {
+  // Em modo somente leitura nunca expomos a edição.
+  const onEdit = readOnly ? undefined : onEditProp;
+  const [showMenu, setShowMenu] = useState(false);
   useBackButton(
     true,
     onClose
@@ -1078,22 +1085,22 @@ export default function ChordViewer({
     }
   }
 
-  // Compartilhar cifra: usa o compartilhamento nativo do aparelho (WhatsApp etc.)
-  // e, se não houver, copia o texto para a área de transferência.
+  // Compartilhar cifra: gera um LINK somente leitura (/cifra/<id>). O conteúdo
+  // editável não vai na mensagem; quem abre o link só visualiza.
   const handleShareChord = async () => {
-    const text = `${chord.title || 'Cifra'}${chord.artist ? ' - ' + chord.artist : ''}\n\n${chord.content || ''}`;
+    const url = `${window.location.origin}/cifra/${chord.id}`;
     try {
       if (navigator.share) {
-        await navigator.share({ title: chord.title || 'Cifra', text });
+        await navigator.share({ title: chord.title || 'Cifra', url });
       } else {
-        await navigator.clipboard.writeText(text);
-        setNotification({ message: 'Cifra copiada para compartilhar!', type: 'success' });
+        await navigator.clipboard.writeText(url);
+        setNotification({ message: 'Link da cifra copiado!', type: 'success' });
       }
     } catch (err: any) {
-      if (err?.name === 'AbortError') return; // usuário fechou o menu de compartilhar
+      if (err?.name === 'AbortError') return;
       try {
-        await navigator.clipboard.writeText(text);
-        setNotification({ message: 'Cifra copiada para compartilhar!', type: 'success' });
+        await navigator.clipboard.writeText(url);
+        setNotification({ message: 'Link da cifra copiado!', type: 'success' });
       } catch {
         setNotification({ message: 'Não foi possível compartilhar a cifra.', type: 'error' });
       }
@@ -1358,48 +1365,77 @@ export default function ChordViewer({
               </div>
 
               <button
-                onClick={() =>
-                  setImmersive(
-                    true
-                  )
-                }
-                className="
-                  p-2
-                  rounded-lg
-                  transition-colors
-                  hover:bg-white/10
-                  shrink-0
-                "
-                title="Ocultar Menus"
+                onClick={() => setShowChords(!showChords)}
+                className={`p-2 rounded-lg transition-all shrink-0 ${
+                  showChords ? 'bg-brand-orange text-white' : 'hover:bg-white/10 text-white'
+                }`}
+                title={showChords ? 'Ocultar Cifras' : 'Exibir Cifras'}
               >
-                <Maximize2
-                  className="w-6 h-6"
-                />
+                {showChords ? <Music2 className="w-6 h-6" /> : <BookText className="w-6 h-6" />}
               </button>
 
-              <button
-                onClick={() =>
-                  setShowTools(
-                    !showTools
-                  )
-                }
-                className={`
-                  p-2
-                  rounded-lg
-                  transition-colors
-                  shrink-0
-                  ${
-                    showTools
-                      ? 'bg-brand-orange text-white'
-                      : 'hover:bg-white/10'
-                  }
-                `}
-                title="Ferramentas"
-              >
-                <Settings2
-                  className="w-6 h-6"
-                />
-              </button>
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowMenu(v => !v)}
+                  className={`p-2 rounded-lg transition-colors ${showMenu ? 'bg-white/20' : 'hover:bg-white/10'}`}
+                  title="Mais ações"
+                  aria-haspopup="menu"
+                  aria-expanded={showMenu}
+                >
+                  <MoreVertical className="w-6 h-6" />
+                </button>
+
+                {showMenu && (
+                  <>
+                    <div className="fixed inset-0 z-[60]" onClick={() => setShowMenu(false)} />
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full mt-1 z-[70] w-60 max-w-[80vw] max-h-[70vh] overflow-y-auto bg-white text-slate-800 rounded-xl shadow-2xl border border-slate-200 py-1"
+                    >
+                      {(() => {
+                        const item = (
+                          label: string,
+                          icon: ReactNode,
+                          onClick: () => void,
+                          active = false
+                        ) => (
+                          <button
+                            key={label}
+                            role="menuitem"
+                            onClick={() => { setShowMenu(false); onClick(); }}
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-left hover:bg-slate-100 ${
+                              active ? 'text-brand-orange' : ''
+                            }`}
+                          >
+                            <span className="w-5 h-5 shrink-0 flex items-center justify-center">{icon}</span>
+                            <span className="truncate">{label}</span>
+                          </button>
+                        );
+                        return (
+                          <>
+                            {onEdit && item('Editar cifra', <Pencil className="w-5 h-5" />, () => onEdit(chord))}
+                            {item('Compartilhar (link)', <Share2 className="w-5 h-5" />, handleShareChord)}
+                            {isEucharisticPrayer &&
+                              item('Oração Eucarística', <BookText className="w-5 h-5" />, () => setShowEucharisticPrayer(true))}
+                            {item('Tom e ferramentas', <Settings2 className="w-5 h-5" />, () => setShowTools(!showTools), showTools)}
+                            {item('Ocultar menus', <Maximize2 className="w-5 h-5" />, () => setImmersive(true))}
+                            {!readOnly &&
+                              item('Adicionar ao caderno', <PlusSquare className="w-5 h-5" />, () => setShowBookSelector(!showBookSelector), showBookSelector)}
+                            {chord.youtube_url &&
+                              item('YouTube', <Youtube className="w-5 h-5" />, () => setShowYoutube(!showYoutube), showYoutube)}
+                            {chord.spotify_url &&
+                              item('Spotify', <SpotifyIcon className="w-5 h-5" />, () => setShowSpotify(!showSpotify), showSpotify)}
+                            {(chord.audio_url ||
+                              chord.attachment_url ||
+                              (Array.isArray(chord.attachments) && chord.attachments.length > 0)) &&
+                              item('Mídias e anexos', <Music className="w-5 h-5" />, () => setShowMedia(!showMedia), showMedia)}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center justify-between gap-2">
@@ -1409,279 +1445,30 @@ export default function ChordViewer({
                   .map(cat => (
                     <span
                       key={cat}
-                      className="
-                        text-[8px]
-                        font-black
-                        bg-white/20
-                        text-white
-                        px-1.5
-                        py-0.5
-                        rounded
-                        uppercase
-                        tracking-wider
-                        whitespace-nowrap
-                      "
+                      className="text-[8px] font-black bg-white/20 text-white px-1.5 py-0.5 rounded uppercase tracking-wider whitespace-nowrap"
                     >
                       {cat.trim()}
                     </span>
                   ))}
               </div>
 
-              <div className="
-                flex
-                items-center
-                gap-1
-                overflow-x-auto
-                no-scrollbar
-                shrink-0
-                max-w-full
-              ">
-                {isEucharisticPrayer && (
-                  <button
-                    onClick={() => setShowEucharisticPrayer(true)}
-                    className="p-2 rounded-lg transition-colors hover:bg-white/10 shrink-0"
-                    title="Oração Eucarística"
-                  >
-                    <BookText className="w-6 h-6" />
-                  </button>
-                )}
-
-                {onEdit && (
-                  <button
-                    onClick={() =>
-                      onEdit(
-                        chord
-                      )
-                    }
-                    className="
-                      p-2
-                      rounded-lg
-                      transition-colors
-                      hover:bg-white/10
-                      shrink-0
-                    "
-                    title="Editar Cifra"
-                  >
-                    <Pencil
-                      className="w-6 h-6"
-                    />
-                  </button>
-                )}
-
+              <div className="hidden md:flex gap-1 bg-white/10 p-1 rounded-xl shrink-0">
                 <button
-                  onClick={handleShareChord}
-                  className="p-2 rounded-lg transition-colors hover:bg-white/10 shrink-0"
-                  title="Compartilhar Cifra"
+                  onClick={() => setSemitones(s => s - 1)}
+                  className="px-3 py-1 hover:bg-white/10 rounded-lg text-sm font-bold"
                 >
-                  <Share2 className="w-6 h-6" />
+                  -
                 </button>
-
+                <span className="px-2 py-1 text-xs font-mono bg-brand-orange rounded-lg min-w-[3rem] text-center">
+                  {semitones > 0 ? '+' : ''}
+                  {semitones} ST
+                </span>
                 <button
-                  onClick={() =>
-                    setShowChords(
-                      !showChords
-                    )
-                  }
-                  className={`
-                    p-2
-                    rounded-lg
-                    transition-all
-                    flex
-                    items-center
-                    gap-2
-                    shrink-0
-                    ${
-                      showChords
-                        ? 'bg-brand-orange text-white'
-                        : 'hover:bg-white/10 text-white'
-                    }
-                  `}
-                  title={
-                    showChords
-                      ? 'Ocultar Cifras'
-                      : 'Exibir Cifras'
-                  }
+                  onClick={() => setSemitones(s => s + 1)}
+                  className="px-3 py-1 hover:bg-white/10 rounded-lg text-sm font-bold"
                 >
-                  {showChords ? (
-                    <Music2 className="w-6 h-6" />
-                  ) : (
-                    <BookText className="w-6 h-6" />
-                  )}
+                  +
                 </button>
-
-                <button
-                  onClick={() =>
-                    setShowBookSelector(
-                      !showBookSelector
-                    )
-                  }
-                  className={`
-                    p-2
-                    rounded-lg
-                    transition-colors
-                    shrink-0
-                    ${
-                      showBookSelector
-                        ? 'bg-white text-brand-blue'
-                        : 'hover:bg-white/10'
-                    }
-                  `}
-                  title="Adicionar ao Caderno"
-                >
-                  <PlusSquare
-                    className="w-6 h-6"
-                  />
-                </button>
-
-                {chord.youtube_url && (
-                  <button
-                    onClick={() =>
-                      setShowYoutube(
-                        !showYoutube
-                      )
-                    }
-                    className={`
-                      p-2
-                      rounded-lg
-                      transition-colors
-                      shrink-0
-                      ${
-                        showYoutube
-                          ? 'bg-red-500 text-white'
-                          : 'hover:bg-white/10'
-                      }
-                    `}
-                    title="YouTube"
-                  >
-                    <Youtube
-                      className="w-6 h-6"
-                    />
-                  </button>
-                )}
-
-                {chord.spotify_url && (
-                  <button
-                    onClick={() => setShowSpotify(!showSpotify)}
-                    className={`
-                      p-2
-                      rounded-lg
-                      transition-colors
-                      shrink-0
-                      ${
-                        showSpotify
-                          ? 'bg-[#1DB954] text-white'
-                          : 'hover:bg-white/10'
-                      }
-                    `}
-                    title="Spotify"
-                  >
-                    <SpotifyIcon
-                      className="w-6 h-6"
-                    />
-                  </button>
-                )}
-
-                {(
-                  chord.audio_url ||
-                  chord.attachment_url ||
-                  (
-                    Array.isArray(
-                      chord.attachments
-                    ) &&
-                    chord.attachments
-                      .length > 0
-                  )
-                ) && (
-                  <button
-                    onClick={() =>
-                      setShowMedia(
-                        !showMedia
-                      )
-                    }
-                    className={`
-                      p-2
-                      rounded-lg
-                      transition-colors
-                      shrink-0
-                      ${
-                        showMedia
-                          ? 'bg-emerald-500 text-white'
-                          : 'hover:bg-white/10'
-                      }
-                    `}
-                    title="Mídias e Anexos"
-                  >
-                    <Music
-                      className="w-6 h-6"
-                    />
-                  </button>
-                )}
-
-                <div className="
-                  hidden
-                  md:flex
-                  gap-1
-                  bg-white/10
-                  p-1
-                  rounded-xl
-                  shrink-0
-                ">
-                  <button
-                    onClick={() =>
-                      setSemitones(
-                        s =>
-                          s - 1
-                      )
-                    }
-                    className="
-                      px-3
-                      py-1
-                      hover:bg-white/10
-                      rounded-lg
-                      text-sm
-                      font-bold
-                    "
-                  >
-                    -
-                  </button>
-
-                  <span className="
-                    px-2
-                    py-1
-                    text-xs
-                    font-mono
-                    bg-brand-orange
-                    rounded-lg
-                    min-w-[3rem]
-                    text-center
-                  ">
-                    {semitones > 0
-                      ? '+'
-                      : ''}
-                    {semitones}
-                    {' '}
-                    ST
-                  </span>
-
-                  <button
-                    onClick={() =>
-                      setSemitones(
-                        s =>
-                          s + 1
-                      )
-                    }
-                    className="
-                      px-3
-                      py-1
-                      hover:bg-white/10
-                      rounded-lg
-                      text-sm
-                      font-bold
-                    "
-                  >
-                    +
-                  </button>
-                </div>
               </div>
             </div>
           </motion.div>
@@ -2120,7 +1907,7 @@ export default function ChordViewer({
       {/* Modal "Adicionar ao Caderno" — `showBookSelector` já buscava os
           cadernos (fetchUserBooks) e `handleAddToBook` já salvava, mas não
           havia nenhuma tela que os usasse. */}
-      {showBookSelector && (
+      {!readOnly && showBookSelector && (
         <div
           className="fixed inset-0 z-[170] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => setShowBookSelector(false)}
