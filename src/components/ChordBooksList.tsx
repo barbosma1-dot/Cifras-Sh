@@ -11,6 +11,11 @@ interface ChordBooksListProps {
   onViewChords?: (bookId: string) => void;
 }
 
+// Cadernos protegidos (Laudes / Cantai a Deus): só o ADM altera. Espelha a RLS do Supabase.
+const isProtectedBookForUser = (book: any, profile: any) =>
+  !(profile?.email === 'barbosma1@gmail.com' || profile?.role === 'admin') &&
+  (book?.is_protected ?? /laudes|cantai\s+a\s+deus/i.test(book?.name || ''));
+
 export default function ChordBooksList({ profile, onViewChords }: ChordBooksListProps) {
   const [books, setBooks] = useState<ChordBook[]>([]);
   const [missions, setMissions] = useState<Mission[]>([]);
@@ -604,7 +609,7 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
                   Ver Cifras
                 </button>
                 <div className="flex gap-1">
-                  {profile && (profile.email === 'barbosma1@gmail.com' || book.owner_id === profile.id) && (
+                  {profile && !isProtectedBookForUser(book, profile) && (profile.email === 'barbosma1@gmail.com' || book.owner_id === profile.id) && (
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
@@ -616,6 +621,7 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
                       <Edit3 className="w-4 h-4" />
                     </button>
                   )}
+                  {!isProtectedBookForUser(book, profile) && (
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();
@@ -627,6 +633,7 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
                   >
                     <Plus className="w-4 h-4" />
                   </button>
+                  )}
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();
