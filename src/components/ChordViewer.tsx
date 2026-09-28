@@ -24,7 +24,8 @@ import {
   FileDown,
   Music,
   FileText,
-  Pencil
+  Pencil,
+  Share2
 } from 'lucide-react';
 import { Chord, ChordBook } from '../types';
 import {
@@ -1077,6 +1078,28 @@ export default function ChordViewer({
     }
   }
 
+  // Compartilhar cifra: usa o compartilhamento nativo do aparelho (WhatsApp etc.)
+  // e, se não houver, copia o texto para a área de transferência.
+  const handleShareChord = async () => {
+    const text = `${chord.title || 'Cifra'}${chord.artist ? ' - ' + chord.artist : ''}\n\n${chord.content || ''}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: chord.title || 'Cifra', text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        setNotification({ message: 'Cifra copiada para compartilhar!', type: 'success' });
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return; // usuário fechou o menu de compartilhar
+      try {
+        await navigator.clipboard.writeText(text);
+        setNotification({ message: 'Cifra copiada para compartilhar!', type: 'success' });
+      } catch {
+        setNotification({ message: 'Não foi possível compartilhar a cifra.', type: 'error' });
+      }
+    }
+  };
+
   const handleAddToBook =
     async (
       bookId: string
@@ -1444,6 +1467,14 @@ export default function ChordViewer({
                     />
                   </button>
                 )}
+
+                <button
+                  onClick={handleShareChord}
+                  className="p-2 rounded-lg transition-colors hover:bg-white/10 shrink-0"
+                  title="Compartilhar Cifra"
+                >
+                  <Share2 className="w-6 h-6" />
+                </button>
 
                 <button
                   onClick={() =>
