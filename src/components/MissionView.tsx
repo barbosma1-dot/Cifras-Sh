@@ -156,7 +156,7 @@ export default function MissionView({ profile, setProfile, onSelectMission, onVi
     setLoading(true);
     
     try {
-      const code = joinCode.trim().toUpperCase();
+      const code = joinCode.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       console.log('Tentando entrar na missão com código:', code);
 
       const { data: mData, error: mError } = await supabase
@@ -199,7 +199,9 @@ export default function MissionView({ profile, setProfile, onSelectMission, onVi
         }]);
       
       if (joinError) {
-        if (joinError.code === '23505') {
+        if (joinError.code === '42501') {
+          setNotification({ message: 'Sem permissão para entrar na missão. Peça ao administrador para aplicar a correção de acesso no Supabase.', type: 'error' });
+        } else if (joinError.code === '23505') {
           setNotification({ message: 'Você já faz parte desta missão.', type: 'error' });
         } else {
           throw joinError;
