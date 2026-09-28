@@ -13,6 +13,7 @@ import SplashScreen from './components/SplashScreen';
 import { WifiOff } from 'lucide-react';
 import { Repertoire } from './types';
 import { withTimeout } from './lib/withTimeout';
+import SharedChordView, { getSharedChordId } from './components/SharedChordView';
 
 // Tempo máximo de espera por chamadas de rede no arranque do app. Sem isso,
 // numa conexão "falsa" (sinal presente mas sem internet de verdade), a tela
@@ -51,6 +52,7 @@ function getCachedUser(): { id: string; email: string } | null {
 }
 
 export default function App() {
+  const sharedChordId = getSharedChordId();
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -267,6 +269,11 @@ export default function App() {
     } finally {
       setPublicRepertoireLoading(false);
     }
+  }
+
+  // Link de cifra compartilhada (/cifra/<id>): somente leitura, sem exigir login.
+  if (sharedChordId) {
+    return <SharedChordView chordId={sharedChordId} />;
   }
 
   if (loading) {
