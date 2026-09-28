@@ -32,6 +32,7 @@ import {
   AnimatePresence
 } from 'motion/react';
 import { supabase } from '../lib/supabase';
+import LiturgyViewer from './LiturgyViewer';
 
 // Ícone da "logo" do Spotify (círculo + três ondas), desenhado como SVG
 // próprio — a mesma ideia de usar um ícone de marca pra indicar visualmente
@@ -787,6 +788,11 @@ export default function ChordViewer({
     onClose
   );
 
+  // Botão "Oração Eucarística": só aparece em cifras cujo título indica
+  // Oração Eucarística. Reaproveita o LiturgyViewer já usado no repertório.
+  const [showEucharisticPrayer, setShowEucharisticPrayer] = useState(false);
+  const isEucharisticPrayer = /or(a|â)(ç|c)(ã|a)o\s+eucar|^\s*or\.?\s+eucar/i.test(chord.title || '');
+
   const [
     semitones,
     setSemitones
@@ -1407,6 +1413,16 @@ export default function ChordViewer({
                 shrink-0
                 max-w-full
               ">
+                {isEucharisticPrayer && (
+                  <button
+                    onClick={() => setShowEucharisticPrayer(true)}
+                    className="p-2 rounded-lg transition-colors hover:bg-white/10 shrink-0"
+                    title="Oração Eucarística"
+                  >
+                    <BookText className="w-6 h-6" />
+                  </button>
+                )}
+
                 {onEdit && (
                   <button
                     onClick={() =>
@@ -2116,6 +2132,14 @@ export default function ChordViewer({
             </button>
           </div>
         </div>
+      )}
+
+      {showEucharisticPrayer && (
+        <LiturgyViewer
+          title="Orações Eucarísticas"
+          url="https://www.catolicoorante.com.br/oeucaristicas.html"
+          onClose={() => setShowEucharisticPrayer(false)}
+        />
       )}
 
       {/* Notificação — o estado e o timer de auto-fechar já existiam, mas
