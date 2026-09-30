@@ -1374,6 +1374,44 @@ export default function ChordViewer({
                 {showChords ? <Music2 className="w-6 h-6" /> : <BookText className="w-6 h-6" />}
               </button>
 
+              {/* Tom e ferramentas, YouTube e Spotify — antes só existiam
+                  dentro do menu de "⋮", escondidos atrás de mais um toque.
+                  A pedido, ficam agora sempre visíveis na barra, do lado do
+                  menu, do mesmo jeito que o botão de cifras/letra ao lado. */}
+              <button
+                onClick={() => setShowTools(!showTools)}
+                className={`p-2 rounded-lg transition-all shrink-0 ${
+                  showTools ? 'bg-brand-orange text-white' : 'hover:bg-white/10 text-white'
+                }`}
+                title="Tom e ferramentas"
+              >
+                <Settings2 className="w-6 h-6" />
+              </button>
+
+              {chord.youtube_url && (
+                <button
+                  onClick={() => setShowYoutube(!showYoutube)}
+                  className={`p-2 rounded-lg transition-all shrink-0 ${
+                    showYoutube ? 'bg-brand-orange text-white' : 'hover:bg-white/10 text-white'
+                  }`}
+                  title="YouTube"
+                >
+                  <Youtube className="w-6 h-6" />
+                </button>
+              )}
+
+              {chord.spotify_url && (
+                <button
+                  onClick={() => setShowSpotify(!showSpotify)}
+                  className={`p-2 rounded-lg transition-all shrink-0 ${
+                    showSpotify ? 'bg-brand-orange text-white' : 'hover:bg-white/10 text-white'
+                  }`}
+                  title="Spotify"
+                >
+                  <SpotifyIcon className="w-6 h-6" />
+                </button>
+              )}
+
               <div className="relative shrink-0">
                 <button
                   onClick={() => setShowMenu(v => !v)}
@@ -1417,14 +1455,9 @@ export default function ChordViewer({
                             {item('Compartilhar (link)', <Share2 className="w-5 h-5" />, handleShareChord)}
                             {isEucharisticPrayer &&
                               item('Oração Eucarística', <BookText className="w-5 h-5" />, () => setShowEucharisticPrayer(true))}
-                            {item('Tom e ferramentas', <Settings2 className="w-5 h-5" />, () => setShowTools(!showTools), showTools)}
                             {item('Ocultar menus', <Maximize2 className="w-5 h-5" />, () => setImmersive(true))}
                             {!readOnly &&
                               item('Adicionar ao caderno', <PlusSquare className="w-5 h-5" />, () => setShowBookSelector(!showBookSelector), showBookSelector)}
-                            {chord.youtube_url &&
-                              item('YouTube', <Youtube className="w-5 h-5" />, () => setShowYoutube(!showYoutube), showYoutube)}
-                            {chord.spotify_url &&
-                              item('Spotify', <SpotifyIcon className="w-5 h-5" />, () => setShowSpotify(!showSpotify), showSpotify)}
                             {(chord.audio_url ||
                               chord.attachment_url ||
                               (Array.isArray(chord.attachments) && chord.attachments.length > 0)) &&
