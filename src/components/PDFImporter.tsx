@@ -3,7 +3,7 @@ import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save, Se
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { extractPreAlignedPageText, prepareHeaderFooterFilter, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage, extractFirstLyricLine } from '../lib/chordproExtractor';
+import { extractCifraPage, extractPreAlignedPageText, prepareHeaderFooterFilter, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage, extractFirstLyricLine } from '../lib/chordproExtractor';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
 
@@ -194,6 +194,11 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   // risco de a IA "resumir" versículos longos). Só se aplica a páginas com
   // texto selecionável; páginas escaneadas continuam no fluxo de imagem + IA.
   const [officeMode, setOfficeMode] = useState<boolean>(false);
+  // Modo Cifra (sem IA): para PDFs de cifra com texto selecionável, lê título,
+  // autor, letra e acordes direto da camada de texto do PDF (posição real de
+  // cada acorde sobre a sílaba) — o resultado sai igual ao PDF, sem depender
+  // da IA (que reescreve, resume e às vezes trava).
+  const [cifraMode, setCifraMode] = useState<boolean>(false);
   // Id do lote no banco (import_batches). Criado/atualizado em
   // `ensureImportBatch`, usado por `importAll` para casar músicas
   // reimportadas com as que já existiam do mesmo lote.
@@ -214,18 +219,35 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   // existe para evitar. Era esse o motivo real de o bug parecer "não
   // corrigido" mesmo com o código já certo: o código certo nunca chegava a
   // rodar porque o checkbox estava desmarcado.
-  const detectReliableTextLayer = async (pdf: any): Promise<boolean> => {
+  const detectReliableTextLayer = async (pdf: any): Promise<'office' | 'cifra' | 'none'> => {
     try {
       const pagesToCheck = Math.min(pdf.numPages, 3);
+      let hasText = false;
+      let officeHits = 0;
       for (let i = 1; i <= pagesToCheck; i++) {
         const page = await pdf.getPage(i);
         const words = await extractPageWords(page);
-        if (hasReliableTextLayer(words)) return true;
+        if (hasReliableTextLayer(words)) {
+          hasText = true;
+          const text = words.map(w => w.text).join(' ');
+          // Marcas típicas de breviário (Liturgia das Horas) — cifras comuns
+          // não têm essas palavras de estrutura.
+          if (/Invitat[óo]rio|Salmodia|Respons[óo]rio breve|Leitura breve|C[âa]ntico evang[ée]lico/i.test(text)) {
+            officeHits++;
+          }
+        }
       }
+      if (!hasText) return 'none';
+      return officeHits > 0 ? 'office' : 'cifra';
     } catch (err) {
       console.error('Erro ao detectar camada de texto do PDF:', err);
     }
-    return false;
+    return 'none';
+  };
+
+  const applyDetectedMode = (kind: 'office' | 'cifra' | 'none') => {
+    setOfficeMode(kind === 'office');
+    setCifraMode(kind === 'cifra');
   };
 
   // Se veio de "Atualizar Lote" (arquivo já baixado do Storage), carrega o
@@ -240,7 +262,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
         setNumPages(pdf.numPages);
         setStartPage(1);
         setEndPage(pdf.numPages);
-        setOfficeMode(await detectReliableTextLayer(pdf));
+        applyDetectedMode(await detectReliableTextLayer(pdf));
       } catch (err) {
         console.error('Erro ao ler número de páginas do lote:', err);
       }
@@ -263,7 +285,7 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
         setNumPages(pdf.numPages);
         setStartPage(1);
         setEndPage(pdf.numPages);
-        setOfficeMode(await detectReliableTextLayer(pdf));
+        applyDetectedMode(await detectReliableTextLayer(pdf));
       } catch (err) {
         console.error('Erro ao ler número de páginas:', err);
       }
@@ -440,7 +462,52 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
           // do PDF antes de sequer considerar chamar a IA. Só funciona com
           // batchSize = 1 (cada iteração deste loop é sempre 1 página só, então
           // `i` já é a página em questão) e páginas com texto selecionável.
-          if (officeMode) {
+          // Modo Cifra (sem IA): título/autor/letra/acordes direto do texto do PDF.
+          if (cifraMode && !officeMode) {
+            setStatus(`Lendo página ${i} de ${lastPage} (texto do PDF, sem IA)...`);
+            const cifraPage = await pdf.getPage(i);
+            const cifraResult = await extractCifraPage(cifraPage, pdfjs.OPS);
+            if (cifraResult) {
+              usedDeterministic = true;
+              for (const part of cifraResult.songs) {
+                const last = localAllSongs[localAllSongs.length - 1];
+                // Parte sem título = continuação da música da página anterior:
+                // junta ao final dela, sem remover nenhuma linha repetida.
+                if (part.title === null && last) {
+                  const merged: ExtractedSong = { ...last, content: `${last.content}\n\n${part.content}`.trim() };
+                  localAllSongs[localAllSongs.length - 1] = merged;
+                  const lastIdx = localAllSongs.length - 1;
+                  setExtractedSongs(prev => {
+                    if (prev.length === 0) return prev;
+                    const next = [...prev];
+                    next[lastIdx] = merged;
+                    return next;
+                  });
+                  continue;
+                }
+                const song: ExtractedSong = {
+                  title: part.title ?? (extractFirstLyricLine(part.content.split('\n')) || `Página ${i}`),
+                  artist: part.artist,
+                  category: '',
+                  original_key: part.original_key,
+                  content: part.content,
+                  youtube_url: '',
+                };
+                localAllSongs = [...localAllSongs, song];
+                setExtractedSongs(prev => [...prev, song]);
+              }
+              previousPageLastTitleKey = localAllSongs.length > 0
+                ? normalizeTitle(localAllSongs[localAllSongs.length - 1].title)
+                : null;
+              previousPageLastTitleRaw = localAllSongs.length > 0
+                ? localAllSongs[localAllSongs.length - 1].title
+                : null;
+              consecutiveFailures = 0;
+            }
+            // cifraResult === null: página escaneada/foto — segue para imagem + IA.
+          }
+
+          if (!usedDeterministic && officeMode) {
             setStatus(`Lendo página ${i} de ${lastPage} (modo Ofício/Laudes)...`);
             const officePage = await pdf.getPage(i);
             const officeWords = await extractPageWords(officePage);
@@ -1163,8 +1230,27 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                 <label className="flex items-start gap-4 cursor-pointer">
                   <input
                     type="checkbox"
+                    checked={cifraMode}
+                    onChange={(e) => { setCifraMode(e.target.checked); if (e.target.checked) setOfficeMode(false); }}
+                    className="mt-1 w-4 h-4 flex-shrink-0 accent-brand-orange"
+                  />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-600 leading-snug">
+                      Cifra com texto selecionável (sem IA — igual ao PDF)
+                    </p>
+                    <p className="text-[9px] text-slate-400 font-normal leading-relaxed mt-1">
+                      Ligado automaticamente quando o PDF é de cifras com texto selecionável. Lê título, autor, letra e acordes direto do PDF, com cada acorde na sílaba certa, e mantém linhas em branco e refrões. Não usa IA, então não trava nem resume. Páginas escaneadas continuam usando IA.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-xl">
+                <label className="flex items-start gap-4 cursor-pointer">
+                  <input
+                    type="checkbox"
                     checked={officeMode}
-                    onChange={(e) => setOfficeMode(e.target.checked)}
+                    onChange={(e) => { setOfficeMode(e.target.checked); if (e.target.checked) setCifraMode(false); }}
                     className="mt-1 w-4 h-4 flex-shrink-0 accent-brand-orange"
                   />
                   <div className="flex-1">
