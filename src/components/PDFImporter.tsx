@@ -3,7 +3,7 @@ import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save, Se
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { extractPreAlignedPageText, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage, extractFirstLyricLine } from '../lib/chordproExtractor';
+import { extractPreAlignedPageText, prepareHeaderFooterFilter, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage, extractFirstLyricLine } from '../lib/chordproExtractor';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
 
@@ -356,6 +356,11 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
       const totalPages = pdf.numPages;
+
+      // Descobre o cabeçalho/rodapé repetido do caderno (ex.: "Cantai a Deus
+      // com Alegria Cifrado...", "RRS – Versão Fev/2023 Pág. 88 / 1302") para
+      // que ele não entre dentro das cifras importadas.
+      await prepareHeaderFooterFilter(pdf);
 
       // Respeita o intervalo de páginas escolhido pelo usuário — importante para PDFs
       // grandes (hinários com centenas de páginas), onde processar tudo de uma vez é
