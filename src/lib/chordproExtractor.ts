@@ -709,14 +709,16 @@ function parseHexColor(
 }
 
 /**
- * Lê as caixas de fundo colorido da página (o "fundo salmão" do refrão e
- * das respostas da assembleia). Cinzas, branco e cores escuras são
- * ignorados: a barra cinza do título e as linhas vermelhas do cabeçalho
- * não contam.
+ * Percorre as operações de desenho da página e devolve os retângulos
+ * preenchidos cuja cor/tamanho forem aceitos por `accept`.
  */
-export async function extractShadedRects(
+async function collectFilledRects(
   page: any,
-  OPS: any
+  OPS: any,
+  accept: (
+    rgb: [number, number, number],
+    rect: ShadeRect
+  ) => boolean
 ): Promise<ShadeRect[]> {
   const rects: ShadeRect[] = [];
 
@@ -764,14 +766,6 @@ export async function extractShadedRects(
 
         if (!isFill || !fill || !bbox || bbox.length < 4) continue;
 
-        const [r, g, b] = fill;
-        const max = Math.max(r, g, b);
-        const min = Math.min(r, g, b);
-        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-        const saturated = max - min >= 8;
-
-        if (!saturated || luminance < 0.75 || luminance > 0.995) continue;
-
         const ax = ctm[0] * bbox[0] + ctm[2] * bbox[1] + ctm[4];
         const ay = ctm[1] * bbox[0] + ctm[3] * bbox[1] + ctm[5];
         const bx = ctm[0] * bbox[2] + ctm[2] * bbox[3] + ctm[4];
@@ -784,17 +778,61 @@ export async function extractShadedRects(
           y1: Math.max(ay, by)
         };
 
-        // Só caixas grandes o bastante para conter uma linha de texto.
-        if (rect.y1 - rect.y0 >= 8 && rect.x1 - rect.x0 >= 60) {
-          rects.push(rect);
-        }
+        if (accept(fill, rect)) rects.push(rect);
       }
     }
   } catch (err) {
-    console.error('Falha ao ler retângulos coloridos da página:', err);
+    console.error('Falha ao ler retângulos da página:', err);
   }
 
   return rects;
+}
+
+/**
+ * Lê as caixas de fundo colorido da página (o "fundo salmão" do refrão e
+ * das respostas da assembleia). Cinzas, branco e cores escuras são
+ * ignorados: a barra cinza do título e as linhas vermelhas do cabeçalho
+ * não contam.
+ */
+export async function extractShadedRects(
+  page: any,
+  OPS: any
+): Promise<ShadeRect[]> {
+  return collectFilledRects(page, OPS, ([r, g, b], rect) => {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const saturated = max - min >= 8;
+
+    if (!saturated || luminance < 0.75 || luminance > 0.995) return false;
+
+    // Só caixas grandes o bastante para conter uma linha de texto.
+    return rect.y1 - rect.y0 >= 8 && rect.x1 - rect.x0 >= 60;
+  });
+}
+
+/**
+ * Lê as barras cinzas largas onde o caderno imprime o TÍTULO de cada
+ * música. É o que separa uma música da outra (e uma música nova de uma
+ * página que só continua a anterior).
+ */
+export async function extractTitleBars(
+  page: any,
+  OPS: any,
+  pageWidth: number
+): Promise<ShadeRect[]> {
+  return collectFilledRects(page, OPS, ([r, g, b], rect) => {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+    if (max - min >= 8) return false;
+    if (luminance < 0.7 || luminance > 0.95) return false;
+
+    const h = rect.y1 - rect.y0;
+
+    return h >= 12 && h <= 40 && rect.x1 - rect.x0 >= pageWidth * 0.6;
+  });
 }
 
 function markShadedLines(
@@ -1506,6 +1544,172 @@ export async function extractPreAlignedPageText(
   // Página sem nada além de cabeçalho/rodapé e rótulos de imagens: sem
   // camada de texto útil — o importador segue o caminho normal (imagem).
   return text.trim().length > 0 ? text : null;
+}
+
+// ---------------------------------------------------------------------------
+// MODO CIFRA (sem IA): uma ou mais músicas por página, direto do texto do PDF
+// ---------------------------------------------------------------------------
+
+export interface CifraSong {
+  /** null = esta parte da página não tem título: continua a música anterior. */
+  title: string | null;
+  artist: string;
+  original_key: string;
+  content: string;
+}
+
+export interface CifraPageResult {
+  songs: CifraSong[];
+  /** a página tinha texto, mas nada aproveitável (só imagem/partitura). */
+  skipped: boolean;
+}
+
+/**
+ * Separa "TÍTULO (Autor) /tags/" nas três partes. As tags no fim
+ * ("/atope/", "/reido/aclam/", "//") são códigos internos de busca do
+ * caderno, não fazem parte do nome.
+ */
+export function parseCifraTitle(raw: string): {
+  title: string;
+  artist: string;
+} {
+  let t = raw.replace(/\s+/g, ' ').trim();
+
+  // tags no final: "/atope/", "/ glori/", "//", "/reido/aclam/"
+  t = t.replace(/\s*(?:\/\s*[A-Za-zÀ-ú0-9]*\s*)+$/, '').trim();
+
+  let artist = '';
+
+  const m = /^(.*?)\s*\(([^()]*)\)\s*$/.exec(t);
+
+  if (m && m[1].trim().length > 0) {
+    t = m[1].trim();
+    artist = m[2].replace(/\s+/g, ' ').trim();
+  }
+
+  return { title: t, artist };
+}
+
+function guessOriginalKey(content: string): string {
+  const explicit = /Tom\s*Orig(?:inal)?\s*:\s*([A-G][#b]?m?)/i.exec(
+    content
+  );
+
+  if (explicit) return explicit[1];
+
+  const first = /\[([A-G][#b]?m?)(?=[^\]]*\])/.exec(content);
+
+  return first ? first[1] : '';
+}
+
+/**
+ * Extrai as músicas de uma página de cifra com texto selecionável, sem IA.
+ * Devolve null quando a página não tem camada de texto (escaneada/foto):
+ * nesse caso o importador segue para o fluxo de imagem + IA.
+ */
+export async function extractCifraPage(
+  page: any,
+  ops: any
+): Promise<CifraPageResult | null> {
+  const words = await extractPageWords(page);
+
+  if (words.length === 0) return null;
+
+  const view = page.view as number[];
+  const pageWidth = view[2] - view[0];
+  const pageHeight = view[3] - view[1];
+
+  let lines = groupWordsIntoLines(words, pageWidth);
+
+  lines = removeHeaderFooterLines(lines, pageHeight, view[1]);
+
+  if (lines.length === 0) {
+    return { songs: [], skipped: true };
+  }
+
+  const bars = await extractTitleBars(page, ops, pageWidth);
+
+  try {
+    markShadedLines(lines, await extractShadedRects(page, ops));
+  } catch {
+    // sem fundo colorido: segue sem marcar refrão
+  }
+
+  const isTitleLine = (l: PdfLine) =>
+    bars.some(b => l.y >= b.y0 - 1 && l.y <= b.y1 + 1);
+
+  // Sem barra cinza na página: usa o padrão "TÍTULO ... /tag/" como título.
+  const TAG_TITLE_RE = /\/\s*[A-Za-zÀ-ú0-9]+\s*\/\s*$/;
+
+  const titleFlags = lines.map(l =>
+    bars.length > 0
+      ? isTitleLine(l)
+      : !isChordLine(l) && TAG_TITLE_RE.test(lineText(l).trim())
+  );
+
+  const groups: { titleLines: PdfLine[]; body: PdfLine[] }[] = [];
+
+  lines.forEach((l, i) => {
+    if (titleFlags[i]) {
+      const last = groups[groups.length - 1];
+
+      if (last && last.body.length === 0 && last.titleLines.length > 0) {
+        last.titleLines.push(l);
+      } else {
+        groups.push({ titleLines: [l], body: [] });
+      }
+    } else {
+      if (groups.length === 0) {
+        groups.push({ titleLines: [], body: [] });
+      }
+
+      groups[groups.length - 1].body.push(l);
+    }
+  });
+
+  const songs: CifraSong[] = [];
+
+  for (const g of groups) {
+    const content = extractPageChordProText(g.body, pageWidth).trim();
+
+    if (g.titleLines.length === 0 && content.length === 0) continue;
+
+    // Continuação só com rótulos de partitura/imagem: nada a importar.
+    if (g.titleLines.length === 0) {
+      const hasMusic = /\[[^\]]+\]/.test(content);
+      const hasLyric = content
+        .split('\n')
+        .some(l => /[A-Za-zÀ-ú]{3,}/.test(l.replace(/\[[^\]]*\]/g, '')));
+
+      if (!hasMusic && !hasLyric) continue;
+    }
+
+    if (g.titleLines.length === 0) {
+      songs.push({
+        title: null,
+        artist: '',
+        original_key: guessOriginalKey(content),
+        content
+      });
+
+      continue;
+    }
+
+    const rawTitle = g.titleLines
+      .map(l => lineText(l))
+      .join(' ');
+
+    const { title, artist } = parseCifraTitle(rawTitle);
+
+    songs.push({
+      title,
+      artist,
+      original_key: guessOriginalKey(content),
+      content
+    });
+  }
+
+  return { songs, skipped: songs.length === 0 };
 }
 
 // ---------------------------------------------------------------------------
