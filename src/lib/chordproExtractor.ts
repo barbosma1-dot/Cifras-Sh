@@ -3,11 +3,20 @@ export interface PdfWord {
   x0: number;
   x1: number;
   y: number;
+  /**
+   * Posição X de cada caractere da palavra (length = text.length + 1: o
+   * último valor é o x1 da palavra). Permite encaixar um acorde no MEIO
+   * de uma palavra (ex.: "Se[Bb9]nhor"), igual ao PDF original, em vez de
+   * só no começo da palavra.
+   */
+  charX?: number[];
 }
 
 export interface PdfLine {
   y: number;
   words: PdfWord[];
+  /** true quando a linha está sobre um retângulo colorido (refrão/resposta). */
+  shaded?: boolean;
 }
 
 const Y_TOLERANCE = 2;
@@ -30,10 +39,12 @@ const DIM_SYMBOL = '(?:°|º|ø)?';
 const ALTERATION =
   '(?:\\(\\s*[#b]?\\d{1,2}[+-]?\\s*\\)|[+-])?';
 
-const BASS = `(?:\\/${ROOT}\\d{0,2})?`;
+const BASS = `(?:\\/${ROOT}\\d{0,2})?(?:\\/[-+b#]?\\d{1,2})?\\*?`;
 
+// Marcadores que cifras de banda colocam colados no acorde: "*Bm", ".Aadd9",
+// "(Em", "G7M)".
 const CHORD_TOKEN_RE = new RegExp(
-  `^\\(?${ROOT}${QUALITY}${EXTENSION}${EXTRA_MAJOR}${DIM_SYMBOL}${ALTERATION}${BASS}\\)?$`
+  `^[*.]?\\(?${ROOT}${QUALITY}${EXTENSION}${EXTRA_MAJOR}${DIM_SYMBOL}${ALTERATION}${BASS}\\)?$`
 );
 
 const BAR_SYMBOL_RE = /^[|%]+$/;
@@ -46,48 +57,208 @@ function isLooseHyphen(text: string): boolean {
   return text === '-' || text === '–' || text === '—';
 }
 
+// Parênteses soltos ("( Em D/F# )") e símbolos de ênfase não contam nem a
+// favor nem contra na decisão "esta linha é de acordes?".
+function isNeutralToken(text: string): boolean {
+  return (
+    isLooseHyphen(text) ||
+    /^[()*.\/]+$/.test(text)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LARGURA DE CARACTERES
+// ---------------------------------------------------------------------------
+
+/**
+ * Larguras (Helvetica/Arial, unidades de 1/1000 em) dos caracteres mais
+ * comuns. O pdf.js só informa a largura do TRECHO de texto inteiro, não de
+ * cada letra. Antes, a largura era repartida igualmente entre as letras
+ * ("i" ocupava o mesmo que "m"), o que deslocava acordes em até 1-2
+ * sílabas. Aqui a largura do trecho é repartida proporcionalmente a estas
+ * larguras — o total continua sendo exatamente o largura real do trecho,
+ * só muda como ele é dividido entre as letras.
+ */
+const GLYPH_W: Record<string, number> = {
+  ' ': 278, '!': 278, '"': 355, '#': 556, '$': 556, '%': 889, '&': 667,
+  "'": 191, '(': 333, ')': 333, '*': 389, '+': 584, ',': 278, '-': 333,
+  '.': 278, '/': 278, ':': 278, ';': 278, '<': 584, '=': 584, '>': 584,
+  '?': 556, '@': 1015, '[': 278, '\\': 278, ']': 278, '^': 469, '_': 556,
+  '`': 333, '{': 334, '|': 260, '}': 334, '~': 584, '…': 1000, '–': 556,
+  '—': 1000, '°': 400, 'º': 365, 'ª': 370,
+  A: 667, B: 667, C: 722, D: 722, E: 667, F: 611, G: 778, H: 722, I: 278,
+  J: 500, K: 667, L: 556, M: 833, N: 722, O: 778, P: 667, Q: 778, R: 722,
+  S: 667, T: 611, U: 722, V: 667, W: 944, X: 667, Y: 667, Z: 611,
+  a: 556, b: 556, c: 500, d: 556, e: 556, f: 278, g: 556, h: 556, i: 222,
+  j: 222, k: 500, l: 222, m: 833, n: 556, o: 556, p: 556, q: 556, r: 333,
+  s: 500, t: 278, u: 556, v: 500, w: 722, x: 500, y: 500, z: 500
+};
+
+function glyphWidth(ch: string): number {
+  const direct = GLYPH_W[ch];
+  if (direct !== undefined) return direct;
+
+  if (ch >= '0' && ch <= '9') return 556;
+
+  // Letras acentuadas têm a mesma largura da letra-base (á = a, Ç = C...).
+  const base = ch.normalize('NFD').charAt(0);
+  const viaBase = GLYPH_W[base];
+  if (viaBase !== undefined) return viaBase;
+
+  return 556;
+}
+
+/**
+ * Posição X de cada caractere de um trecho de texto: length = str.length+1.
+ */
+function charPositions(
+  str: string,
+  x0: number,
+  width: number
+): number[] {
+  const n = str.length;
+  const weights: number[] = [];
+  let total = 0;
+
+  for (let i = 0; i < n; i++) {
+    const w = glyphWidth(str[i]);
+    weights.push(w);
+    total += w;
+  }
+
+  const out: number[] = [x0];
+  let acc = 0;
+
+  for (let i = 0; i < n; i++) {
+    acc += weights[i];
+    out.push(x0 + (total > 0 ? (acc / total) * width : 0));
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// EXTRAÇÃO DE PALAVRAS
+// ---------------------------------------------------------------------------
+
+interface RawItem {
+  str: string;
+  x0: number;
+  y: number;
+  width: number;
+  size: number;
+}
+
 /**
  * Extrai as palavras da camada de texto do PDF com suas coordenadas reais.
+ *
+ * CORREÇÃO (bug do "Se nhor", "Ky rie", "E b"):
+ * PDFs cifrados feitos no Word trocam de fonte (negrito/normal) no meio
+ * das palavras — cada troca vira um "item" de texto separado, mas os itens
+ * ficam encostados (sem espaço entre eles). Antes, cada item virava uma
+ * palavra, e o texto saía como "Se nhor", "Ca mi nho", "E b". Agora os
+ * itens são juntados quando não existe espaço nem vão entre eles.
  */
 export async function extractPageWords(
   page: any
 ): Promise<PdfWord[]> {
   const textContent = await page.getTextContent();
 
-  const words: PdfWord[] = [];
+  const items: RawItem[] = [];
 
   for (const item of textContent.items as any[]) {
     const str: string = item.str;
 
-    if (!str || !str.trim()) continue;
+    if (typeof str !== 'string' || str.length === 0) continue;
 
-    const x0 = item.transform[4];
-    const y = item.transform[5];
+    items.push({
+      str,
+      x0: item.transform[4],
+      y: item.transform[5],
+      width: item.width ?? 0,
+      size:
+        Math.abs(item.transform[3]) ||
+        item.height ||
+        10
+    });
+  }
 
-    const totalWidth: number = item.width ?? 0;
-    const totalLen = str.length || 1;
+  // Agrupa os itens em linhas por Y.
+  items.sort((a, b) => b.y - a.y || a.x0 - b.x0);
 
-    const re = /\S+/g;
+  const rows: RawItem[][] = [];
 
-    let m: RegExpExecArray | null;
+  for (const it of items) {
+    const row = rows.find(
+      r => Math.abs(r[0].y - it.y) <= Y_TOLERANCE
+    );
 
-    while ((m = re.exec(str)) !== null) {
-      const charStart = m.index;
-      const charEnd = m.index + m[0].length;
-
-      const wx0 =
-        x0 + (charStart / totalLen) * totalWidth;
-
-      const wx1 =
-        x0 + (charEnd / totalLen) * totalWidth;
-
-      words.push({
-        text: m[0],
-        x0: wx0,
-        x1: wx1,
-        y
-      });
+    if (row) {
+      row.push(it);
+    } else {
+      rows.push([it]);
     }
+  }
+
+  const words: PdfWord[] = [];
+
+  for (const row of rows) {
+    row.sort((a, b) => a.x0 - b.x0);
+
+    let curText = '';
+    let curX: number[] = [];
+    let curY = 0;
+    let prevEnd = -Infinity;
+    let prevSize = 10;
+
+    const flush = () => {
+      if (curText.length > 0) {
+        words.push({
+          text: curText,
+          x0: curX[0],
+          x1: curX[curX.length - 1],
+          y: curY,
+          charX: curX
+        });
+      }
+
+      curText = '';
+      curX = [];
+    };
+
+    for (const it of row) {
+      const pos = charPositions(it.str, it.x0, it.width);
+
+      // Vão entre este item e o anterior: se for visível, é um espaço.
+      const gap = it.x0 - prevEnd;
+      const gapLimit = Math.max(0.9, prevSize * 0.07);
+
+      if (curText.length > 0 && gap > gapLimit) {
+        flush();
+      }
+
+      for (let i = 0; i < it.str.length; i++) {
+        const ch = it.str[i];
+
+        if (/\s/.test(ch)) {
+          flush();
+          continue;
+        }
+
+        if (curText.length === 0) {
+          curY = it.y;
+          curX = [pos[i]];
+        }
+
+        curText += ch;
+        curX.push(pos[i + 1]);
+      }
+
+      prevEnd = it.x0 + it.width;
+      prevSize = it.size;
+    }
+
+    flush();
   }
 
   return words;
@@ -146,10 +317,6 @@ function groupWordsByYOnly(
 /**
  * Mesma heurística usada por orderTwoColumnPage para reconhecer um
  * cabeçalho/título centralizado que atravessa visualmente as duas colunas.
- * Extraída para função própria porque agora ela também é usada ANTES do
- * agrupamento em colunas (ver groupWordsIntoLines) — as duas etapas
- * precisam concordar sobre o que é "linha central", ou o cabeçalho é
- * partido ao meio numa etapa e reconhecido inteiro na outra.
  */
 function isSpanningLine(
   line: PdfLine,
@@ -180,28 +347,9 @@ function isSpanningLine(
 /**
  * Agrupa palavras por linha.
  *
- * CORREÇÃO CRÍTICA (bug do "Ant./T.P. misturado com o salmo errado"):
- *
- * Antes, esta função agrupava TODAS as palavras da página por y, sem
- * nenhuma noção de coluna. Numa página de duas colunas, uma palavra da
- * coluna esquerda e uma da coluna direita na MESMA altura (y) caíam na
- * MESMA linha — o texto da coluna esquerda e da coluna direita ficavam
- * literalmente fundidos numa linha só (ex.: "Jerusalém; ... - ele faz
- * cair a neve como lã", misturando a antífona da esquerda com o versículo
- * do salmo da direita). orderTwoColumnPage() só reordena LINHAS inteiras
- * entre coluna esquerda/direita — ela não sabe (nem pode) desfazer uma
- * fusão que já aconteceu dentro de uma única linha.
- *
- * Agora, quando pageWidth é informado:
- * 1. as palavras são pré-agrupadas por y só para achar cabeçalhos/títulos
- *    centralizados (mesma regra de orderTwoColumnPage);
- * 2. as palavras restantes são divididas em coluna esquerda/direita PELO
- *    PRÓPRIO CENTRO DA PALAVRA (não da linha, que ainda não existe);
- * 3. cada coluna é agrupada por y SEPARADAMENTE — então uma linha nunca
- *    mistura palavras das duas colunas.
- *
- * pageWidth é opcional só para não quebrar chamadas antigas — sempre que
- * a página puder ter duas colunas, passe pageWidth.
+ * Quando pageWidth é informado, a página é tratada como possivelmente de
+ * duas colunas (ver orderTwoColumnPage): uma linha nunca mistura palavras
+ * das duas colunas e a coluna esquerda é lida inteira antes da direita.
  */
 export function groupWordsIntoLines(
   words: PdfWord[],
@@ -217,11 +365,73 @@ export function groupWordsIntoLines(
 }
 
 /**
+ * Uma linha tem "vão de coluna" quando há palavras dos dois lados do
+ * centro e um espaço vazio de pelo menos 20pt entre elas.
+ */
+function hasColumnGap(
+  line: PdfLine,
+  mid: number
+): boolean {
+  const left = line.words.filter(
+    w => (w.x0 + w.x1) / 2 < mid
+  );
+  const right = line.words.filter(
+    w => (w.x0 + w.x1) / 2 >= mid
+  );
+
+  if (!left.length || !right.length) return false;
+
+  const leftMaxX = Math.max(...left.map(w => w.x1));
+  const rightMinX = Math.min(...right.map(w => w.x0));
+
+  return rightMinX - leftMaxX >= 20;
+}
+
+/**
+ * Uma linha "cruza" o centro quando alguma palavra (ou duas palavras
+ * quase encostadas) passa por cima da linha central da página.
+ */
+function crossesCenter(
+  line: PdfLine,
+  mid: number
+): boolean {
+  const ws = [...line.words].sort((a, b) => a.x0 - b.x0);
+
+  for (let i = 0; i < ws.length; i++) {
+    const w = ws[i];
+
+    if (w.x0 < mid - 3 && w.x1 > mid + 3) return true;
+
+    const next = ws[i + 1];
+
+    if (
+      next &&
+      w.x1 <= mid &&
+      next.x0 >= mid &&
+      next.x0 - w.x1 < 9
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Decide se a página realmente possui duas colunas independentes.
  *
  * É importante NÃO considerar uma linha longa de uma única coluna como
  * "linha centralizada". Páginas de Leitura, Preces e Oração ocupam a largura
  * inteira da folha e precisam continuar em ordem vertical normal.
+ *
+ * CORREÇÃO (cifra de coluna única lida como duas colunas): em cifras de
+ * banda, observações à direita da linha ("Ref.", "Conv: A2 C# D...") e
+ * letras que passam do meio da folha criam muitas linhas com "vão". Antes,
+ * 8 linhas assim bastavam para a página ser tratada como duas colunas e
+ * toda a ordem de leitura saía embaralhada. Numa página de duas colunas de
+ * verdade, o centro da folha fica livre: só poucas linhas (títulos)
+ * cruzam o meio. Se muitas linhas cruzam o meio, a página é de coluna
+ * única.
  */
 function hasTwoColumnLayout(
   lines: PdfLine[],
@@ -229,35 +439,18 @@ function hasTwoColumnLayout(
 ): boolean {
   const mid = pageWidth / 2;
   let pairedRows = 0;
+  let crossingRows = 0;
 
   for (const line of lines) {
     if (!line.words.length) continue;
 
-    const left = line.words.filter(
-      w => (w.x0 + w.x1) / 2 < mid
-    );
-    const right = line.words.filter(
-      w => (w.x0 + w.x1) / 2 >= mid
-    );
-
-    if (!left.length || !right.length) continue;
-
-    const leftMaxX = Math.max(
-      ...left.map(w => w.x1)
-    );
-    const rightMinX = Math.min(
-      ...right.map(w => w.x0)
-    );
-
-    // Uma distância real entre os dois blocos indica duas colunas.
-    // Uma frase longa de uma coluna, ao contrário, atravessa o centro
-    // sem deixar esse vão.
-    if (rightMinX - leftMaxX >= 20) {
-      pairedRows++;
-    }
+    if (hasColumnGap(line, mid)) pairedRows++;
+    if (crossesCenter(line, mid)) crossingRows++;
   }
 
-  return pairedRows >= 8;
+  if (pairedRows < 8) return false;
+
+  return crossingRows <= Math.max(5, pairedRows * 0.3);
 }
 
 /**
@@ -271,9 +464,6 @@ function hasTwoColumnLayout(
  *   3. lê a coluna esquerda inteira e depois a direita;
  *   4. mantém novamente, no final, qualquer linha de largura total (como a
  *      antífona de fechamento).
- *
- * Isso evita dois bugs diferentes ao mesmo tempo: misturar colunas na mesma
- * linha e colocar textos de uma coluna inteira ANTES do título da seção.
  */
 function orderTwoColumnPage(
   lines: PdfLine[],
@@ -289,38 +479,15 @@ function orderTwoColumnPage(
 
   const mid = pageWidth / 2;
 
-  // Uma linha só é considerada parte do corpo de duas colunas quando há
-  // palavras dos dois lados E existe um vão real entre as duas colunas.
-  // Assim, uma frase longa que atravessa o centro não inicia falsamente o
-  // corpo de duas colunas.
-  const pairedRows = cleaned.filter(line => {
-    const left = line.words.filter(
-      w => (w.x0 + w.x1) / 2 < mid
-    );
-    const right = line.words.filter(
-      w => (w.x0 + w.x1) / 2 >= mid
-    );
-
-    if (!left.length || !right.length) return false;
-
-    const leftMaxX = Math.max(
-      ...left.map(w => w.x1)
-    );
-    const rightMinX = Math.min(
-      ...right.map(w => w.x0)
-    );
-
-    return rightMinX - leftMaxX >= 20;
-  });
+  const pairedRows = cleaned.filter(line =>
+    hasColumnGap(line, mid)
+  );
 
   if (pairedRows.length < 3) {
     return cleaned;
   }
 
-  // Num PDF, Y CRESCE PARA CIMA (o topo da página tem o maior Y). O menor
-  // Y entre as linhas pareadas é, portanto, a linha mais BAIXA do bloco de
-  // duas colunas (fisicamente embaixo, perto do rodapé), e o maior Y é a
-  // linha mais ALTA do bloco (fisicamente em cima, perto do título).
+  // Num PDF, Y CRESCE PARA CIMA (o topo da página tem o maior Y).
   const lowestBodyY = Math.min(
     ...pairedRows.map(line => line.y)
   );
@@ -328,15 +495,6 @@ function orderTwoColumnPage(
     ...pairedRows.map(line => line.y)
   );
 
-  // CORREÇÃO (bug do cabeçalho/título indo parar DEPOIS do corpo de duas
-  // colunas): como Y cresce para cima, o cabeçalho da página ("Hino",
-  // "Salmo 50(51)" etc.) sempre tem Y MAIOR que o bloco de duas colunas —
-  // ou seja, ele pertence ao grupo "acima do corpo", não ao grupo "abaixo
-  // do corpo". A versão anterior comparava certo, mas devolvia os dois
-  // grupos na ORDEM ERRADA (rodapé antes do corpo, cabeçalho depois do
-  // corpo), fazendo o título da seção só ser reconhecido no fim da
-  // página — depois de todo o conteúdo já ter sido perdido ou atribuído
-  // à seção anterior por engano.
   const aboveBodyLines = cleaned.filter(
     line => line.y > highestBodyY + Y_TOLERANCE
   );
@@ -378,7 +536,7 @@ function isChordLine(
 ): boolean {
   const relevant =
     line.words.filter(
-      w => !isLooseHyphen(w.text)
+      w => !isNeutralToken(w.text)
     );
 
   if (relevant.length === 0) {
@@ -397,127 +555,649 @@ function isChordLine(
   );
 }
 
+// ---------------------------------------------------------------------------
+// CABEÇALHO / RODAPÉ REPETIDOS
+// ---------------------------------------------------------------------------
+
+const MARGIN_BAND = 0.06;
+
+let repeatedMarginKeys: Set<string> | null = null;
+
+function marginKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\d+/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function lineText(line: PdfLine): string {
+  return line.words.map(w => w.text).join(' ');
+}
+
+function isMarginLine(
+  line: PdfLine,
+  pageHeight: number,
+  pageBottom: number
+): boolean {
+  const rel = (line.y - pageBottom) / pageHeight;
+
+  return rel > 1 - MARGIN_BAND || rel < MARGIN_BAND;
+}
+
+const PAGE_NUMBER_RE =
+  /^(?:p[áa]g(?:ina)?\.?\s*)?\d+(?:\s*(?:\/|de)\s*\d+)?$/i;
+
+/**
+ * Descobre, olhando algumas páginas do documento, quais textos se repetem
+ * no topo/rodapé (ex.: "Cantai a Deus com Alegria Cifrado...", "RRS –
+ * Versão Fev/2023 Pág. 88 / 1302") para removê-los de TODAS as páginas.
+ * Chamar UMA vez depois de abrir o PDF, antes de extrair as páginas.
+ * Números são normalizados, então "Pág. 88" e "Pág. 90" contam como o
+ * mesmo texto.
+ */
+export async function prepareHeaderFooterFilter(
+  pdf: any,
+  sampleSize = 12
+): Promise<void> {
+  repeatedMarginKeys = null;
+
+  try {
+    const total: number = pdf.numPages;
+
+    if (!total || total < 3) return;
+
+    const count = Math.min(sampleSize, total);
+    const pagesToSample = new Set<number>();
+
+    for (let i = 0; i < count; i++) {
+      pagesToSample.add(
+        Math.max(
+          1,
+          Math.min(total, Math.round(1 + (i * (total - 1)) / Math.max(1, count - 1)))
+        )
+      );
+    }
+
+    const counts = new Map<string, number>();
+    let sampled = 0;
+
+    for (const n of pagesToSample) {
+      const page = await pdf.getPage(n);
+      const words = await extractPageWords(page);
+
+      if (!hasReliableTextLayer(words)) continue;
+
+      sampled++;
+
+      const view = page.view as number[];
+      const pageHeight = view[3] - view[1];
+      const pageBottom = view[1];
+
+      const seenOnPage = new Set<string>();
+
+      for (const line of groupWordsByYOnly(words)) {
+        if (!isMarginLine(line, pageHeight, pageBottom)) continue;
+
+        const key = marginKey(lineText(line));
+
+        if (key) seenOnPage.add(key);
+      }
+
+      for (const key of seenOnPage) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+
+    if (sampled < 3) return;
+
+    const keys = new Set<string>();
+    const minCount = Math.max(2, Math.ceil(sampled * 0.5));
+
+    for (const [key, c] of counts) {
+      if (c >= minCount) keys.add(key);
+    }
+
+    repeatedMarginKeys = keys;
+  } catch (err) {
+    console.error('Falha ao detectar cabeçalho/rodapé repetidos:', err);
+    repeatedMarginKeys = null;
+  }
+}
+
+function removeHeaderFooterLines(
+  lines: PdfLine[],
+  pageHeight: number,
+  pageBottom: number
+): PdfLine[] {
+  return lines.filter(line => {
+    if (!isMarginLine(line, pageHeight, pageBottom)) return true;
+
+    const text = lineText(line).trim();
+
+    if (PAGE_NUMBER_RE.test(text)) return false;
+
+    if (repeatedMarginKeys?.has(marginKey(text))) return false;
+
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// RETÂNGULOS COLORIDOS (refrão / resposta da assembleia)
+// ---------------------------------------------------------------------------
+
+interface ShadeRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+function parseHexColor(
+  value: any
+): [number, number, number] | null {
+  if (typeof value !== 'string') return null;
+
+  const m = /^#([0-9a-f]{6})$/i.exec(value.trim());
+
+  if (!m) return null;
+
+  const n = parseInt(m[1], 16);
+
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * Lê as caixas de fundo colorido da página (o "fundo salmão" do refrão e
+ * das respostas da assembleia). Cinzas, branco e cores escuras são
+ * ignorados: a barra cinza do título e as linhas vermelhas do cabeçalho
+ * não contam.
+ */
+export async function extractShadedRects(
+  page: any,
+  OPS: any
+): Promise<ShadeRect[]> {
+  const rects: ShadeRect[] = [];
+
+  try {
+    const ol = await page.getOperatorList();
+
+    let fill: [number, number, number] | null = null;
+
+    // Pilha de transformações (cm / q / Q) para chegar nas coordenadas
+    // reais da página.
+    let ctm = [1, 0, 0, 1, 0, 0];
+    const stack: number[][] = [];
+
+    const mul = (m: number[], n: number[]) => [
+      m[0] * n[0] + m[2] * n[1],
+      m[1] * n[0] + m[3] * n[1],
+      m[0] * n[2] + m[2] * n[3],
+      m[1] * n[2] + m[3] * n[3],
+      m[0] * n[4] + m[2] * n[5] + m[4],
+      m[1] * n[4] + m[3] * n[5] + m[5]
+    ];
+
+    for (let i = 0; i < ol.fnArray.length; i++) {
+      const fn = ol.fnArray[i];
+      const args = ol.argsArray[i];
+
+      if (fn === OPS.save) {
+        stack.push([...ctm]);
+      } else if (fn === OPS.restore) {
+        ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+      } else if (fn === OPS.transform) {
+        ctm = mul(ctm, args);
+      } else if (fn === OPS.setFillRGBColor) {
+        fill = parseHexColor(args?.[0]) ?? null;
+      } else if (fn === OPS.constructPath) {
+        // pdf.js v5: args = [paintOp, [pathData], [minX, minY, maxX, maxY]]
+        const paintOp = args?.[0];
+        const bbox = args?.[2];
+
+        const isFill =
+          paintOp === OPS.fill ||
+          paintOp === OPS.eoFill ||
+          paintOp === OPS.fillStroke ||
+          paintOp === OPS.eoFillStroke;
+
+        if (!isFill || !fill || !bbox || bbox.length < 4) continue;
+
+        const [r, g, b] = fill;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        const saturated = max - min >= 8;
+
+        if (!saturated || luminance < 0.75 || luminance > 0.995) continue;
+
+        const ax = ctm[0] * bbox[0] + ctm[2] * bbox[1] + ctm[4];
+        const ay = ctm[1] * bbox[0] + ctm[3] * bbox[1] + ctm[5];
+        const bx = ctm[0] * bbox[2] + ctm[2] * bbox[3] + ctm[4];
+        const by = ctm[1] * bbox[2] + ctm[3] * bbox[3] + ctm[5];
+
+        const rect: ShadeRect = {
+          x0: Math.min(ax, bx),
+          x1: Math.max(ax, bx),
+          y0: Math.min(ay, by),
+          y1: Math.max(ay, by)
+        };
+
+        // Só caixas grandes o bastante para conter uma linha de texto.
+        if (rect.y1 - rect.y0 >= 8 && rect.x1 - rect.x0 >= 60) {
+          rects.push(rect);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Falha ao ler retângulos coloridos da página:', err);
+  }
+
+  return rects;
+}
+
+function markShadedLines(
+  lines: PdfLine[],
+  rects: ShadeRect[]
+): void {
+  if (!rects.length) return;
+
+  for (const line of lines) {
+    line.shaded = rects.some(
+      r => line.y >= r.y0 - 1 && line.y <= r.y1 + 1
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FUSÃO ACORDE + LETRA
+// ---------------------------------------------------------------------------
+
+/**
+ * Tudo o que está na linha de acordes fica DENTRO do colchete, inclusive
+ * marcadores colados como "*Bm", ".Aadd9", "(Em" e "G7M)". O visualizador
+ * transpõe só as notas (A-G) de dentro do colchete, então os marcadores
+ * continuam iguais ao PDF e o acorde continua transponível.
+ */
+function bracketChord(text: string): string {
+  return `[${text}]`;
+}
+
+function bracketChordGroup(texts: string[]): string {
+  // Barras de compasso e "%" ficam cada uma no seu próprio colchete;
+  // acordes que caem na mesma sílaba ficam juntos, ligados por hífen.
+  const parts: string[] = [];
+  let run: string[] = [];
+
+  const flush = () => {
+    if (run.length > 0) {
+      parts.push(`[${run.join('-')}]`);
+      run = [];
+    }
+  };
+
+  for (const t of texts) {
+    if (BAR_SYMBOL_RE.test(t)) {
+      flush();
+      parts.push(`[${t}]`);
+    } else {
+      run.push(t);
+    }
+  }
+
+  flush();
+
+  return parts.join('');
+}
+
+const LABEL_BEFORE_ANNOTATION_RE = /^[*]?(?:Ref|Conv|Obs|Final|Fim)\.?:?$/i;
+
+/**
+ * Anotações em acordes impressas no FIM da linha de letra (ex.: "...Glória.
+ * Ref.  D D C# C# B", em vermelho no PDF): não pertencem à letra, então não
+ * entram no alinhamento — são só acrescentadas, entre colchetes, no fim da
+ * linha.
+ */
+function splitTrailingChordAnnotation(words: PdfWord[]): {
+  lyric: PdfWord[];
+  annotation: PdfWord[];
+} {
+  let k = words.length;
+
+  while (
+    k > 0 &&
+    isChordToken(words[k - 1].text) &&
+    !BAR_SYMBOL_RE.test(words[k - 1].text)
+  ) {
+    k--;
+  }
+
+  const count = words.length - k;
+
+  if (count >= 2 && k > 0) {
+    const before = words[k - 1];
+    const first = words[k];
+
+    if (
+      LABEL_BEFORE_ANNOTATION_RE.test(before.text) ||
+      first.x0 - before.x1 >= 25
+    ) {
+      return {
+        lyric: words.slice(0, k),
+        annotation: words.slice(k)
+      };
+    }
+  }
+
+  return { lyric: words, annotation: [] };
+}
+
+interface LyricChar {
+  ch: string;
+  x0: number;
+  x1: number;
+  space: boolean;
+}
+
+function lyricChars(words: PdfWord[]): LyricChar[] {
+  const out: LyricChar[] = [];
+
+  words.forEach((w, wi) => {
+    const pos =
+      w.charX && w.charX.length === w.text.length + 1
+        ? w.charX
+        : charPositions(w.text, w.x0, w.x1 - w.x0);
+
+    for (let i = 0; i < w.text.length; i++) {
+      out.push({
+        ch: w.text[i],
+        x0: pos[i],
+        x1: pos[i + 1],
+        space: false
+      });
+    }
+
+    if (wi < words.length - 1) {
+      out.push({
+        ch: ' ',
+        x0: w.x1,
+        x1: words[wi + 1].x0,
+        space: true
+      });
+    }
+  });
+
+  return out;
+}
+
+/**
+ * Cola parênteses soltos aos acordes vizinhos: "( Em D/F# G7M )" vira
+ * "(Em", "D/F#", "G7M)".
+ */
+function glueParentheses(tokens: PdfWord[]): PdfWord[] {
+  const out: PdfWord[] = [];
+  let pendingOpen: PdfWord | null = null;
+
+  for (const t of tokens) {
+    if (t.text === '(') {
+      pendingOpen = t;
+      continue;
+    }
+
+    if (t.text === ')') {
+      const prev = out[out.length - 1];
+
+      if (prev) {
+        out[out.length - 1] = {
+          ...prev,
+          text: prev.text + ')',
+          x1: t.x1,
+          charX: undefined
+        };
+      }
+
+      continue;
+    }
+
+    if (pendingOpen) {
+      out.push({
+        ...t,
+        text: '(' + t.text,
+        x0: pendingOpen.x0,
+        charX: undefined
+      });
+      pendingOpen = null;
+      continue;
+    }
+
+    out.push(t);
+  }
+
+  return out;
+}
+
 /**
  * Junta uma linha de acordes com a linha de letra.
+ *
+ * Cada acorde é encaixado no CARACTERE da letra que está logo abaixo do
+ * início dele — inclusive no meio de uma palavra ("Se[Bb9]nhor",
+ * "Ca[Dm7]minho"). Acordes além do fim da letra, e anotações em texto da
+ * linha de acordes ("Conv:", "Ref."), vão para o fim da linha.
  */
 export function mergeChordLyricLines(
   chordLine: PdfLine,
   lyricLine: PdfLine
 ): string {
-  const lyricWords =
-    lyricLine.words;
+  const { lyric, annotation } = splitTrailingChordAnnotation(
+    lyricLine.words
+  );
 
-  const chordTokens =
+  const chars = lyricChars(lyric);
+
+  let tokens = glueParentheses(
     chordLine.words.filter(
       w => !isLooseHyphen(w.text)
+    )
+  ).filter(t => !isNeutralToken(t.text));
+
+  if (chars.length === 0) {
+    return formatInstrumentalLine(chordLine);
+  }
+
+  // Anotações da linha de acordes (em vermelho no PDF) que não são
+  // acordes alinhados à letra:
+  //  - "Conv: A2 C# D ..." (rótulo terminado em ":"): tudo daí em diante;
+  //  - uma sequência "*D D C# C# B": acorde marcado com "*" seguido de pelo
+  //    menos mais 3 acordes até o fim da linha.
+  let annotationStart = tokens.findIndex(t =>
+    /^[*]?[A-Za-zÀ-ú]{2,}:$/.test(t.text)
+  );
+
+  if (annotationStart === -1) {
+    // Procura de trás para frente: vale o ÚLTIMO "*Acorde" que ainda tem
+    // 3+ acordes depois dele (um "*Bm" no meio da linha, seguido de
+    // acordes normais da música, não é anotação).
+    let star = -1;
+
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const t = tokens[i];
+
+      if (
+        t.text.startsWith('*') &&
+        isChordToken(t.text) &&
+        tokens.length - i - 1 >= 3 &&
+        tokens.slice(i + 1).every(x => isChordToken(x.text))
+      ) {
+        star = i;
+        break;
+      }
+    }
+
+    annotationStart = star;
+  }
+
+  const annotationTail: string[] = [];
+
+  if (annotationStart !== -1) {
+    for (const t of tokens.slice(annotationStart)) {
+      annotationTail.push(
+        isChordToken(t.text) ? bracketChord(t.text) : t.text
+      );
+    }
+
+    tokens = tokens.slice(0, annotationStart);
+  }
+
+  const trailing: string[] = [];
+
+  const lastCharX1 = chars[chars.length - 1].x1;
+
+  const before = new Map<number, string[]>();
+
+  for (const tok of tokens) {
+    const isChord = isChordToken(tok.text);
+
+    // Depois do fim da letra (com pequena folga): vai para o fim da linha.
+    if (tok.x0 > lastCharX1 + 2 || !isChord) {
+      trailing.push(
+        isChord ? bracketChord(tok.text) : tok.text
+      );
+      continue;
+    }
+
+    // Primeiro caractere (não-espaço) que termina depois do início do acorde.
+    let idx = chars.findIndex(
+      c => !c.space && c.x1 > tok.x0
     );
 
-  const assignments =
-    new Map<number, string[]>();
+    if (idx === -1) {
+      trailing.push(bracketChord(tok.text));
+      continue;
+    }
 
-  for (const chord of chordTokens) {
-    let idx =
-      lyricWords.findIndex(
-        w =>
-          chord.x0 >= w.x0 &&
-          chord.x0 < w.x1
+    const c = chars[idx];
+
+    // Acorde começa na metade direita da letra: pertence à letra seguinte.
+    if (
+      tok.x0 > c.x0 &&
+      (tok.x0 - c.x0) / Math.max(0.01, c.x1 - c.x0) > 0.5
+    ) {
+      const next = chars.findIndex(
+        (cc, k) => k > idx && !cc.space
       );
 
-    if (idx === -1) {
-      idx =
-        lyricWords.findIndex(
-          w =>
-            w.x0 >= chord.x0
-        );
+      if (next !== -1) idx = next;
     }
 
-    if (idx === -1) {
-      idx =
-        lyricWords.length - 1;
-    }
+    if (!before.has(idx)) before.set(idx, []);
 
-    if (idx < 0) continue;
-
-    if (!assignments.has(idx)) {
-      assignments.set(idx, []);
-    }
-
-    assignments
-      .get(idx)!
-      .push(chord.text);
+    before.get(idx)!.push(tok.text);
   }
 
   let result = '';
 
-  lyricWords.forEach(
-    (w, i) => {
-      const chords =
-        assignments.get(i);
+  chars.forEach((c, i) => {
+    const list = before.get(i);
 
-      if (
-        chords &&
-        chords.length > 0
-      ) {
-        result +=
-          `[${chords.join('-')}]`;
-      }
-
-      result += w.text;
-
-      if (
-        i <
-        lyricWords.length - 1
-      ) {
-        result += ' ';
-      }
+    if (list && list.length > 0) {
+      result += bracketChordGroup(list);
     }
-  );
+
+    result += c.ch;
+  });
+
+  const tail = [
+    ...annotation.map(w => bracketChord(w.text)),
+    ...trailing,
+    ...annotationTail
+  ];
+
+  if (tail.length > 0) {
+    result += ' ' + tail.join(' ');
+  }
 
   return result;
 }
 
 /**
- * Formata uma linha que possui apenas acordes.
+ * Formata uma linha que possui apenas acordes (Intro, Solo, grade de
+ * compassos). Só o que é acorde ou barra vai entre colchetes — rótulos como
+ * "Intro Guitar:" ou "Final Piano:" continuam texto comum. O espaçamento
+ * entre os elementos acompanha o do PDF.
  */
 export function formatInstrumentalLine(
   line: PdfLine
 ): string {
-  const tokens =
-    line.words.filter(
-      w => !isLooseHyphen(w.text)
-    );
+  const tokens = glueParentheses([...line.words]);
 
   if (tokens.length === 0) {
     return '';
   }
 
-  const AVG_CHAR_WIDTH = 6;
+  let totalChars = 0;
+  let totalWidth = 0;
+
+  for (const w of tokens) {
+    totalChars += w.text.length;
+    totalWidth += w.x1 - w.x0;
+  }
+
+  const avgChar =
+    totalChars > 0 && totalWidth > 0
+      ? Math.min(9, Math.max(4.5, totalWidth / totalChars))
+      : 6;
+
+  // Agrupa "D/F# - G - A" (acordes ligados por hífen) num só colchete.
+  type Piece = { text: string; x0: number; x1: number; chord: boolean };
+  const pieces: Piece[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+
+    if (isLooseHyphen(t.text)) {
+      const prev = pieces[pieces.length - 1];
+      const next = tokens[i + 1];
+
+      if (
+        prev &&
+        prev.chord &&
+        !BAR_SYMBOL_RE.test(prev.text) &&
+        next &&
+        isChordToken(next.text) &&
+        !BAR_SYMBOL_RE.test(next.text)
+      ) {
+        prev.text += '-' + next.text;
+        prev.x1 = next.x1;
+        i++;
+        continue;
+      }
+
+      pieces.push({ text: '-', x0: t.x0, x1: t.x1, chord: false });
+      continue;
+    }
+
+    pieces.push({
+      text: t.text,
+      x0: t.x0,
+      x1: t.x1,
+      chord: isChordToken(t.text)
+    });
+  }
 
   let result = '';
+  let lastEnd = pieces[0].x0;
 
-  let lastEnd =
-    tokens[0].x0;
+  pieces.forEach((p, i) => {
+    const gap =
+      i === 0
+        ? 0
+        : Math.max(1, Math.round((p.x0 - lastEnd) / avgChar));
 
-  tokens.forEach(
-    (w, i) => {
-      const gap =
-        i === 0
-          ? 0
-          : Math.max(
-              1,
-              Math.round(
-                (w.x0 - lastEnd) /
-                  AVG_CHAR_WIDTH
-              )
-            );
+    result += ' '.repeat(gap) + (p.chord ? bracketChord(p.text) : p.text);
 
-      result +=
-        ' '.repeat(gap) +
-        `[${w.text}]`;
-
-      lastEnd = w.x1;
-    }
-  );
+    lastEnd = p.x1;
+  });
 
   return result;
 }
@@ -537,7 +1217,7 @@ export function formatMixedTextLine(
       !AMBIGUOUS_ALONE_ROOT.test(
         w.text
       )
-        ? `[${w.text}]`
+        ? bracketChord(w.text)
         : w.text
     )
     .join(' ')
@@ -585,79 +1265,200 @@ export function extractFirstLyricLine(
   return '';
 }
 
+// ---------------------------------------------------------------------------
+// PÁGINA INTEIRA
+// ---------------------------------------------------------------------------
+
+interface Unit {
+  text: string;
+  /** Y da primeira linha do bloco (a mais alta). */
+  top: number;
+  /** Y da última linha do bloco (a mais baixa). */
+  bottom: number;
+  shaded: boolean;
+}
+
+/**
+ * Distância "normal" entre duas linhas consecutivas da página (usada para
+ * decidir onde existe uma linha em branco de verdade entre estrofes).
+ */
+function typicalRowPitch(lines: PdfLine[]): number {
+  const diffs: number[] = [];
+
+  for (let i = 0; i < lines.length - 1; i++) {
+    const d = lines[i].y - lines[i + 1].y;
+
+    if (d >= 8 && d <= 40) diffs.push(d);
+  }
+
+  if (diffs.length === 0) return 18;
+
+  diffs.sort((a, b) => a - b);
+
+  return diffs[Math.floor(diffs.length * 0.2)];
+}
+
 /**
  * Extrai uma página inteira no formato ChordPro.
+ *
+ * - acordes entram dentro da palavra, na sílaba certa;
+ * - linhas em branco do PDF (entre estrofes) são preservadas;
+ * - blocos sobre fundo colorido (refrão/resposta) viram "Refrão:" ... "Fim",
+ *   que é o padrão que o visualizador do app destaca.
  */
 export function extractPageChordProText(
   lines: PdfLine[],
-  pageWidth: number
+  pageWidth: number,
+  options: { markShadedAsChorus?: boolean } = {}
 ): string {
-  // Ver o comentário equivalente em segmentLiturgyOfHoursPage: `lines`
-  // já vem ordenado por groupWordsIntoLines (que já roda
+  const markShaded = options.markShadedAsChorus !== false;
+
+  // `lines` já vem ordenado por groupWordsIntoLines (que já roda
   // orderTwoColumnPage). Rodar de novo aqui desfazia a separação de
   // colunas em vez de preservá-la.
   const orderedLines = lines;
 
-  const outputLines: string[] = [];
+  const pitch = typicalRowPitch(orderedLines);
 
-  for (
-    let i = 0;
-    i < orderedLines.length;
-    i++
-  ) {
-    const line =
-      orderedLines[i];
+  const units: Unit[] = [];
 
-    const next =
-      orderedLines[i + 1];
+  for (let i = 0; i < orderedLines.length; i++) {
+    const line = orderedLines[i];
+    const next = orderedLines[i + 1];
 
     if (isChordLine(line)) {
-      const gapToNext =
-        next
-          ? Math.abs(
-              line.y - next.y
-            )
-          : Infinity;
+      const gapToNext = next
+        ? Math.abs(line.y - next.y)
+        : Infinity;
 
       const pairsWithNext =
         !!next &&
         !isChordLine(next) &&
-        gapToNext <
-          MAX_PAIR_GAP;
+        gapToNext < MAX_PAIR_GAP &&
+        // linhas de colunas diferentes nunca se juntam
+        Math.abs(line.y - next.y) > 0.5;
 
       if (pairsWithNext) {
-        outputLines.push(
-          mergeChordLyricLines(
-            line,
-            next
-          )
-        );
+        units.push({
+          text: mergeChordLyricLines(line, next),
+          top: line.y,
+          bottom: next.y,
+          shaded: !!(line.shaded || next.shaded)
+        });
 
         i++;
       } else {
-        outputLines.push(
-          formatInstrumentalLine(
-            line
-          )
-        );
+        units.push({
+          text: formatInstrumentalLine(line),
+          top: line.y,
+          bottom: line.y,
+          shaded: !!line.shaded
+        });
       }
     } else {
-      outputLines.push(
-        formatMixedTextLine(
-          line.words
-        )
-      );
+      units.push({
+        text: formatMixedTextLine(line.words),
+        top: line.y,
+        bottom: line.y,
+        shaded: !!line.shaded
+      });
     }
   }
 
-  return outputLines.join('\n');
+  // Remove rótulo repetido: "Intro Piano e Cordas:" impresso uma vez em
+  // cima da partitura (imagem) e de novo na linha dos acordes.
+  const dedup: Unit[] = [];
+
+  for (let i = 0; i < units.length; i++) {
+    const cur = units[i];
+    const nxt = units[i + 1];
+
+    if (
+      nxt &&
+      !cur.text.includes('[') &&
+      cur.text.trim().length > 0 &&
+      nxt.text.startsWith(cur.text.trim())
+    ) {
+      continue;
+    }
+
+    dedup.push(cur);
+  }
+
+  // Rótulos sem conteúdo depois deles ("Intro Guitar:", "Final:" — eram
+  // títulos de partituras impressas como imagem, que não têm texto para
+  // importar) ficariam soltos na cifra: removidos.
+  const isOrphanLabel = (u: Unit) =>
+    !u.text.includes('[') &&
+    /:\s*$/.test(u.text) &&
+    u.text.trim().split(/\s+/).length <= 4;
+
+  const cleaned: Unit[] = [];
+
+  for (let i = 0; i < dedup.length; i++) {
+    const cur = dedup[i];
+    const nxt = dedup[i + 1];
+
+    if (
+      isOrphanLabel(cur) &&
+      (!nxt || isOrphanLabel(nxt) || cur.bottom - nxt.top > pitch * 4)
+    ) {
+      continue;
+    }
+
+    cleaned.push(cur);
+  }
+
+  const out: string[] = [];
+  let insideShade = false;
+
+  const closeShade = () => {
+    if (insideShade) {
+      out.push('Fim');
+      insideShade = false;
+    }
+  };
+
+  cleaned.forEach((u, i) => {
+    const prev = cleaned[i - 1];
+
+    const blankBefore =
+      !!prev && prev.bottom - u.top > pitch * 1.5;
+
+    if (markShaded) {
+      if (u.shaded && !insideShade) {
+        if (blankBefore && out.length > 0) out.push('');
+
+        out.push('Refrão:');
+        insideShade = true;
+      } else if (!u.shaded && insideShade) {
+        closeShade();
+
+        if (blankBefore) out.push('');
+      } else if (blankBefore && !insideShade && out.length > 0) {
+        out.push('');
+      } else if (blankBefore && insideShade) {
+        // Linha em branco DENTRO do mesmo bloco colorido: mantém.
+        out.push('');
+      }
+    } else if (blankBefore && out.length > 0) {
+      out.push('');
+    }
+
+    out.push(u.text);
+  });
+
+  closeShade();
+
+  return out.join('\n');
 }
 
 /**
  * Entrada principal da extração pré-alinhada.
  */
 export async function extractPreAlignedPageText(
-  page: any
+  page: any,
+  options: { markShadedAsChorus?: boolean; ops?: any } = {}
 ): Promise<string | null> {
   const words =
     await extractPageWords(page);
@@ -674,13 +1475,37 @@ export async function extractPreAlignedPageText(
   const pageWidth =
     view[2] - view[0];
 
-  const lines =
+  const pageHeight =
+    view[3] - view[1];
+
+  let lines =
     groupWordsIntoLines(words, pageWidth);
 
-  return extractPageChordProText(
+  lines = removeHeaderFooterLines(lines, pageHeight, view[1]);
+
+  if (options.markShadedAsChorus !== false) {
+    try {
+      // `ops` só precisa ser passado fora do navegador (testes em Node);
+      // no app, o mesmo módulo pdfjs-dist já carregado é reutilizado.
+      const ops =
+        options.ops ?? ((await import('pdfjs-dist')) as any).OPS;
+      const rects = await extractShadedRects(page, ops);
+
+      markShadedLines(lines, rects);
+    } catch (err) {
+      console.error('Falha ao detectar fundo colorido:', err);
+    }
+  }
+
+  const text = extractPageChordProText(
     lines,
-    pageWidth
+    pageWidth,
+    options
   );
+
+  // Página sem nada além de cabeçalho/rodapé e rótulos de imagens: sem
+  // camada de texto útil — o importador segue o caminho normal (imagem).
+  return text.trim().length > 0 ? text : null;
 }
 
 // ---------------------------------------------------------------------------
