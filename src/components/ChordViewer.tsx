@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useBackButton } from '../hooks/useBackButton';
+import { fetchSpotifyCover, getCachedSpotifyCover, type SpotifyCover } from '../lib/spotifyCover';
 import {
   X,
   Settings2,
@@ -791,6 +792,25 @@ export default function ChordViewer({
   // Em modo somente leitura nunca expomos a edição.
   const onEdit = readOnly ? undefined : onEditProp;
   const [showMenu, setShowMenu] = useState(false);
+
+  // Capa da faixa do Spotify (oEmbed público, com cache local). Começa pelo
+  // cache para aparecer na hora (inclusive offline) e atualiza em seguida.
+  const [spotifyCover, setSpotifyCover] = useState<SpotifyCover | null>(null);
+  useEffect(() => {
+    const url = chord.spotify_url;
+    if (!url) {
+      setSpotifyCover(null);
+      return;
+    }
+    setSpotifyCover(getCachedSpotifyCover(url));
+    let cancelled = false;
+    fetchSpotifyCover(url).then(cover => {
+      if (!cancelled && cover) setSpotifyCover(cover);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chord.spotify_url]);
   useBackButton(
     true,
     onClose
@@ -1717,6 +1737,25 @@ export default function ChordViewer({
             className="overflow-hidden bg-black"
           >
             <div className="max-w-2xl mx-auto p-2">
+              {spotifyCover && (
+                <div className="flex items-center gap-3 mb-2 p-2 rounded-xl bg-white/5">
+                  <img
+                    src={spotifyCover.thumbnailUrl}
+                    alt={spotifyCover.title ? `Capa: ${spotifyCover.title}` : 'Capa da música no Spotify'}
+                    className="w-16 h-16 rounded-lg object-cover shrink-0"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-white font-bold text-sm leading-tight truncate">
+                      {spotifyCover.title || chord.title}
+                    </p>
+                    <p className="text-[#1DB954] text-[11px] font-bold uppercase tracking-wide mt-0.5">
+                      Spotify
+                    </p>
+                  </div>
+                </div>
+              )}
               {getSpotifyEmbedUrl(chord.spotify_url) ? (
                 <iframe
                   src={getSpotifyEmbedUrl(chord.spotify_url) as string}

@@ -3,6 +3,7 @@ import { X, Globe, Youtube, Music, Music2, Save, Loader2, FileText, Sparkles, Pl
 import { supabase } from '../lib/supabase';
 import { Chord } from '../types';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
+import { fetchSpotifyCover, getCachedSpotifyCover, normalizeSpotifyUrl, type SpotifyCover } from '../lib/spotifyCover';
 import { compressAudioFile } from '../lib/audioCompress';
 import * as tus from 'tus-js-client';
 import { supabaseUrl } from '../lib/supabase';
@@ -143,6 +144,28 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     audio_url: chord?.audio_url || '',
     attachment_url: chord?.attachment_url || '',
   });
+
+  // Prévia da capa do Spotify ao colar/editar o link (com pequena espera para
+  // não buscar a cada tecla). Falha silenciosa: sem capa, o campo segue normal.
+  const [spotifyPreview, setSpotifyPreview] = useState<SpotifyCover | null>(null);
+  useEffect(() => {
+    const url = form.spotify_url;
+    if (!normalizeSpotifyUrl(url)) {
+      setSpotifyPreview(null);
+      return;
+    }
+    setSpotifyPreview(getCachedSpotifyCover(url));
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      fetchSpotifyCover(url).then(cover => {
+        if (!cancelled) setSpotifyPreview(cover);
+      });
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [form.spotify_url]);
 
   const [attachments, setAttachments] = useState<{ id?: string; name: string; url: string; type: 'audio' | 'text'; isNew?: boolean; file?: File }[]>(() => {
     if (chord && Array.isArray(chord.attachments)) {
@@ -995,6 +1018,19 @@ ${form.content}`;
                   value={form.spotify_url}
                   onChange={e => setForm({...form, spotify_url: e.target.value})}
                 />
+                {spotifyPreview && (
+                  <div className="mt-2 flex items-center gap-3 p-2 bg-slate-50 rounded-xl border border-slate-100">
+                    <img
+                      src={spotifyPreview.thumbnailUrl}
+                      alt={spotifyPreview.title ? `Capa: ${spotifyPreview.title}` : 'Capa da música no Spotify'}
+                      className="w-12 h-12 rounded-lg object-cover shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                    <p className="text-xs font-bold text-slate-600 truncate">
+                      {spotifyPreview.title || 'Faixa do Spotify'}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-2">
