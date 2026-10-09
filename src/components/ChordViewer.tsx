@@ -28,7 +28,8 @@ import {
   Pencil,
   Share2,
   MoreVertical,
-  MessageSquare
+  MessageSquare,
+  Mic
 } from 'lucide-react';
 import { Chord, ChordBook } from '../types';
 import {
@@ -1614,6 +1615,12 @@ export default function ChordViewer({
                                 <MessageSquare className="w-5 h-5" />,
                                 comments.open
                               )}
+                            {comments.available &&
+                              item(
+                                comments.voiceCount > 0 ? `Divisão de voz (${comments.voiceCount})` : 'Divisão de voz',
+                                <Mic className="w-5 h-5" />,
+                                comments.openVoices
+                              )}
                             {isEucharisticPrayer &&
                               item('Oração Eucarística', <BookText className="w-5 h-5" />, () => setShowEucharisticPrayer(true))}
                             {item('Ocultar menus', <Maximize2 className="w-5 h-5" />, () => setImmersive(true))}
@@ -2032,14 +2039,14 @@ export default function ChordViewer({
       {/* Conteúdo do viewer */}
       <div
         ref={scrollRef}
-        className="
+        className={`
           flex-1
           overflow-y-auto
           px-4
           md:px-8
           pt-5
-          pb-24
-        "
+          ${comments.voiceChipsVisible ? 'pb-40' : 'pb-24'}
+        `}
       >
         <div
           className={

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, Users, User, LocateFixed, AlertTriangle } from 'lucide-react';
+import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
 import {
   buildExcerpt,
@@ -17,6 +17,9 @@ import {
   type ChordAnnotation,
   type ResolvedAnchor
 } from '../lib/chordAnnotations';
+import { VOICES, readVoicePayload, type VoiceId, type VoiceMark } from '../lib/voiceDivision';
+import { ScopeChip, ScopePicker } from './AnnotationParts';
+import { VoiceBars, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } from './ChordVoices';
 
 /**
  * Camada "Comentários" da cifra (T5a).
@@ -29,6 +32,9 @@ import {
  * `useChordComments` concentra todo o estado; o ChordViewer só pega o que ele
  * devolve (`decor` para desenhar as linhas, `ui` para as telas, `open` e
  * `count` para o menu).
+ *
+ * T5b: o mesmo hook também cuida da "Divisão de voz" (`kind = 'voice'`),
+ * que reaproveita contexto do usuário, seleção de trecho e decoração das linhas.
  */
 
 // ---------------------------------------------------------------------------
@@ -42,6 +48,10 @@ export interface LineDecor {
   badges: Map<number, string[]>;
   onLineTap: (line: number) => void;
   onBadgeTap: (ids: string[]) => void;
+  /** Barras de voz por linha (já filtradas por chips/foco). */
+  voices: Map<number, VoiceMark[]>;
+  /** Linhas a esmaecer no modo foco; null = nenhuma. */
+  dim: Set<number> | null;
 }
 
 const BAR_CLASS: Record<'user' | 'mission' | 'both', string> = {
@@ -54,7 +64,9 @@ const BAR_CLASS: Record<'user' | 'mission' | 'both', string> = {
 export function wrapLine(el: ReactElement, idx: number, d: LineDecor): ReactElement {
   const bar = d.bars.get(idx);
   const badge = d.badges.get(idx);
-  if (!d.selectMode && !bar && !badge) return el;
+  const voiceMarks = d.voices.get(idx);
+  const dimmed = !!d.dim && d.dim.has(idx);
+  if (!d.selectMode && !bar && !badge && !voiceMarks && !dimmed) return el;
 
   const selected = !!d.selection && idx >= d.selection[0] && idx <= d.selection[1];
   const cls = [
@@ -63,7 +75,8 @@ export function wrapLine(el: ReactElement, idx: number, d: LineDecor): ReactElem
     selected ? 'bg-brand-orange/15 ring-1 ring-brand-orange/50 rounded-lg' : '',
     // -ml-3 + pl-2 + borda de 4px = 12px: a letra não se mexe quando o marcador aparece.
     bar && !selected && !d.selectMode ? `border-l-4 -ml-3 pl-2 ${BAR_CLASS[bar]}` : '',
-    badge && !d.selectMode ? 'pr-10' : ''
+    badge && !d.selectMode ? 'pr-10' : '',
+    dimmed && !d.selectMode ? 'opacity-30' : ''
   ]
     .filter(Boolean)
     .join(' ');
@@ -76,6 +89,7 @@ export function wrapLine(el: ReactElement, idx: number, d: LineDecor): ReactElem
       onClick={d.selectMode ? () => d.onLineTap(idx) : undefined}
     >
       {el}
+      {voiceMarks && <VoiceBars marks={voiceMarks} />}
       {badge && !d.selectMode && (
         <button
           type="button"
@@ -113,6 +127,26 @@ type FormState =
   | { mode: 'edit'; annotation: ChordAnnotation }
   | null;
 
+const HIDDEN_VOICES_KEY = 'chord_voice_hidden';
+
+function loadHiddenVoices(): Set<VoiceId> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HIDDEN_VOICES_KEY) || '[]');
+    const valid = new Set<string>(VOICES.map(v => v.id));
+    return new Set((Array.isArray(raw) ? raw : []).filter((x: unknown) => typeof x === 'string' && valid.has(x)) as VoiceId[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenVoices(set: Set<VoiceId>) {
+  try {
+    localStorage.setItem(HIDDEN_VOICES_KEY, JSON.stringify([...set]));
+  } catch {
+    /* ignora */
+  }
+}
+
 export function useChordComments({ chordId, content, enabled, onStartSelect, notify }: UseChordCommentsOptions) {
   const [ctx, setCtx] = useState<AnnotationContext | null>(null);
   const [list, setList] = useState<ChordAnnotation[]>([]);
@@ -124,6 +158,16 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   const [selectMode, setSelectMode] = useState(false);
   const [selection, setSelection] = useState<[number, number] | null>(null);
   const [form, setForm] = useState<FormState>(null);
+
+  // T5b — divisão de voz
+  const [voiceList, setVoiceList] = useState<ChordAnnotation[]>([]);
+  const [voiceFromCache, setVoiceFromCache] = useState(false);
+  const [voicePanelOpen, setVoicePanelOpen] = useState(false);
+  const [voiceForm, setVoiceForm] = useState<VoiceFormState | null>(null);
+  const [selectPurpose, setSelectPurpose] = useState<'comment' | 'voice'>('comment');
+  const [hiddenVoices, setHiddenVoices] = useState<Set<VoiceId>>(loadHiddenVoices);
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusVoice, setFocusVoice] = useState<VoiceId | null>(null);
 
   const lines = useMemo(() => (content || '').split('\n'), [content]);
 
@@ -140,11 +184,26 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     [ctx, chordId]
   );
 
+  const commitVoice = useCallback(
+    (updater: (prev: ChordAnnotation[]) => ChordAnnotation[]) => {
+      setVoiceList(prev => {
+        const next = updater(prev);
+        if (ctx) setCachedAnnotations(ctx.userId, chordId, next, 'voice');
+        return next;
+      });
+    },
+    [ctx, chordId]
+  );
+
   // Carrega usuário/missões e as anotações da cifra (cache primeiro, rede depois).
   useEffect(() => {
     setList([]);
+    setVoiceList([]);
     setCtx(null);
     setPanelOpen(false);
+    setVoicePanelOpen(false);
+    setVoiceForm(null);
+    setFocusMode(false);
     setSelectMode(false);
     setSelection(null);
     setForm(null);
@@ -158,10 +217,16 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         if (cancelled || !c) return;
         setCtx(c);
         setList(getCachedAnnotations(c.userId, chordId));
-        const res = await fetchAnnotations(c.userId, chordId);
+        setVoiceList(getCachedAnnotations(c.userId, chordId, 'voice'));
+        const [res, vres] = await Promise.all([
+          fetchAnnotations(c.userId, chordId),
+          fetchAnnotations(c.userId, chordId, 'voice')
+        ]);
         if (cancelled) return;
         setList(res.list);
         setFromCache(res.fromCache);
+        setVoiceList(vres.list);
+        setVoiceFromCache(vres.fromCache);
       } catch {
         /* sem sessão/rede: a camada simplesmente não aparece */
       } finally {
@@ -180,6 +245,63 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   );
   const anchorById = useMemo(() => new Map(resolved.map(r => [r.a.id, r.anchor])), [resolved]);
 
+  const voiceResolved = useMemo(
+    () => voiceList.map(a => ({ a, anchor: resolveAnchor(a, lines) as ResolvedAnchor })),
+    [voiceList, lines]
+  );
+  const voiceAnchorById = useMemo(() => new Map(voiceResolved.map(r => [r.a.id, r.anchor])), [voiceResolved]);
+
+  // Marcas de voz por linha, já respeitando chips (liga/desliga) e modo foco.
+  const voiceView = useMemo(() => {
+    const parsed = voiceResolved
+      .filter(r => r.anchor.status !== 'lost')
+      .map(r => ({ ...r, pv: readVoicePayload(r.a.payload) }))
+      .filter(r => r.pv.voice);
+    const present = VOICES.map(v => v.id).filter(id => parsed.some(r => r.pv.voice === id));
+    const focusActive = focusMode && focusVoice && present.includes(focusVoice) ? focusVoice : null;
+
+    const marks = new Map<number, VoiceMark[]>();
+    const focusLines = new Set<number>();
+    for (const r of parsed) {
+      const id = r.pv.voice as VoiceId;
+      const visible = focusActive ? id === focusActive : !hiddenVoices.has(id);
+      if (!visible) continue;
+      for (let i = r.anchor.start; i <= r.anchor.end; i++) {
+        focusLines.add(i);
+        marks.set(i, [
+          ...(marks.get(i) || []),
+          { id: r.a.id, voice: id, first: i === r.anchor.start, last: i === r.anchor.end, text: r.pv.text }
+        ]);
+      }
+    }
+    // Empilha sempre na mesma ordem dos chips.
+    const order = new Map(VOICES.map((v, i) => [v.id, i]));
+    marks.forEach(list => list.sort((x, y) => (order.get(x.voice) ?? 0) - (order.get(y.voice) ?? 0)));
+
+    let dim: Set<number> | null = null;
+    if (focusActive) {
+      dim = new Set<number>();
+      for (let i = 0; i < lines.length; i++) if (!focusLines.has(i)) dim.add(i);
+    }
+    return { present, marks, dim, focusActive };
+  }, [voiceResolved, hiddenVoices, focusMode, focusVoice, lines]);
+
+  const toggleVoice = (id: VoiceId) => {
+    setHiddenVoices(prev => {
+      const next = new Set<VoiceId>(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveHiddenVoices(next);
+      return next;
+    });
+  };
+  const toggleFocusMode = () => {
+    setFocusMode(on => {
+      if (!on && (!focusVoice || !voiceView.present.includes(focusVoice))) setFocusVoice(voiceView.present[0] ?? null);
+      return !on;
+    });
+  };
+
   const decor = useMemo<LineDecor | null>(() => {
     if (!enabled || !ctx) return null;
     const bars = new Map<number, 'user' | 'mission' | 'both'>();
@@ -197,6 +319,8 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
       selection,
       bars,
       badges,
+      voices: voiceView.marks,
+      dim: voiceView.dim,
       onLineTap: line => {
         if (!(lines[line] || '').trim()) return; // linha em branco não vira trecho
         setSelection(prev => {
@@ -210,7 +334,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         setPanelOpen(true);
       }
     };
-  }, [enabled, ctx, resolved, selectMode, selection, lines]);
+  }, [enabled, ctx, resolved, selectMode, selection, lines, voiceView]);
 
   const cancelSelect = useCallback(() => {
     setSelectMode(false);
@@ -218,23 +342,30 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   }, []);
   useBackButton(selectMode, cancelSelect);
 
-  const startSelect = useCallback(() => {
+  const startSelect = useCallback(
+    (purpose: 'comment' | 'voice') => {
     setPanelOpen(false);
+    setVoicePanelOpen(false);
     setPanelFilter(null);
+    setSelectPurpose(purpose);
     setSelection(null);
     setSelectMode(true);
     onStartSelect?.();
-  }, [onStartSelect]);
+    },
+    [onStartSelect]
+  );
 
   const confirmSelect = () => {
     if (!selection) return;
-    setForm({ mode: 'new', start: selection[0], end: selection[1] });
+    if (selectPurpose === 'voice') setVoiceForm({ mode: 'new', start: selection[0], end: selection[1] });
+    else setForm({ mode: 'new', start: selection[0], end: selection[1] });
     setSelectMode(false);
     setSelection(null);
   };
 
   const goToLine = (line: number) => {
     setPanelOpen(false);
+    setVoicePanelOpen(false);
     setPanelFilter(null);
     // espera o painel sair da tela antes de rolar
     window.setTimeout(() => {
@@ -258,7 +389,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
             setPanelOpen(false);
             setPanelFilter(null);
           }}
-          onNew={startSelect}
+          onNew={() => startSelect('comment')}
           onGo={goToLine}
           onEdit={a => setForm({ mode: 'edit', annotation: a })}
           onDelete={async a => {
@@ -270,6 +401,56 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
               notify('Não foi possível apagar. Verifique a conexão.', 'error');
             }
           }}
+        />
+      )}
+
+      {voicePanelOpen && (
+        <VoicePanel
+          ctx={ctx!}
+          items={voiceResolved}
+          fromCache={voiceFromCache}
+          loading={loading}
+          onClose={() => setVoicePanelOpen(false)}
+          onNew={() => startSelect('voice')}
+          onGo={goToLine}
+          onEdit={a => setVoiceForm({ mode: 'edit', annotation: a })}
+          onDelete={async a => {
+            try {
+              await deleteAnnotation(a.id);
+              commitVoice(prev => prev.filter(x => x.id !== a.id));
+              notify('Divisão de voz apagada.', 'success');
+            } catch {
+              notify('Não foi possível apagar. Verifique a conexão.', 'error');
+            }
+          }}
+        />
+      )}
+
+      {voiceForm && (
+        <VoiceForm
+          ctx={ctx!}
+          form={voiceForm}
+          lines={lines}
+          chordId={chordId}
+          anchor={voiceForm.mode === 'edit' ? voiceAnchorById.get(voiceForm.annotation.id) : undefined}
+          onClose={() => setVoiceForm(null)}
+          onSaved={(saved, isNew) => {
+            commitVoice(prev => (isNew ? [...prev, saved] : prev.map(x => (x.id === saved.id ? saved : x))));
+            setVoiceForm(null);
+            notify(isNew ? 'Divisão de voz salva.' : 'Divisão de voz atualizada.', 'success');
+          }}
+        />
+      )}
+
+      {voiceView.present.length > 0 && !selectMode && (
+        <VoiceChips
+          present={voiceView.present}
+          hidden={hiddenVoices}
+          focusMode={!!voiceView.focusActive}
+          focus={voiceView.focusActive}
+          onToggle={toggleVoice}
+          onFocusMode={toggleFocusMode}
+          onPickFocus={setFocusVoice}
         />
       )}
 
@@ -296,6 +477,10 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   return {
     available,
     count: list.length,
+    voiceCount: voiceList.length,
+    /** true quando a barra de chips de voz está na tela (o viewer abre espaço no rodapé). */
+    voiceChipsVisible: available && voiceView.present.length > 0 && !selectMode,
+    openVoices: () => setVoicePanelOpen(true),
     selectMode,
     decor,
     ui,
@@ -347,22 +532,6 @@ function SelectionBar({
 // ---------------------------------------------------------------------------
 // Painel (lista)
 // ---------------------------------------------------------------------------
-
-function ScopeChip({ a, ctx }: { a: ChordAnnotation; ctx: AnnotationContext }) {
-  if (a.scope === 'user') {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide bg-amber-100 text-amber-800 rounded-full px-2 py-0.5">
-        <User className="w-3 h-3" /> Só eu
-      </span>
-    );
-  }
-  const name = ctx.missions.find(m => m.id === a.mission_id)?.name || 'Missão';
-  return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide bg-sky-100 text-sky-800 rounded-full px-2 py-0.5 max-w-full">
-      <Users className="w-3 h-3 shrink-0" /> <span className="truncate">{name}</span>
-    </span>
-  );
-}
 
 function CommentsPanel({
   ctx,
@@ -633,54 +802,7 @@ function CommentForm({
           className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand-orange resize-none"
         />
 
-        <label className="block mt-4 text-xs font-black uppercase tracking-wide text-slate-400">Quem vê</label>
-        <div className="mt-1 grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl" role="tablist">
-          <button
-            role="tab"
-            aria-selected={scope === 'user'}
-            onClick={() => setScope('user')}
-            className={`py-2 rounded-lg text-sm font-bold ${scope === 'user' ? 'bg-white text-brand-orange shadow-sm' : 'text-slate-500'}`}
-          >
-            Só eu
-          </button>
-          <button
-            role="tab"
-            aria-selected={scope === 'mission'}
-            onClick={() => writableMissions.length > 0 && setScope('mission')}
-            disabled={writableMissions.length === 0}
-            className={`py-2 rounded-lg text-sm font-bold disabled:opacity-40 ${
-              scope === 'mission' ? 'bg-white text-brand-blue shadow-sm' : 'text-slate-500'
-            }`}
-          >
-            Missão
-          </button>
-        </div>
-
-        {writableMissions.length === 0 && (
-          <p className="mt-2 text-xs text-slate-400">
-            Comentários da missão só podem ser criados por coordenador ou editor.
-          </p>
-        )}
-
-        {scope === 'mission' && writableMissions.length > 0 && (
-          writableMissions.length === 1 ? (
-            <p className="mt-2 text-xs text-slate-500">
-              Visível para todos de <span className="font-bold">{writableMissions[0].name}</span>.
-            </p>
-          ) : (
-            <select
-              value={missionId}
-              onChange={e => setMissionId(e.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold bg-white"
-            >
-              {writableMissions.map(m => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          )
-        )}
+        <ScopePicker ctx={ctx} scope={scope} onScope={setScope} missionId={missionId} onMission={setMissionId} />
 
         {error && <p className="mt-3 text-xs text-red-700 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
 
