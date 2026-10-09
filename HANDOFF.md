@@ -28,14 +28,23 @@
 - Testar: abrir uma cifra longa, tocar em play, mudar a velocidade, tocar na tela (deve pausar e retomar), chegar ao fim (para sozinho), trocar de cifra (desliga). Testar no celular.
 - NÃO VERIFICADO: lint/build (npm indisponível aqui) e teste real em dispositivo.
 
+### T4 — Shape dos acordes (violão e ukulele)
+- Arquivos NOVOS: `src/lib/chordShapes.ts`, `src/components/ChordDiagram.tsx`, `src/components/ChordShapeModal.tsx`, `scripts/checkChordShapes.ts`
+- Arquivo alterado (completo): `src/components/ChordViewer.tsx` (importa o modal; `processContent` ganhou o parâmetro opcional `onChordClick`; acordes inline `[C]` e linhas só de acordes viram botões; estado `shapeChord`).
+- Funcionamento: toque num acorde → modal com nome, notas, abas Violão/Ukulele (escolha salva em localStorage `chord_shape_instrument`) e diagrama SVG (× abafada, ○ solta, ● dedo, barra = pestana, número da casa quando passa da 5ª). O acorde chega já transposto e na notação escolhida (inglesa/latina), então acompanha a transposição.
+- Motor (`chordShapes.ts`): `parseChord` aceita inglês e latim ("Dó#m7/Sol"), bemol/sustenido, barra e sinônimos (maj7/M7/7M/Δ, dim/°, aug/+, sus, add9…). Formas por deslocamento de formas base (E, A, C, D, G no violão; C, A, F, G, D no ukulele); tipos sem forma base (ukulele dim/aug/6/m6/add9/9/dim7/m7b5, violão dim7/m7b5) usam busca exaustiva da forma mais fácil. Sufixo desconhecido (ex.: C13) mostra a forma mais próxima com aviso. Baixo de acorde com barra: usa forma cujo grave bate; senão mostra o acorde base com aviso "toque essa nota no baixo".
+- Verificação feita: `bun scripts/checkChordShapes.ts` → 382 formas conferidas (12 fundamentais × 16 tipos × 2 instrumentos), 0 com nota fora do acorde ou nota essencial faltando; só `5` (power chord) no ukulele (A#5, B5) fica sem desenho, de propósito. Diagramas renderizados em Chromium e conferidos visualmente (violão e ukulele).
+- Limitações: não mostra dedilhado (qual dedo), só posições; não há "canhoto"; só uma forma por acorde (sem alternativas); violão sem 11/13 (cai em 7).
+- NÃO VERIFICADO: `lint`/`build` completos (npm indisponível; o `tsc` isolado só acusou erros por falta dos tipos do React, nenhum no código novo) e o modal rodando no app real.
+- Testar: abrir uma cifra com acordes, tocar num acorde (inline e em linha só de acordes), trocar Violão/Ukulele, transpor o tom e tocar de novo, trocar para notação latina, fechar com o botão voltar do celular.
+
 ## Em andamento
 - Nada.
 
 ## Pendente (ordem)
-- T4 Shape dos acordes (violão/ukulele, SVG, modal ao tocar no acorde, respeitar transposição; `transposeChord` em `ChordViewer` ~linha 115).
 - T5a Tabela `chord_annotations` + camada Comentários (título + trecho), escopo missão/usuário, RLS.
 - T5b Camada Divisão de voz: Tenor (verde), Contralto (amarelo), Soprano (roxo), Baixo (preto), Masculino (azul), Feminino (rosa); barras sob a letra + letra repetida só quando diferir; chips ligáveis; modo foco.
-- T6 Partitura na importação de PDF: detectar páginas, gerar PDF separado (pdf-lib), anexar com `type: 'score'`.
+- T6 Partitura na importação de PDF: detectar páginas, gerar PDF separado (pdf-lib — ainda NÃO está no package.json; adicionar `"pdf-lib": "^1.17.1"`), anexar com `type: 'score'`.
 
 ## Migrações SQL a rodar
 - Nenhuma até agora.
