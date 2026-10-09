@@ -64,14 +64,28 @@
 - Limitações: a voz marca linhas inteiras (não pedaços de linha); a barra ocupa a largura toda da linha; sem exportação das divisões para o PDF.
 - Testar: criar divisão de Soprano nas linhas 1–2 e de Tenor na 2–3 (a linha 2 deve mostrar as duas barras); ligar "letra diferente" em uma e ver a letra aparecer sob a barra; desligar chips; usar Foco; abrir como membro comum da missão (lê, não cria na missão); editar a letra da cifra e ver as barras acompanharem.
 
+### T6 — Partitura na importação de PDF
+- Arquivos NOVOS: `src/lib/scoreDetector.ts` (detecta páginas com pentagrama), `src/lib/scorePdf.ts` (gera o PDF só com as páginas de partitura e sobe para o Storage).
+- Arquivos alterados (completos): `src/components/PDFImporter.tsx`, `src/components/ChordEditor.tsx`, `src/types.ts`, `package.json` (adicionado `"pdf-lib": "^1.17.1"` — rodar `npm install`).
+- Detecção: renderiza a página a ~108 dpi e procura PENTAGRAMAS (5 linhas horizontais finas, espaçamento igual, isoladas do resto). Funciona em PDF digital e escaneado; tolera scan torto (até ±2°). Página vira "partitura" com 2+ pentagramas (`MIN_STAVES_FOR_SCORE_PAGE`, em `scoreDetector.ts`); 1 pentagrama solto (ex.: intro pequena dentro de uma cifra) NÃO conta. Folha pautada/tabela não conta.
+- Ligação página → música: a partitura vai para a(s) música(s) extraída(s) da própria página; se a página não gerou música nova (só partitura/continuação), vai para a última música extraída; se ainda não há nenhuma música, a página é ignorada.
+- Importador: novo checkbox "Detectar partituras e anexar em PDF separado" (LIGADO por padrão). Na revisão, cada música com partitura mostra "Partitura: pág. X–Y" e um X para não anexar. Ao salvar, gera um PDF por música (pdf-lib, carregando o PDF original uma vez), sobe no bucket `attachments` (pasta `score/`) e grava em `chords.attachments` como `{ name: 'Partitura (pág. …).pdf', url, type: 'score' }`. Não mexe em `attachment_url` nem `audio_url`.
+- Reimportação/substituição: ao atualizar uma cifra existente, mantém os outros anexos, troca só o anexo `score` antigo pelo novo e apaga o arquivo antigo do Storage (melhor esforço).
+- Se a partitura falhar (PDF > 20 MB, upload, etc.), a cifra é salva do mesmo jeito, sem partitura; a mensagem final diz quantas foram anexadas/falharam.
+- Editor: anexos `score` aparecem na lista "Arquivos de Letras, Partituras ou PDFs" (dá para renomear/remover) e são preservados ao salvar. Visualizador: sem mudança (já listava qualquer anexo não-áudio em "Mídias e anexos").
+- Verificação feita: (1) detector em PDF de teste via PDF.js real no Chromium — páginas com pentagrama = partitura (4 e 12 pentagramas), cifra só texto, folha pautada, cabeçalho cinza + texto denso e 1 pentagrama pequeno = não; (2) scan simulado com ruído e inclinação de 0,2°/0,5°/1° — detectado; (3) `buildScorePdf` com pdf-lib: PDF de 2 páginas na ordem certa, e erros para página fora do PDF/lista vazia; (4) `tsc` sem erros reais nos arquivos alterados (só ruído por falta de tipos).
+- NÃO VERIFICADO: `npm install`/`lint`/`build` completos; upload real no Supabase (bucket `attachments` público, como já usado pelo editor); importação ponta a ponta no app com um PDF real do hinário; desempenho em celular com PDF de centenas de páginas (a detecção custa ~0,1–0,2 s por página em desktop; desmarque o checkbox se ficar lento).
+- Limitações: o anexo é a PÁGINA inteira (não recorta só o pentagrama); partitura de página com 2+ músicas é anexada a todas elas (cada uma com seu próprio arquivo); a IA ainda lê páginas de partitura pura (pode gerar música "fantasma" para apagar na revisão); `src/lib/PDFImporter.tsx` é uma cópia antiga que o app não importa — não foi alterada.
+- Testar: importar um PDF com cifras + páginas de partitura; conferir o selo "Partitura: pág. …" nas músicas certas; remover o selo de uma; salvar; abrir a cifra → ⋮ → Mídias e anexos e abrir o PDF (só as páginas de partitura); reimportar o mesmo lote e conferir que não duplica o anexo; abrir a cifra no editor e ver o anexo na lista.
+
 ## Em andamento
 - Nada.
 
 ## Pendente (ordem)
-- T6 Partitura na importação de PDF: detectar páginas, gerar PDF separado (pdf-lib — ainda NÃO está no package.json; adicionar `"pdf-lib": "^1.17.1"`), anexar com `type: 'score'`.
+- Nada na lista. Próximo: rodar `npm install && npm run lint && npm run build` e testar T1–T6 no app real.
 
 ## Migrações SQL a rodar
 - `T5A_chord_annotations.sql` (idempotente; cria `chord_annotations`, funções `annotation_*`, trigger e RLS). Serve para T5a e T5b; nada novo para rodar no T5b.
 
 ## Riscos e dúvidas
-- Build/lint não verificados (ver T1). Comentários e Divisão de voz só funcionam depois da migração T5A. Registro npm e open.spotify.com bloqueados neste ambiente.
+- Build/lint não verificados (ver T1). T6 exige `npm install` (pdf-lib novo). Comentários e Divisão de voz só funcionam depois da migração T5A. Registro npm e open.spotify.com bloqueados neste ambiente.
