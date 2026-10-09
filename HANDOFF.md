@@ -50,15 +50,28 @@
 - Decisões que valem confirmar: (1) membro comum só LÊ comentários da missão (não cria); (2) "trecho" = linhas inteiras, não seleção de palavras; (3) comentário só aparece para quem está logado.
 - Testar: rodar `T5A_chord_annotations.sql`; abrir cifra → ⋮ → Comentários → novo (Só eu); repetir com Missão como coordenador; abrir como membro comum e conferir que lê mas não cria na missão; editar a letra da cifra e ver o selo acompanhar; ficar offline e reabrir.
 
+### T5b — Divisão de voz
+- Arquivos NOVOS: `src/lib/voiceDivision.ts`, `src/components/AnnotationParts.tsx`, `src/components/ChordVoices.tsx`
+- Arquivos alterados (completos): `src/lib/chordAnnotations.ts` (cache por tipo; criar/editar aceitam `kind` e `payload`), `src/components/ChordComments.tsx` (o mesmo hook cuida de comentários e vozes; `ScopeChip` e o seletor "Quem vê" foram para `AnnotationParts.tsx`), `src/components/ChordViewer.tsx` (item "Divisão de voz" no menu ⋮; mais espaço no rodapé quando os chips aparecem).
+- Banco: SEM migração nova. Usa `chord_annotations` com `kind='voice'` e `payload = { voice, text? }`; mesma RLS do T5a (só eu / missão).
+- Cores: Tenor verde, Contralto amarelo, Soprano roxo, Baixo preto, Masculino azul, Feminino rosa.
+- Fluxo: menu ⋮ → Divisão de voz → "Nova divisão" → tocar na linha (ou em duas, para um intervalo) → Continuar → escolher a voz → opcional "Esta voz canta uma letra diferente" → "Só eu" ou "Missão" → Salvar.
+- Na cifra: barra colorida sob cada linha da voz, com o nome da voz na primeira linha do trecho. A letra da voz só é repetida (embaixo, na cor da voz) quando difere da letra principal; se o texto digitado for igual ao da cifra (ignorando acento, caixa e pontuação), só a barra é salva.
+- Chips (barra fixa no rodapé, só aparecem se a cifra tem divisão): tocar liga/desliga cada voz (escolha lembrada no aparelho, `chord_voice_hidden`). "Foco": destaca uma voz e esmaece as linhas que ela não canta; no foco, tocar num chip troca a voz em destaque.
+- Mesmo reancoramento do T5a se a cifra for editada (trecho reencontrado, ou aviso "trecho alterado" no painel). Offline: leitura pelo cache (`chord_annotations_voice:<user>:<cifra>`).
+- Verificação feita: lógica de voz testada com script (cores, payload inválido, "letra diferente" ignorando acento/pontuação/quebra, corte de texto) — passou. `tsc` sem erros reais nos arquivos novos (só ruído da falta de tipos do React/Supabase).
+- NÃO VERIFICADO: `lint`/`build` completos e a tela rodando no app real (sem npm/rede aqui). Conferir visualmente as barras com várias vozes na mesma linha e os chips em tela pequena.
+- Limitações: a voz marca linhas inteiras (não pedaços de linha); a barra ocupa a largura toda da linha; sem exportação das divisões para o PDF.
+- Testar: criar divisão de Soprano nas linhas 1–2 e de Tenor na 2–3 (a linha 2 deve mostrar as duas barras); ligar "letra diferente" em uma e ver a letra aparecer sob a barra; desligar chips; usar Foco; abrir como membro comum da missão (lê, não cria na missão); editar a letra da cifra e ver as barras acompanharem.
+
 ## Em andamento
 - Nada.
 
 ## Pendente (ordem)
-- T5b Camada Divisão de voz (usa a tabela `chord_annotations` com `kind='voice'` e `payload`; sem nova migração): Tenor (verde), Contralto (amarelo), Soprano (roxo), Baixo (preto), Masculino (azul), Feminino (rosa); barras sob a letra + letra repetida só quando diferir; chips ligáveis; modo foco.
 - T6 Partitura na importação de PDF: detectar páginas, gerar PDF separado (pdf-lib — ainda NÃO está no package.json; adicionar `"pdf-lib": "^1.17.1"`), anexar com `type: 'score'`.
 
 ## Migrações SQL a rodar
-- `T5A_chord_annotations.sql` (idempotente; cria `chord_annotations`, funções `annotation_*`, trigger e RLS).
+- `T5A_chord_annotations.sql` (idempotente; cria `chord_annotations`, funções `annotation_*`, trigger e RLS). Serve para T5a e T5b; nada novo para rodar no T5b.
 
 ## Riscos e dúvidas
-- Build/lint não verificados (ver T1). Comentários só funcionam depois da migração T5A. Registro npm e open.spotify.com bloqueados neste ambiente.
+- Build/lint não verificados (ver T1). Comentários e Divisão de voz só funcionam depois da migração T5A. Registro npm e open.spotify.com bloqueados neste ambiente.
