@@ -88,31 +88,37 @@ export function canManageAnnotation(a: ChordAnnotation, ctx: AnnotationContext |
 // CRUD (com cache local para leitura offline)
 // ---------------------------------------------------------------------------
 
-const cacheKey = (userId: string, chordId: string) => `chord_annotations:${userId}:${chordId}`;
+export const annotationCacheKey = (userId: string, chordId: string, kind: AnnotationKind = 'comment') =>
+  kind === 'comment' ? `chord_annotations:${userId}:${chordId}` : `chord_annotations_${kind}:${userId}:${chordId}`;
 
-function readCache(userId: string, chordId: string): ChordAnnotation[] {
+function readCache(userId: string, chordId: string, kind: AnnotationKind = 'comment'): ChordAnnotation[] {
   try {
-    const raw = localStorage.getItem(cacheKey(userId, chordId));
+    const raw = localStorage.getItem(annotationCacheKey(userId, chordId, kind));
     return raw ? (JSON.parse(raw) as ChordAnnotation[]) : [];
   } catch {
     return [];
   }
 }
 
-function writeCache(userId: string, chordId: string, list: ChordAnnotation[]) {
+function writeCache(userId: string, chordId: string, list: ChordAnnotation[], kind: AnnotationKind = 'comment') {
   try {
-    localStorage.setItem(cacheKey(userId, chordId), JSON.stringify(list));
+    localStorage.setItem(annotationCacheKey(userId, chordId, kind), JSON.stringify(list));
   } catch {
     /* sem espaço / indisponível: ignora */
   }
 }
 
-export function setCachedAnnotations(userId: string, chordId: string, list: ChordAnnotation[]) {
-  writeCache(userId, chordId, list);
+export function setCachedAnnotations(
+  userId: string,
+  chordId: string,
+  list: ChordAnnotation[],
+  kind: AnnotationKind = 'comment'
+) {
+  writeCache(userId, chordId, list, kind);
 }
 
-export function getCachedAnnotations(userId: string, chordId: string): ChordAnnotation[] {
-  return readCache(userId, chordId);
+export function getCachedAnnotations(userId: string, chordId: string, kind: AnnotationKind = 'comment'): ChordAnnotation[] {
+  return readCache(userId, chordId, kind);
 }
 
 export async function fetchAnnotations(
@@ -133,15 +139,19 @@ export async function fetchAnnotations(
     );
     if (error) throw error;
     const list = (data as ChordAnnotation[]) || [];
-    if (kind === 'comment') writeCache(userId, chordId, list);
+    writeCache(userId, chordId, list, kind);
     return { list, fromCache: false };
   } catch {
     // Offline, tabela ainda não migrada, etc.: usa o último cache conhecido.
-    return { list: kind === 'comment' ? readCache(userId, chordId) : [], fromCache: true };
+    return { list: readCache(userId, chordId, kind), fromCache: true };
   }
 }
 
 export interface AnnotationInput {
+  /** Padrão: 'comment'. */
+  kind?: AnnotationKind;
+  /** Dados do tipo (voz: { voice, text? }). */
+  payload?: Record<string, unknown>;
   chord_id: string;
   scope: AnnotationScope;
   mission_id: string | null;
@@ -158,12 +168,13 @@ export async function createAnnotation(userId: string, input: AnnotationInput): 
       .from('chord_annotations')
       .insert({
         chord_id: input.chord_id,
-        kind: 'comment',
+        kind: input.kind ?? 'comment',
         scope: input.scope,
         owner_id: userId,
         mission_id: input.scope === 'mission' ? input.mission_id : null,
-        title: input.title.trim(),
+        title: input.title.trim() || null,
         body: input.body.trim() || null,
+        payload: input.payload ?? {},
         line_start: input.line_start,
         line_end: input.line_end,
         excerpt: input.excerpt
@@ -178,10 +189,11 @@ export async function createAnnotation(userId: string, input: AnnotationInput): 
 
 export async function updateAnnotation(
   id: string,
-  patch: Partial<Pick<AnnotationInput, 'scope' | 'mission_id' | 'title' | 'body'>>
+  patch: Partial<Pick<AnnotationInput, 'scope' | 'mission_id' | 'title' | 'body' | 'payload'>>
 ): Promise<ChordAnnotation> {
   const row: Record<string, unknown> = {};
-  if (patch.title !== undefined) row.title = patch.title.trim();
+  if (patch.title !== undefined) row.title = patch.title.trim() || null;
+  if (patch.payload !== undefined) row.payload = patch.payload;
   if (patch.body !== undefined) row.body = patch.body.trim() || null;
   if (patch.scope !== undefined) {
     row.scope = patch.scope;
