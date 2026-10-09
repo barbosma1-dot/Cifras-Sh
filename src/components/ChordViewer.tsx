@@ -27,7 +27,8 @@ import {
   FileText,
   Pencil,
   Share2,
-  MoreVertical
+  MoreVertical,
+  MessageSquare
 } from 'lucide-react';
 import { Chord, ChordBook } from '../types';
 import {
@@ -37,6 +38,7 @@ import {
 import { supabase } from '../lib/supabase';
 import LiturgyViewer from './LiturgyViewer';
 import ChordShapeModal from './ChordShapeModal';
+import { useChordComments, wrapLine, type LineDecor } from './ChordComments';
 
 // Ícone da "logo" do Spotify (círculo + três ondas), desenhado como SVG
 // próprio — a mesma ideia de usar um ícone de marca pra indicar visualmente
@@ -263,7 +265,10 @@ function processContent(
   lineSpacing: number,
   // Quando informado, cada acorde vira um botão que abre o shape (diagrama
   // de violão/ukulele). Recebe o acorde como exibido (já transposto).
-  onChordClick?: (chordLabel: string) => void
+  onChordClick?: (chordLabel: string) => void,
+  // Camada de comentários: marcadores nas linhas comentadas e modo de seleção
+  // de trecho. Sem isto (ou sem nada a mostrar) a saída é idêntica à anterior.
+  lineDecor?: LineDecor | null
 ) {
   const lines =
     content.split('\n');
@@ -651,6 +656,13 @@ function processContent(
     }
   );
 
+  // Uma entrada em lineInfos por linha do conteúdo, então o índice == nº da linha.
+  if (lineDecor) {
+    lineInfos.forEach((info, idx) => {
+      if (info.el) info.el = wrapLine(info.el, idx, lineDecor);
+    });
+  }
+
   /*
    * Agrupa o refrão.
    */
@@ -975,6 +987,15 @@ export default function ChordViewer({
       /* localStorage indisponível: usa o padrão */
     }
     return 4;
+  });
+
+  // Camada de comentários (T5a). Desligada em link compartilhado / sem login.
+  const comments = useChordComments({
+    chordId: chord.id,
+    content: chord.content || '',
+    enabled: !readOnly && !!chord.id && !!chord.content,
+    onStartSelect: () => setAutoScrollOn(false),
+    notify: (message, type) => setNotification({ message, type })
   });
   const autoScrollLevelRef = useRef(autoScrollLevel);
   useEffect(() => {
@@ -1587,6 +1608,12 @@ export default function ChordViewer({
                           <>
                             {onEdit && item('Editar cifra', <Pencil className="w-5 h-5" />, () => onEdit(chord))}
                             {item('Compartilhar (link)', <Share2 className="w-5 h-5" />, handleShareChord)}
+                            {comments.available &&
+                              item(
+                                comments.count > 0 ? `Comentários (${comments.count})` : 'Comentários',
+                                <MessageSquare className="w-5 h-5" />,
+                                comments.open
+                              )}
                             {isEucharisticPrayer &&
                               item('Oração Eucarística', <BookText className="w-5 h-5" />, () => setShowEucharisticPrayer(true))}
                             {item('Ocultar menus', <Maximize2 className="w-5 h-5" />, () => setImmersive(true))}
@@ -2036,7 +2063,9 @@ export default function ChordViewer({
               notationSystem,
               fontSize,
               lineSpacing,
-              setShapeChord
+              // Em modo de seleção de trecho os acordes não abrem o shape: o toque vai para a linha.
+              comments.selectMode ? undefined : setShapeChord,
+              comments.decor
             )
           ) : (
             // Antes, uma cifra sem `content` (seção do repertório ainda sem
@@ -2196,6 +2225,8 @@ export default function ChordViewer({
           </div>
         </div>
       )}
+
+      {comments.ui}
 
       {shapeChord && (
         <ChordShapeModal
