@@ -915,10 +915,30 @@ export default function ChordViewer({
       | 'error';
   } | null>(null);
 
-  const [
-    scrollSpeed,
-    setScrollSpeed
-  ] = useState(0);
+  // Auto rolagem: liga/desliga + nível de velocidade (1–10), lembrado entre
+  // cifras e sessões (localStorage). O motor está no useEffect logo após
+  // `scrollRef`; o controle flutuante fica no fim do JSX.
+  const AUTO_SCROLL_MIN = 1;
+  const AUTO_SCROLL_MAX = 10;
+  const [autoScrollOn, setAutoScrollOn] = useState(false);
+  const [autoScrollLevel, setAutoScrollLevel] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('chord_autoscroll_level'));
+      if (saved >= AUTO_SCROLL_MIN && saved <= AUTO_SCROLL_MAX) return Math.round(saved);
+    } catch {
+      /* localStorage indisponível: usa o padrão */
+    }
+    return 4;
+  });
+  const autoScrollLevelRef = useRef(autoScrollLevel);
+  useEffect(() => {
+    autoScrollLevelRef.current = autoScrollLevel;
+    try {
+      localStorage.setItem('chord_autoscroll_level', String(autoScrollLevel));
+    } catch {
+      /* ignora */
+    }
+  }, [autoScrollLevel]);
 
   // Metrônomo: toca o beat pelo alto-falante/fone do celular, usando o BPM e
   // compasso cadastrados na cifra. Usa Web Audio API com um agendador
@@ -1195,30 +1215,78 @@ export default function ChordViewer({
         chord.id
     ) ?? -1;
 
+  // Motor da auto rolagem. Usa requestAnimationFrame com acumulador
+  // fracionário: `scrollTop` só aceita inteiros em muitos celulares, então
+  // somar 0.4px por quadro seria arredondado para 0 e a tela não andaria.
+  // Acumula os pixels e aplica só a parte inteira. A posição é sempre lida do
+  // próprio `scrollTop`, então se a pessoa rolar com o dedo, continua dali.
+  // Pausa enquanto toca/arrasta ou usa a roda do mouse e retoma sozinha
+  // ~1,2 s depois; para sozinha ao chegar no fim da cifra.
   useEffect(() => {
-    if (
-      scrollSpeed === 0
-    ) {
-      return;
-    }
+    if (!autoScrollOn) return;
+    const el = scrollRef.current;
+    if (!el) return;
 
-    const interval =
-      setInterval(() => {
-        if (
-          scrollRef.current
-        ) {
-          scrollRef.current.scrollTop +=
-            1;
+    const RESUME_DELAY_MS = 1200;
+    let raf = 0;
+    let last = 0;
+    let carry = 0;
+    let touching = false;
+    let pausedUntil = 0;
+
+    const pauseBriefly = () => {
+      pausedUntil = performance.now() + RESUME_DELAY_MS;
+    };
+    const onTouchStart = () => {
+      touching = true;
+    };
+    const onTouchEnd = () => {
+      touching = false;
+      pauseBriefly();
+    };
+
+    const tick = (now: number) => {
+      const dt = last ? Math.min(now - last, 100) / 1000 : 0; // segundos (limita saltos de aba em segundo plano)
+      last = now;
+
+      if (!touching && now >= pausedUntil) {
+        // Nível 1 ≈ 13 px/s … nível 10 ≈ 76 px/s
+        const pxPerSecond = 6 + autoScrollLevelRef.current * 7;
+        carry += pxPerSecond * dt;
+        const whole = Math.floor(carry);
+        if (whole >= 1) {
+          carry -= whole;
+          const before = el.scrollTop;
+          el.scrollTop = before + whole;
+          const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+          if (atEnd) {
+            setAutoScrollOn(false);
+            return;
+          }
         }
-      }, 100 / scrollSpeed);
+      }
+      raf = requestAnimationFrame(tick);
+    };
 
-    return () =>
-      clearInterval(
-        interval
-      );
-  }, [
-    scrollSpeed
-  ]);
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    el.addEventListener('wheel', pauseBriefly, { passive: true });
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+      el.removeEventListener('wheel', pauseBriefly);
+    };
+  }, [autoScrollOn]);
+
+  // Ao trocar de cifra, a rolagem automática desliga (a nova começa do topo).
+  useEffect(() => {
+    setAutoScrollOn(false);
+  }, [chord.id]);
 
   const handleNext =
     () => {
@@ -1896,7 +1964,8 @@ export default function ChordViewer({
           overflow-y-auto
           px-4
           md:px-8
-          py-5
+          pt-5
+          pb-24
         "
       >
         <div
@@ -1973,8 +2042,65 @@ export default function ChordViewer({
         </div>
       </div>
 
-      {/* Controles inferiores e demais painéis da versão original continuam
-          funcionando normalmente. */}
+      {/* Controle flutuante da auto rolagem: play/pausa + velocidade (1–10).
+          Fica visível também no modo imersivo (é quando mais se usa, com o
+          instrumento na mão). Abaixo do botão de fechar mídias (z-[70]). */}
+      <div
+        className="
+          fixed
+          bottom-4
+          left-1/2
+          -translate-x-1/2
+          z-[60]
+          flex
+          items-center
+          gap-1
+          p-1
+          rounded-full
+          bg-slate-900/85
+          text-white
+          shadow-lg
+          backdrop-blur
+        "
+        role="group"
+        aria-label="Rolagem automática"
+      >
+        <button
+          onClick={() => setAutoScrollOn(on => !on)}
+          aria-label={autoScrollOn ? 'Pausar rolagem automática' : 'Iniciar rolagem automática'}
+          title={autoScrollOn ? 'Pausar rolagem' : 'Rolar automaticamente'}
+          className={`w-11 h-11 flex items-center justify-center rounded-full transition-colors ${
+            autoScrollOn ? 'bg-brand-orange text-white' : 'hover:bg-white/15'
+          }`}
+        >
+          {autoScrollOn ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+        </button>
+        <button
+          onClick={() => setAutoScrollLevel(l => Math.max(AUTO_SCROLL_MIN, l - 1))}
+          disabled={autoScrollLevel <= AUTO_SCROLL_MIN}
+          aria-label="Rolagem mais lenta"
+          className="w-9 h-11 flex items-center justify-center rounded-full text-lg font-bold hover:bg-white/15 disabled:opacity-30"
+        >
+          −
+        </button>
+        <span
+          className="min-w-[2.75rem] text-center text-[11px] font-mono leading-tight"
+          aria-live="polite"
+        >
+          <span className="block text-[9px] uppercase tracking-wide text-white/60">Veloc.</span>
+          {autoScrollLevel}/{AUTO_SCROLL_MAX}
+        </span>
+        <button
+          onClick={() => setAutoScrollLevel(l => Math.min(AUTO_SCROLL_MAX, l + 1))}
+          disabled={autoScrollLevel >= AUTO_SCROLL_MAX}
+          aria-label="Rolagem mais rápida"
+          className="w-9 h-11 flex items-center justify-center rounded-full text-lg font-bold hover:bg-white/15 disabled:opacity-30"
+        >
+          +
+        </button>
+      </div>
+
+      {/* Demais painéis da versão original continuam funcionando normalmente. */}
 
       {/* Modal "Adicionar ao Caderno" — `showBookSelector` já buscava os
           cadernos (fetchUserBooks) e `handleAddToBook` já salvava, mas não
