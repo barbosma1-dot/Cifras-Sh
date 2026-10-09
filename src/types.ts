@@ -54,7 +54,7 @@ export interface Chord {
   youtubeUrl?: string; // Legacy support
   audio_url?: string;
   attachment_url?: string;
-  attachments?: { id?: string; name: string; url: string; type: 'audio' | 'text' }[];
+  attachments?: { id?: string; name: string; url: string; type: 'audio' | 'text' | 'score' }[];
   chord_book_id?: string;
   created_at: any;
   updated_at: any;
