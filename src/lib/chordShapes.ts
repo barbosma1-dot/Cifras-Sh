@@ -422,6 +422,160 @@ function shapeBySearch(instrument: Instrument, parsed: ChordParsedLike): ChordSh
   return buildShape(instrument, (best as { frets: (number | null)[] }).frets, []);
 }
 
+
+
+/**
+ * Acorde com baixo, partindo das formas base (mantém o desenho do acorde e só
+ * troca o baixo): A/C# = A (x 0 2 2 2 0) com o C# na corda A → x 4 2 2 2 0;
+ * E/G# = E (0 2 2 1 0 0) com G# na corda E → 4 2 2 1 0 0.
+ * Só violão (no ukulele o "baixo" não tem esse sentido).
+ */
+function shapeWithBassFromTemplates(instrument: Instrument, parsed: ParsedChord): ChordShape | null {
+  if (instrument !== 'guitar' || parsed.bass === null) return null;
+  const list = TEMPLATES[instrument][parsed.quality];
+  if (!list || list.length === 0) return null;
+  const open = OPEN_STRINGS[instrument];
+  const n = open.length;
+  const { required } = QUALITY_TONES[parsed.quality];
+  const requiredPcs = required.map(i => (parsed.root + i) % 12);
+
+  let best: { score: number; frets: (number | null)[]; barreStrings: number[] } | null = null;
+
+  for (const t of list) {
+    const shift = (parsed.root - t.base + 12) % 12;
+    const shifted = t.frets.map(f => (f === null ? null : f + shift));
+
+    for (let k = 0; k < n; k++) {
+      const bf = (parsed.bass - open[k] + 12) % 12;
+      if (bf > 12) continue;
+      const frets = shifted.slice();
+      let changed = 0;
+      for (let i = 0; i < k; i++) {
+        if (frets[i] !== null) {
+          frets[i] = null;
+          changed++;
+        }
+      }
+      if (frets[k] !== bf) changed++;
+      frets[k] = bf;
+
+      // notas tocadas e exigências do acorde
+      const pcs = new Set<number>();
+      frets.forEach((f, i) => {
+        if (f !== null) pcs.add((open[i] + f) % 12);
+      });
+      let okReq = true;
+      for (const r of requiredPcs) {
+        if (r === parsed.root && parsed.bass !== parsed.root && !pcs.has(r)) continue;
+        if (!pcs.has(r)) okReq = false;
+      }
+      if (!okReq) continue;
+
+      const fretted = frets.filter((f): f is number => f !== null && f > 0);
+      if (fretted.length === 0) continue;
+      const maxF = Math.max(...fretted);
+      const minF = Math.min(...fretted);
+      if (maxF - minF > 4) continue;
+
+      const barreStrings: number[] = [];
+      if (shift > 0) {
+        t.frets.forEach((f, i) => {
+          if (f === 0 && i > k && frets[i] === shift) barreStrings.push(i);
+        });
+        // a pestana também cobre a corda do baixo quando ela cai na mesma casa
+        if (frets[k] === shift && barreStrings.length > 0) barreStrings.unshift(k);
+      }
+
+      const score = shift * 100 + maxF + changed * 6 + bf;
+      if (!best || score < best.score) best = { score, frets, barreStrings };
+    }
+  }
+  if (!best) return null;
+  const b = best as { frets: (number | null)[]; barreStrings: number[] };
+  return buildShape(instrument, b.frets, b.barreStrings);
+}
+
+/**
+ * Acorde com baixo (ex.: A/C#, E/G#) no violão: busca a forma em que a nota
+ * MAIS GRAVE tocada é o baixo pedido e as demais notas pertencem ao acorde.
+ * Só usada quando nenhuma forma base já tem o baixo certo.
+ */
+function shapeWithBassSearch(instrument: Instrument, parsed: ParsedChord): ChordShape | null {
+  if (instrument !== 'guitar' || parsed.bass === null) return null;
+  const open = OPEN_STRINGS[instrument];
+  const n = open.length;
+  const { allowed, required } = QUALITY_TONES[parsed.quality];
+  const allowedSet = new Set(allowed.map(i => (parsed.root + i) % 12));
+  allowedSet.add(parsed.bass);
+  const requiredPcs = required.map(i => (parsed.root + i) % 12);
+
+  let best: { cost: number; frets: (number | null)[]; barreStrings: number[] } | null = null;
+
+  for (let ws = 0; ws <= 9; ws++) {
+    const options: (number | null)[][] = [];
+    for (let s = 0; s < n; s++) {
+      const opts: (number | null)[] = [0, null];
+      for (let f = Math.max(ws, 1); f <= ws + 3; f++) opts.push(f);
+      options.push(opts);
+    }
+    const cur: (number | null)[] = new Array(n).fill(null);
+    const walk = (s: number) => {
+      if (s === n) {
+        const played = cur.filter((f): f is number => f !== null);
+        if (played.length < 4) return;
+        const first = cur.findIndex(f => f !== null);
+        // o baixo é a corda mais grave tocada
+        if ((open[first] + (cur[first] as number)) % 12 !== parsed.bass) return;
+        // sem corda abafada no meio das tocadas
+        let last = n - 1;
+        while (cur[last] === null) last--;
+        for (let i = first; i <= last; i++) if (cur[i] === null) return;
+        const pcs = new Set<number>();
+        for (let i = 0; i < n; i++) {
+          const f = cur[i];
+          if (f === null) continue;
+          const pc = (open[i] + f) % 12;
+          if (!allowedSet.has(pc)) return;
+          pcs.add(pc);
+        }
+        for (const r of requiredPcs) {
+          // se o baixo substitui a fundamental, a fundamental pode faltar
+          if (r === parsed.root && parsed.bass !== parsed.root && !pcs.has(r)) continue;
+          if (!pcs.has(r)) return;
+        }
+        // dedos: casas > 0; pestana só se várias cordas na casa mais baixa
+        const fretted = cur.map((f, i) => (f !== null && f > 0 ? i : -1)).filter(i => i >= 0);
+        const minF = fretted.length ? Math.min(...fretted.map(i => cur[i] as number)) : 0;
+        const maxF = fretted.length ? Math.max(...fretted.map(i => cur[i] as number)) : 0;
+        const atMin = fretted.filter(i => cur[i] === minF);
+        let barreStrings: number[] = [];
+        let fingers = fretted.length;
+        if (fingers > 4) {
+          if (atMin.length < 2) return;
+          const from = atMin[0];
+          const to = atMin[atMin.length - 1];
+          for (let i = from; i <= to; i++) if ((cur[i] as number) < minF) return; // aberta/abafada dentro da pestana
+          barreStrings = atMin;
+          fingers = fingers - atMin.length + 1;
+          if (fingers > 4) return;
+        }
+        const cost = maxF * 10 + (maxF - minF) * 3 + (n - played.length) + fingers;
+        if (!best || cost < best.cost) best = { cost, frets: cur.slice(), barreStrings };
+        return;
+      }
+      for (const o of options[s]) {
+        cur[s] = o;
+        walk(s + 1);
+      }
+      cur[s] = null;
+    };
+    walk(0);
+  }
+  if (!best) return null;
+  const b = best as { frets: (number | null)[]; barreStrings: number[] };
+  return buildShape(instrument, b.frets, b.barreStrings);
+}
+
 type ChordParsedLike = Pick<ParsedChord, 'root' | 'quality'>;
 
 // ---------------------------------------------------------------------------
@@ -462,10 +616,17 @@ export function getChordShape(label: string, instrument: Instrument): ChordShape
   if (fromTemplate) {
     shape = fromTemplate.shape;
     if (parsed.bass !== null && !fromTemplate.bassMatched && parsed.bass !== parsed.root) {
-      const names = parsed.latin
-        ? parsed.flats ? NAMES_LA_FLAT : NAMES_LA_SHARP
-        : parsed.flats ? NAMES_EN_FLAT : NAMES_EN_SHARP;
-      warnings.push(`Baixo ${names[parsed.bass]}: toque essa nota no baixo (a forma mostra o acorde base).`);
+      // Tenta a forma COM o baixo (ex.: A/C# = x 4 2 2 2 0); só avisa se não houver.
+      const withBass =
+        shapeWithBassFromTemplates(instrument, parsed) ?? shapeWithBassSearch(instrument, parsed);
+      if (withBass) {
+        shape = withBass;
+      } else {
+        const names = parsed.latin
+          ? parsed.flats ? NAMES_LA_FLAT : NAMES_LA_SHARP
+          : parsed.flats ? NAMES_EN_FLAT : NAMES_EN_SHARP;
+        warnings.push(`Baixo ${names[parsed.bass]}: toque essa nota no baixo (a forma mostra o acorde base).`);
+      }
     }
   } else {
     shape = shapeBySearch(instrument, parsed);

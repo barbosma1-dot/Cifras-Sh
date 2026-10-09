@@ -14,16 +14,18 @@ export interface VoiceDef {
   color: string;
   /** Cor do texto sobre fundo branco (amarelo puro não tem contraste). */
   ink: string;
+  /** Cor do marca-texto sobre a sílaba (clara, para a letra continuar legível). */
+  hl: string;
 }
 
 // Ordem = ordem dos chips.
 export const VOICES: VoiceDef[] = [
-  { id: 'tenor', label: 'Tenor', color: '#16a34a', ink: '#15803d' }, // verde
-  { id: 'contralto', label: 'Contralto', color: '#eab308', ink: '#a16207' }, // amarelo
-  { id: 'soprano', label: 'Soprano', color: '#9333ea', ink: '#7e22ce' }, // roxo
-  { id: 'baixo', label: 'Baixo', color: '#111827', ink: '#111827' }, // preto
-  { id: 'masculino', label: 'Masculino', color: '#2563eb', ink: '#1d4ed8' }, // azul
-  { id: 'feminino', label: 'Feminino', color: '#ec4899', ink: '#be185d' } // rosa
+  { id: 'tenor', label: 'Tenor', color: '#16a34a', ink: '#15803d', hl: '#86efac' }, // verde
+  { id: 'contralto', label: 'Contralto', color: '#eab308', ink: '#a16207', hl: '#fde047' }, // amarelo
+  { id: 'soprano', label: 'Soprano', color: '#9333ea', ink: '#7e22ce', hl: '#d8b4fe' }, // roxo
+  { id: 'baixo', label: 'Baixo', color: '#111827', ink: '#111827', hl: '#9ca3af' }, // preto
+  { id: 'masculino', label: 'Masculino', color: '#2563eb', ink: '#1d4ed8', hl: '#93c5fd' }, // azul
+  { id: 'feminino', label: 'Feminino', color: '#ec4899', ink: '#be185d', hl: '#f9a8d4' } // rosa
 ];
 
 const BY_ID = new Map(VOICES.map(v => [v.id, v]));
