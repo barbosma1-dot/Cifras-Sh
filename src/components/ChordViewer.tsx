@@ -36,6 +36,7 @@ import {
 } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import LiturgyViewer from './LiturgyViewer';
+import ChordShapeModal from './ChordShapeModal';
 
 // Ícone da "logo" do Spotify (círculo + três ondas), desenhado como SVG
 // próprio — a mesma ideia de usar um ícone de marca pra indicar visualmente
@@ -259,7 +260,10 @@ function processContent(
     | 'english'
     | 'latin',
   fontSize: number,
-  lineSpacing: number
+  lineSpacing: number,
+  // Quando informado, cada acorde vira um botão que abre o shape (diagrama
+  // de violão/ukulele). Recebe o acorde como exibido (já transposto).
+  onChordClick?: (chordLabel: string) => void
 ) {
   const lines =
     content.split('\n');
@@ -503,19 +507,42 @@ function processContent(
                             : 0
                       }}
                     >
-                      <span
-                        className="
-                          text-brand-orange
-                          font-bold
-                          text-[0.85em]
-                          leading-none
-                          h-[1.2em]
-                          whitespace-pre
-                        "
-                      >
-                        {chordLabel ||
-                          '\u00A0'}
-                      </span>
+                      {onChordClick && chordLabel ? (
+                        <button
+                          type="button"
+                          onClick={() => onChordClick(chordLabel)}
+                          title={`Ver shape de ${chordLabel}`}
+                          className="
+                            text-brand-orange
+                            font-bold
+                            text-[0.85em]
+                            leading-none
+                            h-[1.2em]
+                            whitespace-pre
+                            text-left
+                            cursor-pointer
+                            hover:underline
+                            underline-offset-2
+                            active:opacity-60
+                          "
+                        >
+                          {chordLabel}
+                        </button>
+                      ) : (
+                        <span
+                          className="
+                            text-brand-orange
+                            font-bold
+                            text-[0.85em]
+                            leading-none
+                            h-[1.2em]
+                            whitespace-pre
+                          "
+                        >
+                          {chordLabel ||
+                            '\u00A0'}
+                        </span>
+                      )}
 
                       <span
                         className="
@@ -581,7 +608,23 @@ function processContent(
                 height: '1.2em'
               }}
             >
-              {transposed}
+              {onChordClick
+                ? transposed.split(/(\s+)/).map((tok, ti) =>
+                    tok.trim() === '' ? (
+                      tok
+                    ) : (
+                      <button
+                        key={ti}
+                        type="button"
+                        onClick={() => onChordClick(tok)}
+                        title={`Ver shape de ${tok}`}
+                        className="cursor-pointer hover:underline underline-offset-2 active:opacity-60"
+                      >
+                        {tok}
+                      </button>
+                    )
+                  )
+                : transposed}
             </div>
           )
         });
@@ -914,6 +957,9 @@ export default function ChordViewer({
       | 'success'
       | 'error';
   } | null>(null);
+
+  // Acorde cujo shape (diagrama) está aberto no modal — null = fechado.
+  const [shapeChord, setShapeChord] = useState<string | null>(null);
 
   // Auto rolagem: liga/desliga + nível de velocidade (1–10), lembrado entre
   // cifras e sessões (localStorage). O motor está no useEffect logo após
@@ -1989,7 +2035,8 @@ export default function ChordViewer({
               showChords,
               notationSystem,
               fontSize,
-              lineSpacing
+              lineSpacing,
+              setShapeChord
             )
           ) : (
             // Antes, uma cifra sem `content` (seção do repertório ainda sem
@@ -2148,6 +2195,13 @@ export default function ChordViewer({
             </button>
           </div>
         </div>
+      )}
+
+      {shapeChord && (
+        <ChordShapeModal
+          chordLabel={shapeChord}
+          onClose={() => setShapeChord(null)}
+        />
       )}
 
       {showEucharisticPrayer && (
