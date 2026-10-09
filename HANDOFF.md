@@ -38,16 +38,27 @@
 - NÃO VERIFICADO: `lint`/`build` completos (npm indisponível; o `tsc` isolado só acusou erros por falta dos tipos do React, nenhum no código novo) e o modal rodando no app real.
 - Testar: abrir uma cifra com acordes, tocar num acorde (inline e em linha só de acordes), trocar Violão/Ukulele, transpor o tom e tocar de novo, trocar para notação latina, fechar com o botão voltar do celular.
 
+### T5a — Comentários (título + trecho) com escopo missão/usuário
+- Arquivos NOVOS: `T5A_chord_annotations.sql`, `src/lib/chordAnnotations.ts`, `src/components/ChordComments.tsx`
+- Arquivo alterado (completo): `src/components/ChordViewer.tsx` (import do hook, `processContent` ganhou o parâmetro opcional `lineDecor`, item "Comentários" no menu ⋮, `{comments.ui}` no fim; em modo de seleção os acordes não abrem o shape).
+- Banco: tabela `chord_annotations` (`kind` 'comment'|'voice', `scope` 'user'|'mission', `mission_id`, `title`, `body`, `line_start/line_end` 0-based, `excerpt`, `payload jsonb`). Já pronta para o T5b (voz) sem nova migração. RLS: pessoal só o dono vê (nem o admin); da missão, todo membro lê e só coordenador/editor/admin da missão (ou admin geral) cria/edita/apaga. Visitante de link compartilhado não acessa.
+- Fluxo: menu ⋮ → Comentários → "Novo comentário" → tocar na linha (tocar numa segunda amplia o intervalo; terceira toque recomeça) → Continuar → título (obrigatório), nota (opcional), "Só eu" ou "Missão" → Salvar. Linhas comentadas ganham barra lateral (âmbar = só eu, azul = missão, roxo = ambos) e selo com a contagem; tocar no selo abre o comentário. No painel: Ir ao trecho, Editar, Apagar (com confirmação).
+- Trecho resiliente: guarda o texto (`excerpt`). Se a cifra for editada e as linhas mudarem, `resolveAnchor` reencontra o trecho (tolerante a acento/caixa/pontuação); se não achar, o comentário continua no painel com aviso "trecho alterado".
+- Offline: leitura pelo cache em localStorage (`chord_annotations:<user>:<cifra>`); criar/editar/apagar exige conexão.
+- Verificação feita: lógica de ancoragem testada com script (ok/moved/lost/fuzzy/duplicado, 100% passou). `tsc` só acusa ruído por falta dos tipos do React/Supabase (nenhum erro de sintaxe ou nome nos arquivos novos).
+- NÃO VERIFICADO: `npm run lint`/`build`, a migração rodando no Supabase e a UI no app real (sem npm/rede aqui).
+- Decisões que valem confirmar: (1) membro comum só LÊ comentários da missão (não cria); (2) "trecho" = linhas inteiras, não seleção de palavras; (3) comentário só aparece para quem está logado.
+- Testar: rodar `T5A_chord_annotations.sql`; abrir cifra → ⋮ → Comentários → novo (Só eu); repetir com Missão como coordenador; abrir como membro comum e conferir que lê mas não cria na missão; editar a letra da cifra e ver o selo acompanhar; ficar offline e reabrir.
+
 ## Em andamento
 - Nada.
 
 ## Pendente (ordem)
-- T5a Tabela `chord_annotations` + camada Comentários (título + trecho), escopo missão/usuário, RLS.
-- T5b Camada Divisão de voz: Tenor (verde), Contralto (amarelo), Soprano (roxo), Baixo (preto), Masculino (azul), Feminino (rosa); barras sob a letra + letra repetida só quando diferir; chips ligáveis; modo foco.
+- T5b Camada Divisão de voz (usa a tabela `chord_annotations` com `kind='voice'` e `payload`; sem nova migração): Tenor (verde), Contralto (amarelo), Soprano (roxo), Baixo (preto), Masculino (azul), Feminino (rosa); barras sob a letra + letra repetida só quando diferir; chips ligáveis; modo foco.
 - T6 Partitura na importação de PDF: detectar páginas, gerar PDF separado (pdf-lib — ainda NÃO está no package.json; adicionar `"pdf-lib": "^1.17.1"`), anexar com `type: 'score'`.
 
 ## Migrações SQL a rodar
-- Nenhuma até agora.
+- `T5A_chord_annotations.sql` (idempotente; cria `chord_annotations`, funções `annotation_*`, trigger e RLS).
 
 ## Riscos e dúvidas
-- Build/lint não verificados (ver T1). Registro npm e open.spotify.com bloqueados neste ambiente.
+- Build/lint não verificados (ver T1). Comentários só funcionam depois da migração T5A. Registro npm e open.spotify.com bloqueados neste ambiente.
