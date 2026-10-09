@@ -64,6 +64,22 @@ export default defineConfig(({mode}) => {
                 networkTimeoutSeconds: 8,
                 cacheableResponse: { statuses: [0, 200] }
               }
+            },
+            {
+              // Capas do Spotify (imagens estáticas do CDN do Spotify, que
+              // não mudam por URL): CacheFirst, para a capa aparecer também
+              // offline depois da primeira vez. statuses 0 = resposta opaca
+              // de <img> cross-origin.
+              urlPattern: /^https:\/\/(i\.scdn\.co|image-cdn-[a-z0-9-]+\.spotifycdn\.com)\//,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'spotify-covers',
+                expiration: {
+                  maxEntries: 120,
+                  maxAgeSeconds: 30 * 24 * 60 * 60 // 30 dias
+                },
+                cacheableResponse: { statuses: [0, 200] }
+              }
             }
           ]
         },
