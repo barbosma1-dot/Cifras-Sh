@@ -40,6 +40,7 @@ import { supabase } from '../lib/supabase';
 import LiturgyViewer from './LiturgyViewer';
 import ChordShapeModal from './ChordShapeModal';
 import { useChordComments, wrapLine, type LineDecor } from './ChordComments';
+import { renderLyric } from './LyricSpans';
 
 // Ícone da "logo" do Spotify (círculo + três ondas), desenhado como SVG
 // próprio — a mesma ideia de usar um ícone de marca pra indicar visualmente
@@ -415,9 +416,14 @@ function processContent(
                     `${lineSpacing * 0.3}em`
                 }}
               >
-                {line.replace(
-                  /\[.*?\]/g,
-                  ''
+                {renderLyric(
+                  line.replace(
+                    /\[.*?\]/g,
+                    ''
+                  ),
+                  0,
+                  i,
+                  lineDecor?.syl
                 )}
               </div>
             )
@@ -429,7 +435,11 @@ function processContent(
         const segments: {
           chord: string;
           text: string;
+          // posição deste pedaço no texto cantado da linha (para marcar sílabas)
+          base: number;
         }[] = [];
+
+        let lyricPos = 0;
 
         const parts =
           line.split(
@@ -454,8 +464,11 @@ function processContent(
             segments.push({
               chord:
                 currentChord,
-              text: part
+              text: part,
+              base: lyricPos
             });
+
+            lyricPos += part.length;
 
             currentChord = '';
           }
@@ -556,13 +569,17 @@ function processContent(
                           whitespace-pre
                         "
                       >
-                        {seg.text ||
-                          (
-                            sidx ===
-                            segments.length - 1
-                              ? ''
-                              : '\u00A0'
-                          )}
+                        {seg.text
+                          ? renderLyric(
+                              seg.text,
+                              seg.base,
+                              i,
+                              lineDecor?.syl
+                            )
+                          : sidx ===
+                              segments.length - 1
+                            ? ''
+                            : '\u00A0'}
                       </span>
                     </div>
                   );
@@ -650,7 +667,12 @@ function processContent(
                 `${lineSpacing * 0.3}em`
             }}
           >
-            {line}
+            {renderLyric(
+              line,
+              0,
+              i,
+              lineDecor?.syl
+            )}
           </div>
         )
       });

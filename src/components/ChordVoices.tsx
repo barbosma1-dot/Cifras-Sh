@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Mic, Target } from 'lucide-react';
+import { X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Mic, Target, Eye, EyeOff } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
 import {
   buildExcerpt,
@@ -21,42 +21,32 @@ import {
   type VoiceId,
   type VoiceMark
 } from '../lib/voiceDivision';
+import { readSel, type LineSpan } from '../lib/annotationSpans';
 import { ScopeChip, ScopePicker } from './AnnotationParts';
 
 /**
- * Camada "Divisão de voz" (T5b): barras coloridas sob a letra mostrando
- * quais linhas cada voz canta, chips para ligar/desligar cada voz e modo foco
+ * Camada "Divisão de voz": marca-texto colorido nas sílabas que cada voz
+ * canta (ver LyricSpans.tsx), chips para ligar/desligar cada voz e modo foco
  * (só uma voz em destaque). Os dados ficam em `chord_annotations`
  * (`kind = 'voice'`); quem orquestra o estado é `useChordComments`.
  */
 
 // ---------------------------------------------------------------------------
-// Barras sob a letra (usadas por wrapLine)
+// Letra própria da voz (usada por wrapLine)
 // ---------------------------------------------------------------------------
 
-export function VoiceBars({ marks }: { marks: VoiceMark[] }) {
+export function VoiceAltLyrics({ marks }: { marks: VoiceMark[] }) {
+  const alts = marks.filter(m => m.last && m.text);
+  if (alts.length === 0) return null;
   return (
     <div className="mt-0.5 mb-1.5 space-y-0.5">
-      {marks.map(m => {
+      {alts.map(m => {
         const v = voiceDef(m.voice);
         return (
-          <div key={m.id}>
-            <div className="flex items-center gap-1.5" title={v.label}>
-              <div className="h-1.5 flex-1 rounded-full" style={{ background: v.color }} />
-              <span
-                className="w-[4.25rem] shrink-0 text-[9px] font-black uppercase tracking-wide leading-none"
-                style={{ color: v.ink }}
-              >
-                {m.first ? v.label : ''}
-              </span>
-            </div>
-            {/* Letra repetida: só aparece quando esta voz canta algo diferente da letra principal. */}
-            {m.last && m.text && (
-              <p className="mt-0.5 text-[0.8em] italic leading-snug whitespace-pre-line font-semibold" style={{ color: v.ink }}>
-                {m.text}
-              </p>
-            )}
-          </div>
+          <p key={m.id} className="text-[0.8em] leading-snug whitespace-pre-line font-semibold" style={{ color: v.ink }}>
+            <span className="text-[0.7em] font-black uppercase tracking-wide mr-1">{v.label}:</span>
+            <span style={{ background: v.hl, borderRadius: 3, padding: '0 2px' }}>{m.text}</span>
+          </p>
         );
       })}
     </div>
@@ -74,8 +64,11 @@ export function VoiceChips({
   focus,
   onToggle,
   onFocusMode,
-  onPickFocus
+  onPickFocus,
+  comments
 }: {
+  /** Botão de mostrar/ocultar os comentários na cifra (só aparece se houver comentários). */
+  comments?: { count: number; shown: boolean; onToggle: () => void };
   present: VoiceId[];
   hidden: Set<VoiceId>;
   focusMode: boolean;
@@ -90,6 +83,20 @@ export function VoiceChips({
       role="group"
       aria-label="Divisão de voz"
     >
+      {comments && (
+        <button
+          onClick={comments.onToggle}
+          aria-pressed={comments.shown}
+          title={comments.shown ? 'Ocultar comentários' : 'Mostrar comentários'}
+          className={`shrink-0 flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-black ${
+            comments.shown ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-400 line-through'
+          }`}
+        >
+          {comments.shown ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Notas {comments.count}
+        </button>
+      )}
+
+      {present.length > 0 && (
       <button
         onClick={onFocusMode}
         aria-pressed={focusMode}
@@ -100,6 +107,7 @@ export function VoiceChips({
       >
         <Target className="w-3.5 h-3.5" /> Foco
       </button>
+      )}
 
       {present.map(id => {
         const v = voiceDef(id);
@@ -212,8 +220,10 @@ export function VoicePanel({
                     <ScopeChip a={a} ctx={ctx} />
                   </div>
 
-                  {a.excerpt && (
-                    <p className="mt-1.5 text-xs italic text-slate-500 border-l-2 border-slate-200 pl-2 line-clamp-3">{a.excerpt}</p>
+                  {(readSel(a.payload) || a.excerpt) && (
+                    <p className="mt-1.5 text-xs italic text-slate-500 border-l-2 pl-2 line-clamp-3" style={{ borderColor: def?.hl || '#e2e8f0' }}>
+                      {readSel(a.payload) || a.excerpt}
+                    </p>
                   )}
                   {pv.text && (
                     <p className="mt-2 text-sm whitespace-pre-line break-words" style={{ color: def?.ink }}>
@@ -285,7 +295,9 @@ export function VoicePanel({
 // Formulário (nova / editar)
 // ---------------------------------------------------------------------------
 
-export type VoiceFormState = { mode: 'new'; start: number; end: number } | { mode: 'edit'; annotation: ChordAnnotation };
+export type VoiceFormState =
+  | { mode: 'new'; start: number; end: number; spans: LineSpan[]; sel: string }
+  | { mode: 'edit'; annotation: ChordAnnotation };
 
 /** Letra principal das linhas a..b (sem acordes), uma linha por linha cantada. */
 function mainLyricOf(lines: string[], start: number, end: number): string {
@@ -324,8 +336,10 @@ export function VoiceForm({
   const end = form.mode === 'new' ? form.end : anchor?.end ?? form.annotation.line_end;
   const lost = !!editing && anchor?.status === 'lost';
   // Se o trecho sumiu da cifra, compara com o texto que foi guardado.
-  const mainLyric = lost ? (editing?.excerpt || '').replace(/ \/ /g, '\n') : mainLyricOf(lines, start, end);
+  const sel = form.mode === 'new' ? form.sel : readSel(editing?.payload);
+  const mainLyric = sel ? sel.replace(/ \/ /g, '\n') : lost ? (editing?.excerpt || '').replace(/ \/ /g, '\n') : mainLyricOf(lines, start, end);
   const excerpt = editing ? editing.excerpt : buildExcerpt(lines, start, end);
+  const shown = sel || excerpt;
 
   const [voice, setVoice] = useState<VoiceId | null>(initial.voice);
   const [diffOn, setDiffOn] = useState(!!initial.text);
@@ -352,7 +366,11 @@ export function VoiceForm({
     setError('');
     try {
       const mission_id = scope === 'mission' ? missionId : null;
-      const payload = buildVoicePayload(voice, diffOn ? text : '', mainLyric);
+      const base = buildVoicePayload(voice, diffOn ? text : '', mainLyric);
+      const prev = (editing?.payload || {}) as Record<string, unknown>;
+      const marks: Record<string, unknown> =
+        form.mode === 'new' ? { spans: form.spans, sel: form.sel } : { ...(prev.spans ? { spans: prev.spans } : {}), ...(prev.sel ? { sel: prev.sel } : {}) };
+      const payload = { ...base, ...marks };
       if (editing) {
         const saved = await updateAnnotation(editing.id, { payload, scope, mission_id });
         onSaved(saved, false);
@@ -401,8 +419,8 @@ export function VoiceForm({
           </button>
         </div>
 
-        {excerpt ? (
-          <p className="mt-3 text-xs italic text-slate-500 border-l-2 border-brand-orange pl-2 line-clamp-4">{excerpt}</p>
+        {shown ? (
+          <p className="mt-3 text-xs italic text-slate-500 border-l-2 border-brand-orange pl-2 line-clamp-4">{shown}</p>
         ) : (
           <p className="mt-3 text-xs text-slate-400">Trecho sem letra (apenas acordes).</p>
         )}
@@ -451,7 +469,7 @@ export function VoiceForm({
               className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand-orange resize-none"
             />
             <p className="mt-1 text-xs text-slate-400">
-              Se a letra ficar igual à principal, ela não é repetida na cifra: aparece só a barra.
+              Se a letra ficar igual à principal, ela não é repetida na cifra: aparece só o marca-texto.
             </p>
           </>
         )}

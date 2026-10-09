@@ -53,6 +53,18 @@ export default function ChordShapeModal({ chordLabel, onClose }: ChordShapeModal
     ? result.shape.frets.map(f => (f === null ? 'x' : String(f))).join(' ')
     : '';
 
+  // Acorde com baixo (ex.: A/C#): diz em que corda/casa está o baixo da forma mostrada.
+  const bassName = chordLabel.includes('/') ? chordLabel.split('/')[1].trim() : '';
+  let bassInfo = '';
+  if (instrument === 'guitar' && bassName && result.shape && !result.warning) {
+    const first = result.shape.frets.findIndex(f => f !== null);
+    if (first >= 0) {
+      const stringNames = ['E (6ª)', 'A (5ª)', 'D (4ª)', 'G (3ª)', 'B (2ª)', 'E (1ª)'];
+      const fret = result.shape.frets[first] as number;
+      bassInfo = `Baixo ${bassName}: corda ${stringNames[first]}, ${fret === 0 ? 'solta' : `casa ${fret}`}. A forma já inclui o baixo.`;
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-[180] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
@@ -117,6 +129,8 @@ export default function ChordShapeModal({ chordLabel, onClose }: ChordShapeModal
             </p>
           )}
         </div>
+
+        {bassInfo && <p className="mt-3 text-xs text-slate-600 bg-slate-100 rounded-xl px-3 py-2">{bassInfo}</p>}
 
         {result.shape && result.warning && (
           <p className="mt-3 text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2">{result.warning}</p>

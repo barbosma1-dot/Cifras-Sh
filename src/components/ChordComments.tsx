@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle } from 'lucide-react';
+import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
 import {
   buildExcerpt,
@@ -19,15 +19,28 @@ import {
 } from '../lib/chordAnnotations';
 import { VOICES, readVoicePayload, type VoiceId, type VoiceMark } from '../lib/voiceDivision';
 import { ScopeChip, ScopePicker } from './AnnotationParts';
-import { VoiceBars, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } from './ChordVoices';
+import { VoiceAltLyrics, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } from './ChordVoices';
+import {
+  isInSelection,
+  lastLineOf,
+  readSel,
+  spansFromSelection,
+  spansOnLines,
+  type CommentSpanOnLine,
+  type LineSpan,
+  type SylDecor,
+  type SylPos,
+  type VoiceSpanOnLine
+} from '../lib/annotationSpans';
 
 /**
  * Camada "Comentários" da cifra (T5a).
  *
- * Fluxo: menu ⋮ → Comentários → "Novo comentário" → toca na linha (ou em duas,
- * para um intervalo) → escreve título/nota e escolhe "Só eu" ou "Missão".
- * As linhas comentadas ganham uma barra lateral colorida e um selo com a
- * quantidade; tocar no selo abre o comentário.
+ * Fluxo: menu ⋮ → Comentários → "Novo comentário" → toca na PRIMEIRA sílaba e
+ * depois na ÚLTIMA sílaba do trecho → escreve título/nota e escolhe "Só eu"
+ * ou "Missão". As sílabas comentadas ficam sublinhadas (ondulado) e o texto do
+ * comentário aparece logo abaixo da linha, com um botão para ocultar (por
+ * comentário e, na barra do rodapé, todos de uma vez).
  *
  * `useChordComments` concentra todo o estado; o ChordViewer só pega o que ele
  * devolve (`decor` para desenhar as linhas, `ui` para as telas, `open` e
@@ -41,69 +54,91 @@ import { VoiceBars, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } fro
 // Decoração das linhas (consumida por processContent no ChordViewer)
 // ---------------------------------------------------------------------------
 
+export interface NoteView {
+  id: string;
+  title: string;
+  body: string;
+  scope: 'user' | 'mission';
+  /** true = o texto está recolhido (só o botão pequeno aparece). */
+  collapsed: boolean;
+}
+
 export interface LineDecor {
   selectMode: boolean;
-  selection: [number, number] | null;
-  bars: Map<number, 'user' | 'mission' | 'both'>;
-  badges: Map<number, string[]>;
-  onLineTap: (line: number) => void;
-  onBadgeTap: (ids: string[]) => void;
-  /** Barras de voz por linha (já filtradas por chips/foco). */
+  /** Marca-texto, sublinhado e seleção sílaba por sílaba (ver LyricSpans.tsx). */
+  syl: SylDecor;
+  /** Comentários a mostrar logo abaixo da linha em que terminam. */
+  notes: Map<number, NoteView[]>;
+  onNoteHide: (id: string) => void;
+  onNoteShow: (id: string) => void;
+  onNoteEdit: (id: string) => void;
+  /** Letra própria de cada voz (só na última linha do trecho; já filtrada por chips/foco). */
   voices: Map<number, VoiceMark[]>;
   /** Linhas a esmaecer no modo foco; null = nenhuma. */
   dim: Set<number> | null;
 }
 
-const BAR_CLASS: Record<'user' | 'mission' | 'both', string> = {
-  user: 'border-amber-400 bg-amber-50/60',
-  mission: 'border-brand-blue bg-sky-50/70',
-  both: 'border-violet-500 bg-violet-50/60'
+const NOTE_CLASS: Record<'user' | 'mission', string> = {
+  user: 'border-amber-400 bg-amber-50',
+  mission: 'border-brand-blue bg-sky-50'
 };
 
-/** Envolve uma linha renderizada com marcador/seleção. Sem nada a mostrar, devolve a linha intacta. */
-export function wrapLine(el: ReactElement, idx: number, d: LineDecor): ReactElement {
-  const bar = d.bars.get(idx);
-  const badge = d.badges.get(idx);
-  const voiceMarks = d.voices.get(idx);
-  const dimmed = !!d.dim && d.dim.has(idx);
-  if (!d.selectMode && !bar && !badge && !voiceMarks && !dimmed) return el;
-
-  const selected = !!d.selection && idx >= d.selection[0] && idx <= d.selection[1];
-  const cls = [
-    'relative',
-    d.selectMode ? 'cursor-pointer rounded-lg -mx-2 px-2 active:bg-brand-orange/10' : '',
-    selected ? 'bg-brand-orange/15 ring-1 ring-brand-orange/50 rounded-lg' : '',
-    // -ml-3 + pl-2 + borda de 4px = 12px: a letra não se mexe quando o marcador aparece.
-    bar && !selected && !d.selectMode ? `border-l-4 -ml-3 pl-2 ${BAR_CLASS[bar]}` : '',
-    badge && !d.selectMode ? 'pr-10' : '',
-    dimmed && !d.selectMode ? 'opacity-30' : ''
-  ]
-    .filter(Boolean)
-    .join(' ');
-
+function NoteCard({ n, d }: { n: NoteView; d: LineDecor }) {
+  if (n.collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => d.onNoteShow(n.id)}
+        aria-label={`Mostrar comentário: ${n.title}`}
+        className="mt-1 mb-1 mr-1 inline-flex max-w-full items-center gap-1 rounded-full bg-slate-800 text-white text-[10px] font-bold leading-none px-2 py-1.5 shadow active:opacity-70"
+      >
+        <MessageSquare className="w-3 h-3 shrink-0" />
+        <span className="truncate">{n.title || 'Comentário'}</span>
+        <Eye className="w-3 h-3 shrink-0 opacity-70" />
+      </button>
+    );
+  }
   return (
-    <div
-      key={`ln-${idx}`}
-      data-line={idx}
-      className={cls}
-      onClick={d.selectMode ? () => d.onLineTap(idx) : undefined}
-    >
-      {el}
-      {voiceMarks && <VoiceBars marks={voiceMarks} />}
-      {badge && !d.selectMode && (
+    <div className={`mt-1 mb-2 rounded-xl border-l-4 px-2.5 py-1.5 text-[0.82em] leading-snug text-slate-800 ${NOTE_CLASS[n.scope]}`}>
+      <div className="flex items-start gap-1.5">
+        <div className="min-w-0 flex-1">
+          {n.title && <p className="font-black break-words">{n.title}</p>}
+          {n.body && <p className="whitespace-pre-wrap break-words">{n.body}</p>}
+        </div>
         <button
           type="button"
-          onClick={e => {
-            e.stopPropagation();
-            d.onBadgeTap(badge);
-          }}
-          aria-label={`Ver ${badge.length} comentário(s) deste trecho`}
-          className="absolute right-0 top-0 flex items-center gap-0.5 rounded-full bg-slate-800 text-white text-[10px] font-bold leading-none px-1.5 py-1 shadow active:opacity-70"
+          onClick={() => d.onNoteEdit(n.id)}
+          aria-label="Abrir comentário no painel"
+          className="shrink-0 p-1 -mt-0.5 rounded-full text-slate-400 active:bg-black/10"
         >
-          <MessageSquare className="w-3 h-3" />
-          {badge.length}
+          <Pencil className="w-3.5 h-3.5" />
         </button>
-      )}
+        <button
+          type="button"
+          onClick={() => d.onNoteHide(n.id)}
+          aria-label="Ocultar este comentário"
+          className="shrink-0 p-1 -mt-0.5 -mr-1 rounded-full text-slate-500 active:bg-black/10"
+        >
+          <EyeOff className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Envolve uma linha renderizada com as notas/letra de voz. Sem nada a mostrar, devolve a linha intacta. */
+export function wrapLine(el: ReactElement, idx: number, d: LineDecor): ReactElement {
+  const notes = !d.selectMode ? d.notes.get(idx) : undefined;
+  const voiceMarks = !d.selectMode ? d.voices.get(idx) : undefined;
+  const dimmed = !!d.dim && d.dim.has(idx) && !d.selectMode;
+  const marked = d.syl.voice.has(idx) || d.syl.comment.has(idx);
+  if (!notes && !voiceMarks && !dimmed && !marked) return el;
+
+  return (
+    <div key={`ln-${idx}`} data-line={idx} className={dimmed ? 'relative opacity-30' : 'relative'}>
+      {el}
+      {voiceMarks && <VoiceAltLyrics marks={voiceMarks} />}
+      {notes && notes.map(n => <NoteCard key={n.id} n={n} d={d} />)}
     </div>
   );
 }
@@ -123,7 +158,7 @@ interface UseChordCommentsOptions {
 }
 
 type FormState =
-  | { mode: 'new'; start: number; end: number }
+  | { mode: 'new'; start: number; end: number; spans: LineSpan[]; sel: string }
   | { mode: 'edit'; annotation: ChordAnnotation }
   | null;
 
@@ -136,6 +171,34 @@ function loadHiddenVoices(): Set<VoiceId> {
     return new Set((Array.isArray(raw) ? raw : []).filter((x: unknown) => typeof x === 'string' && valid.has(x)) as VoiceId[]);
   } catch {
     return new Set();
+  }
+}
+
+const COMMENTS_SHOWN_KEY = 'chord_comments_shown';
+const COMMENTS_COLLAPSED_KEY = 'chord_comments_collapsed';
+
+function loadCommentsShown(): boolean {
+  try {
+    return localStorage.getItem(COMMENTS_SHOWN_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function loadCollapsedNotes(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COMMENTS_COLLAPSED_KEY) || '[]');
+    return new Set((Array.isArray(raw) ? raw : []).filter((x: unknown) => typeof x === 'string') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedNotes(set: Set<string>) {
+  try {
+    localStorage.setItem(COMMENTS_COLLAPSED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* ignora */
   }
 }
 
@@ -156,7 +219,11 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelFilter, setPanelFilter] = useState<string[] | null>(null);
   const [selectMode, setSelectMode] = useState(false);
-  const [selection, setSelection] = useState<[number, number] | null>(null);
+  // seleção sílaba por sílaba: primeira e última sílaba tocadas
+  const [sylA, setSylA] = useState<SylPos | null>(null);
+  const [sylB, setSylB] = useState<SylPos | null>(null);
+  const [commentsShown, setCommentsShown] = useState<boolean>(loadCommentsShown);
+  const [collapsedNotes, setCollapsedNotes] = useState<Set<string>>(loadCollapsedNotes);
   const [form, setForm] = useState<FormState>(null);
 
   // T5b — divisão de voz
@@ -205,7 +272,8 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     setVoiceForm(null);
     setFocusMode(false);
     setSelectMode(false);
-    setSelection(null);
+    setSylA(null);
+    setSylB(null);
     setForm(null);
     if (!enabled || !chordId) return;
 
@@ -251,7 +319,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   );
   const voiceAnchorById = useMemo(() => new Map(voiceResolved.map(r => [r.a.id, r.anchor])), [voiceResolved]);
 
-  // Marcas de voz por linha, já respeitando chips (liga/desliga) e modo foco.
+  // Marca-texto das vozes por linha, já respeitando chips (liga/desliga) e modo foco.
   const voiceView = useMemo(() => {
     const parsed = voiceResolved
       .filter(r => r.anchor.status !== 'lost')
@@ -260,18 +328,20 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     const present = VOICES.map(v => v.id).filter(id => parsed.some(r => r.pv.voice === id));
     const focusActive = focusMode && focusVoice && present.includes(focusVoice) ? focusVoice : null;
 
-    const marks = new Map<number, VoiceMark[]>();
+    const spans = new Map<number, VoiceSpanOnLine[]>();
+    const marks = new Map<number, VoiceMark[]>(); // letra própria da voz, na última linha
     const focusLines = new Set<number>();
     for (const r of parsed) {
       const id = r.pv.voice as VoiceId;
       const visible = focusActive ? id === focusActive : !hiddenVoices.has(id);
       if (!visible) continue;
-      for (let i = r.anchor.start; i <= r.anchor.end; i++) {
-        focusLines.add(i);
-        marks.set(i, [
-          ...(marks.get(i) || []),
-          { id: r.a.id, voice: id, first: i === r.anchor.start, last: i === r.anchor.end, text: r.pv.text }
-        ]);
+      for (const sp of spansOnLines(r.a.payload, r.anchor.start, r.anchor.end)) {
+        focusLines.add(sp.line);
+        spans.set(sp.line, [...(spans.get(sp.line) || []), { id: r.a.id, voice: id, from: sp.from, to: sp.to }]);
+      }
+      if (r.pv.text) {
+        const last = lastLineOf(r.a.payload, r.anchor.start, r.anchor.end);
+        marks.set(last, [...(marks.get(last) || []), { id: r.a.id, voice: id, first: true, last: true, text: r.pv.text }]);
       }
     }
     // Empilha sempre na mesma ordem dos chips.
@@ -283,7 +353,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
       dim = new Set<number>();
       for (let i = 0; i < lines.length; i++) if (!focusLines.has(i)) dim.add(i);
     }
-    return { present, marks, dim, focusActive };
+    return { present, spans, marks, dim, focusActive };
   }, [voiceResolved, hiddenVoices, focusMode, focusVoice, lines]);
 
   const toggleVoice = (id: VoiceId) => {
@@ -302,43 +372,89 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     });
   };
 
+  // Seleção em andamento (primeira/última sílaba) já convertida em trecho por linha.
+  const selection = useMemo(() => (sylA ? spansFromSelection(lines, sylA, sylB) : null), [sylA, sylB, lines]);
+
+  // Comentários vivos (trecho encontrado) — para sublinhado, notas e contagem.
+  const liveComments = useMemo(() => resolved.filter(r => r.anchor.status !== 'lost'), [resolved]);
+
+  const hideNote = useCallback((id: string) => {
+    setCollapsedNotes(prev => {
+      const next = new Set<string>(prev);
+      next.add(id);
+      saveCollapsedNotes(next);
+      return next;
+    });
+  }, []);
+  const showNote = useCallback((id: string) => {
+    setCollapsedNotes(prev => {
+      const next = new Set<string>(prev);
+      next.delete(id);
+      saveCollapsedNotes(next);
+      return next;
+    });
+  }, []);
+  const toggleCommentsShown = () => {
+    setCommentsShown(on => {
+      try {
+        localStorage.setItem(COMMENTS_SHOWN_KEY, on ? '0' : '1');
+      } catch {
+        /* ignora */
+      }
+      return !on;
+    });
+  };
+
   const decor = useMemo<LineDecor | null>(() => {
     if (!enabled || !ctx) return null;
-    const bars = new Map<number, 'user' | 'mission' | 'both'>();
-    const badges = new Map<number, string[]>();
-    for (const { a, anchor } of resolved) {
-      if (anchor.status === 'lost') continue;
-      for (let i = anchor.start; i <= anchor.end; i++) {
-        const prev = bars.get(i);
-        bars.set(i, prev && prev !== a.scope ? 'both' : a.scope);
+    const commentSpans = new Map<number, CommentSpanOnLine[]>();
+    const notes = new Map<number, NoteView[]>();
+    if (commentsShown) {
+      for (const { a, anchor } of liveComments) {
+        for (const sp of spansOnLines(a.payload, anchor.start, anchor.end)) {
+          commentSpans.set(sp.line, [...(commentSpans.get(sp.line) || []), { id: a.id, scope: a.scope, from: sp.from, to: sp.to }]);
+        }
+        const last = lastLineOf(a.payload, anchor.start, anchor.end);
+        notes.set(last, [
+          ...(notes.get(last) || []),
+          { id: a.id, title: a.title || '', body: a.body || '', scope: a.scope, collapsed: collapsedNotes.has(a.id) }
+        ]);
       }
-      badges.set(anchor.end, [...(badges.get(anchor.end) || []), a.id]);
     }
+    const syl: SylDecor = {
+      selectMode,
+      isSelected: (line, from, to) => isInSelection(line, from, to, sylA, sylB),
+      onTap: (line, from, to) => {
+        const pos = { line, from, to };
+        if (!sylA || sylB) {
+          setSylA(pos);
+          setSylB(null);
+        } else {
+          setSylB(pos);
+        }
+      },
+      voice: voiceView.spans,
+      comment: commentSpans
+    };
     return {
       selectMode,
-      selection,
-      bars,
-      badges,
-      voices: voiceView.marks,
-      dim: voiceView.dim,
-      onLineTap: line => {
-        if (!(lines[line] || '').trim()) return; // linha em branco não vira trecho
-        setSelection(prev => {
-          if (!prev) return [line, line];
-          if (prev[0] === prev[1]) return [Math.min(prev[0], line), Math.max(prev[0], line)];
-          return [line, line];
-        });
-      },
-      onBadgeTap: ids => {
-        setPanelFilter(ids);
+      syl,
+      notes,
+      onNoteHide: hideNote,
+      onNoteShow: showNote,
+      onNoteEdit: id => {
+        setPanelFilter([id]);
         setPanelOpen(true);
-      }
+      },
+      voices: voiceView.marks,
+      dim: voiceView.dim
     };
-  }, [enabled, ctx, resolved, selectMode, selection, lines, voiceView]);
+  }, [enabled, ctx, liveComments, commentsShown, collapsedNotes, selectMode, sylA, sylB, voiceView, hideNote, showNote]);
 
   const cancelSelect = useCallback(() => {
     setSelectMode(false);
-    setSelection(null);
+    setSylA(null);
+    setSylB(null);
   }, []);
   useBackButton(selectMode, cancelSelect);
 
@@ -348,7 +464,8 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     setVoicePanelOpen(false);
     setPanelFilter(null);
     setSelectPurpose(purpose);
-    setSelection(null);
+    setSylA(null);
+    setSylB(null);
     setSelectMode(true);
     onStartSelect?.();
     },
@@ -357,10 +474,12 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
 
   const confirmSelect = () => {
     if (!selection) return;
-    if (selectPurpose === 'voice') setVoiceForm({ mode: 'new', start: selection[0], end: selection[1] });
-    else setForm({ mode: 'new', start: selection[0], end: selection[1] });
+    const base = { mode: 'new' as const, start: selection.lineStart, end: selection.lineEnd, spans: selection.spans, sel: selection.sel };
+    if (selectPurpose === 'voice') setVoiceForm(base);
+    else setForm(base);
     setSelectMode(false);
-    setSelection(null);
+    setSylA(null);
+    setSylB(null);
   };
 
   const goToLine = (line: number) => {
@@ -442,8 +561,13 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         />
       )}
 
-      {voiceView.present.length > 0 && !selectMode && (
+      {(voiceView.present.length > 0 || liveComments.length > 0) && !selectMode && (
         <VoiceChips
+          comments={
+            liveComments.length > 0
+              ? { count: liveComments.length, shown: commentsShown, onToggle: toggleCommentsShown }
+              : undefined
+          }
           present={voiceView.present}
           hidden={hiddenVoices}
           focusMode={!!voiceView.focusActive}
@@ -454,7 +578,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         />
       )}
 
-      {selectMode && <SelectionBar selection={selection} onCancel={cancelSelect} onConfirm={confirmSelect} />}
+      {selectMode && <SelectionBar stage={!sylA ? 0 : sylB ? 2 : 1} onCancel={cancelSelect} onConfirm={confirmSelect} />}
 
       {form && (
         <CommentForm
@@ -479,7 +603,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     count: list.length,
     voiceCount: voiceList.length,
     /** true quando a barra de chips de voz está na tela (o viewer abre espaço no rodapé). */
-    voiceChipsVisible: available && voiceView.present.length > 0 && !selectMode,
+    voiceChipsVisible: available && (voiceView.present.length > 0 || liveComments.length > 0) && !selectMode,
     openVoices: () => setVoicePanelOpen(true),
     selectMode,
     decor,
@@ -495,20 +619,13 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
 // Barra de seleção do trecho
 // ---------------------------------------------------------------------------
 
-function SelectionBar({
-  selection,
-  onCancel,
-  onConfirm
-}: {
-  selection: [number, number] | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const hint = !selection
-    ? 'Toque na linha do trecho'
-    : selection[0] === selection[1]
-      ? 'Linha marcada. Toque em outra para ampliar o trecho'
-      : `Trecho de ${selection[1] - selection[0] + 1} linhas marcado. Toque numa linha para recomeçar`;
+function SelectionBar({ stage, onCancel, onConfirm }: { stage: 0 | 1 | 2; onCancel: () => void; onConfirm: () => void }) {
+  const hint =
+    stage === 0
+      ? 'Toque na PRIMEIRA sílaba do trecho'
+      : stage === 1
+        ? 'Sílaba marcada. Toque na ÚLTIMA sílaba do trecho (ou em Continuar para só esta)'
+        : 'Trecho marcado. Toque numa sílaba para recomeçar';
 
   return (
     <div className="fixed left-3 right-3 bottom-20 z-[65] mx-auto max-w-md rounded-2xl bg-slate-900 text-white shadow-2xl p-3">
@@ -519,7 +636,7 @@ function SelectionBar({
         </button>
         <button
           onClick={onConfirm}
-          disabled={!selection}
+          disabled={stage === 0}
           className="py-2.5 rounded-xl bg-brand-orange font-bold text-sm disabled:opacity-40 active:opacity-70"
         >
           Continuar
@@ -621,8 +738,10 @@ function CommentsPanel({
                     <ScopeChip a={a} ctx={ctx} />
                   </div>
 
-                  {a.excerpt && (
-                    <p className="mt-1.5 text-xs italic text-slate-500 border-l-2 border-slate-200 pl-2 line-clamp-3">{a.excerpt}</p>
+                  {(readSel(a.payload) || a.excerpt) && (
+                    <p className="mt-1.5 text-xs italic text-slate-500 border-l-2 border-slate-200 pl-2 line-clamp-3">
+                      {readSel(a.payload) || a.excerpt}
+                    </p>
                   )}
                   {a.body && <p className="mt-2 text-sm text-slate-700 whitespace-pre-wrap break-words">{a.body}</p>}
 
@@ -721,6 +840,7 @@ function CommentForm({
   const start = form.mode === 'new' ? form.start : anchor?.start ?? form.annotation.line_start;
   const end = form.mode === 'new' ? form.end : anchor?.end ?? form.annotation.line_end;
   const excerpt = editing ? editing.excerpt : buildExcerpt(lines, start, end);
+  const shown = form.mode === 'new' ? form.sel : readSel(editing?.payload) || excerpt;
 
   const missionChoiceOk = scope === 'user' || (!!missionId && writableMissions.some(m => m.id === missionId));
   const canSave = title.trim().length > 0 && missionChoiceOk && !saving;
@@ -743,7 +863,8 @@ function CommentForm({
           body,
           line_start: start,
           line_end: end,
-          excerpt
+          excerpt,
+          payload: form.mode === 'new' ? { spans: form.spans, sel: form.sel } : undefined
         });
         onSaved(saved, true);
       }
@@ -777,8 +898,8 @@ function CommentForm({
           </button>
         </div>
 
-        {excerpt ? (
-          <p className="mt-3 text-xs italic text-slate-500 border-l-2 border-brand-orange pl-2 line-clamp-4">{excerpt}</p>
+        {shown ? (
+          <p className="mt-3 text-xs italic text-slate-500 border-l-2 border-brand-orange pl-2 line-clamp-4">{shown}</p>
         ) : (
           <p className="mt-3 text-xs text-slate-400">Trecho sem letra (apenas acordes).</p>
         )}
