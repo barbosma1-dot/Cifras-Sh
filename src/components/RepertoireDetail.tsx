@@ -975,15 +975,31 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                   <div key={section} className="group">
                     <div className="flex justify-between items-center mb-1 px-0.5">
                        <h3 className="text-[13px] font-black text-brand-blue uppercase tracking-wider">{section}</h3>
-                       {!isGuest && (
-                         <button 
-                           onClick={() => openAddingMode(section)}
-                           className="flex items-center gap-1 px-2 py-1 bg-brand-blue/5 text-brand-blue rounded-lg text-[10px] font-bold uppercase hover:bg-brand-blue hover:text-white transition-all"
-                         >
-                           <Plus className="w-3 h-3" />
-                           Adicionar
-                         </button>
-                       )}
+                       <div className="flex items-center gap-1.5">
+                         {/* Atalho para o texto das Orações Eucarísticas direto na
+                             seção "Or Eucaristica" (visível também para convidados,
+                             que só leem o repertório). Reaproveita o mesmo
+                             LiturgyViewer do botão do painel lateral. */}
+                         {/eucar/i.test(section) && (
+                           <button
+                             onClick={() => setOpenLiturgyResource({ title: 'Orações Eucarísticas', url: 'https://www.catolicoorante.com.br/oeucaristicas.html' })}
+                             className="flex items-center gap-1 px-2 py-1 bg-brand-orange/10 text-brand-orange rounded-lg text-[10px] font-bold uppercase hover:bg-brand-orange hover:text-white transition-all"
+                             title="Abrir as Orações Eucarísticas"
+                           >
+                             <Heart className="w-3 h-3" />
+                             Orações Eucarísticas
+                           </button>
+                         )}
+                         {!isGuest && (
+                           <button
+                             onClick={() => openAddingMode(section)}
+                             className="flex items-center gap-1 px-2 py-1 bg-brand-blue/5 text-brand-blue rounded-lg text-[10px] font-bold uppercase hover:bg-brand-blue hover:text-white transition-all"
+                           >
+                             <Plus className="w-3 h-3" />
+                             Adicionar
+                           </button>
+                         )}
+                       </div>
                     </div>
                     <div className="bg-white rounded-xl border border-slate-50 shadow-sm divide-y divide-slate-50 overflow-hidden">
                        {sectionItems.map((item, idx) => {
