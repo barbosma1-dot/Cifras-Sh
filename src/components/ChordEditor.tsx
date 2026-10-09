@@ -167,11 +167,11 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
     };
   }, [form.spotify_url]);
 
-  const [attachments, setAttachments] = useState<{ id?: string; name: string; url: string; type: 'audio' | 'text'; isNew?: boolean; file?: File }[]>(() => {
+  const [attachments, setAttachments] = useState<{ id?: string; name: string; url: string; type: 'audio' | 'text' | 'score'; isNew?: boolean; file?: File }[]>(() => {
     if (chord && Array.isArray(chord.attachments)) {
       return chord.attachments;
     }
-    const initial: { name: string; url: string; type: 'audio' | 'text' }[] = [];
+    const initial: { name: string; url: string; type: 'audio' | 'text' | 'score' }[] = [];
     if (chord?.audio_url) {
       let name = 'Áudio Anterior';
       try {
@@ -585,7 +585,7 @@ ${form.content}`;
         }
       }
 
-      const finalAttachments: { name: string; url: string; type: 'audio' | 'text' }[] = [];
+      const finalAttachments: { name: string; url: string; type: 'audio' | 'text' | 'score' }[] = [];
 
       // Verificação rápida: o bucket "attachments" existe e responde? Isso isola se o problema
       // é o bucket (não existe / não é público) ou algo bloqueando a rede (firewall, ad-blocker, CORS).
@@ -1152,13 +1152,13 @@ ${form.content}`;
                 <div className="space-y-3 pt-2 border-t border-slate-100">
                   <label className="block text-xs font-black text-brand-blue uppercase tracking-wider flex items-center gap-2">
                     <FileText className="w-4 h-4" />
-                    Arquivos de Letras, Partituras ou PDFs ({attachments.filter(a => a.type === 'text').length})
+                    Arquivos de Letras, Partituras ou PDFs ({attachments.filter(a => a.type !== 'audio').length})
                   </label>
                   
-                  {attachments.filter(a => a.type === 'text').length > 0 && (
+                  {attachments.filter(a => a.type !== 'audio').length > 0 && (
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                       {attachments.map((att, idx) => {
-                        if (att.type !== 'text') return null;
+                        if (att.type === 'audio') return null;
                         return (
                           <div key={idx} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl justify-between">
                             <div className="flex-1 flex items-center gap-2 min-w-0">

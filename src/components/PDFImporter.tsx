@@ -1,11 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save, Search } from 'lucide-react';
+import { X, Upload, Loader2, Check, Music, User, AlertCircle, Sparkles, Save, Search, FileMusic } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { extractCifraPage, extractPreAlignedPageText, prepareHeaderFooterFilter, extractPageWords, groupWordsIntoLines, hasReliableTextLayer, segmentLiturgyOfHoursPage, extractFirstLyricLine } from '../lib/chordproExtractor';
 import { searchYoutubeForSong } from '../lib/youtubeSearch';
 import { useBackButton } from '../hooks/useBackButton';
+import { detectScorePage } from '../lib/scoreDetector';
+import { loadScoreSource, createScoreAttachment, formatPageRanges, type ScoreAttachment } from '../lib/scorePdf';
+import { removeStorageFilesByUrl } from '../lib/storageCleanup';
 
 // Configuração do worker do PDF.js
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -17,6 +20,12 @@ interface ExtractedSong {
   content: string;
   original_key: string;
   youtube_url?: string;
+  /**
+   * Páginas (1-based, do PDF original) detectadas como PARTITURA e ligadas a
+   * esta música. Ao salvar, viram um PDF separado anexado com type 'score'.
+   * Só existe no app: NUNCA vai para a tabela `chords` (é removido em `importAll`).
+   */
+  scorePages?: number[];
 }
 
 /** Cifra já salva no caderno com o mesmo nome (título) de uma música recém-extraída do PDF. */
@@ -199,6 +208,9 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
   // cada acorde sobre a sílaba) — o resultado sai igual ao PDF, sem depender
   // da IA (que reescreve, resume e às vezes trava).
   const [cifraMode, setCifraMode] = useState<boolean>(false);
+  // Detecta páginas com pentagrama (partitura) e anexa um PDF separado só com
+  // elas a cada música. Ligado por padrão; dá para remover por música na revisão.
+  const [detectScores, setDetectScores] = useState<boolean>(true);
   // Id do lote no banco (import_batches). Criado/atualizado em
   // `ensureImportBatch`, usado por `importAll` para casar músicas
   // reimportadas com as que já existiam do mesmo lote.
@@ -415,6 +427,30 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
       // forma síncrona (o state real só atualiza depois de um render), pra
       // sabermos com certeza qual foi a "última música" sem depender de timing.
       let localAllSongs: ExtractedSong[] = [];
+      // Liga páginas de partitura à(s) música(s) da própria página; se a página
+      // não gerou música nova (ex.: só a partitura, continuação), liga à
+      // última música extraída. Sem nenhuma música ainda, a página é ignorada.
+      const attachScorePage = (page: number, startCount: number) => {
+        const end = localAllSongs.length;
+        if (end === 0) return;
+        const targets: number[] = [];
+        if (end > startCount) {
+          for (let k = startCount; k < end; k++) targets.push(k);
+        } else {
+          targets.push(end - 1);
+        }
+        for (const k of targets) {
+          const pages = Array.from(new Set([...(localAllSongs[k].scorePages || []), page])).sort((a, b) => a - b);
+          const updated: ExtractedSong = { ...localAllSongs[k], scorePages: pages };
+          localAllSongs[k] = updated;
+          setExtractedSongs(prev => {
+            if (prev.length <= k) return prev;
+            const next = [...prev];
+            next[k] = { ...next[k], scorePages: pages };
+            return next;
+          });
+        }
+      };
       let previousPageLastTitleKey: string | null = null;
       let previousPageLastTitleRaw: string | null = null;
       // Guarda separadamente se a última peça tinha acorde: a categoria sozinha
@@ -457,6 +493,16 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
           let extracted: ExtractedSong[] = [];
           let usedDeterministic = false;
           let quotaExhausted = false;
+
+          // Detecção de partitura (pentagramas) nesta página — melhor esforço:
+          // se falhar, a importação segue normalmente sem a partitura.
+          const songsBeforePage = localAllSongs.length;
+          let pageIsScore = false;
+          if (detectScores) {
+            setStatus(`Verificando página ${i} de ${lastPage}...`);
+            const detection = await detectScorePage(await pdf.getPage(i));
+            pageIsScore = detection.isScore;
+          }
 
           // Modo Ofício/Laudes: tenta segmentar a página direto da camada de texto
           // do PDF antes de sequer considerar chamar a IA. Só funciona com
@@ -704,6 +750,8 @@ export default function PDFImporter({ onClose, onImportComplete, bookId, mission
             // navegador for fechado no meio de um documento longo.
             consecutiveFailures = 0;
           }
+
+          if (pageIsScore && !quotaExhausted) attachScorePage(i, songsBeforePage);
 
           if (quotaExhausted) {
             // Depois de esgotar as tentativas de reenvio, provavelmente a cota da chave
@@ -1030,7 +1078,38 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
 
     try {
       const nowIso = new Date().toISOString();
-      const songsToUpsert = extractedSongs.map(s => ({
+
+      // Partituras: monta um PDF separado por música (só com as páginas de
+      // pentagrama dela) e sobe ANTES de gravar as cifras, para o anexo já
+      // entrar no mesmo insert/update. Melhor esforço: se algo falhar, a
+      // cifra é salva do mesmo jeito, só sem a partitura.
+      const scoreByIdx = new Map<number, ScoreAttachment>();
+      let scoreFailures = 0;
+      const withScores = extractedSongs
+        .map((song, idx) => ({ song, idx }))
+        .filter(x => (x.song.scorePages?.length || 0) > 0);
+      if (withScores.length > 0 && file) {
+        try {
+          // Cópia nova dos bytes: o PDF.js pode ter consumido o buffer da extração.
+          const source = await loadScoreSource(await file.arrayBuffer());
+          let done = 0;
+          for (const { song, idx } of withScores) {
+            done++;
+            setStatus(`Gerando PDF da partitura ${done}/${withScores.length}...`);
+            try {
+              scoreByIdx.set(idx, await createScoreAttachment(source, song.scorePages!, song.title));
+            } catch (err) {
+              scoreFailures++;
+              console.error(`Falha ao anexar a partitura de "${song.title}":`, err);
+            }
+          }
+        } catch (err) {
+          scoreFailures = withScores.length;
+          console.error('Falha ao abrir o PDF original para gerar as partituras:', err);
+        }
+      }
+
+      const songsToUpsert = extractedSongs.map(({ scorePages: _scorePages, ...s }) => ({
         ...s,
         artist: s.artist || 'Desconhecido',
         // Sem valor padrão automático: se o usuário não marcou/escreveu nenhuma
@@ -1064,7 +1143,7 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       }
 
       const toInsert: any[] = [];
-      const toUpdate: { id: string; values: any }[] = [];
+      const toUpdate: { id: string; values: any; idx: number }[] = [];
       songsToUpsert.forEach((s, idx) => {
         const key = `${(s.title || '').trim().toLowerCase()}|${(s.artist || '').trim().toLowerCase()}`;
         // Prioridade 1: casamento pelo próprio lote (reimportação de um lote já
@@ -1075,9 +1154,10 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
         const replaceId = !batchExistingId && replaceChoices[idx] ? duplicates[idx]?.id : undefined;
         const existingId = batchExistingId || replaceId;
         if (existingId) {
-          toUpdate.push({ id: existingId, values: s });
+          toUpdate.push({ id: existingId, values: s, idx });
         } else {
-          toInsert.push({ ...s, created_at: nowIso });
+          const scoreAtt = scoreByIdx.get(idx);
+          toInsert.push({ ...s, ...(scoreAtt ? { attachments: [scoreAtt] } : {}), created_at: nowIso });
         }
       });
 
@@ -1103,13 +1183,28 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
       // pela versão reextraída.
       for (let i = 0; i < toUpdate.length; i++) {
         setStatus(`Atualizando cifra já existente ${i + 1}/${toUpdate.length}...`);
-        const { id, values } = toUpdate[i];
+        const { id, values, idx } = toUpdate[i];
+        let finalValues = values;
+        let replacedScoreUrls: string[] = [];
+        const newScore = scoreByIdx.get(idx);
+        if (newScore) {
+          // Mantém os anexos que a cifra já tinha (áudio, PDFs) e troca só a
+          // partitura antiga (type 'score') pela nova, sem duplicar.
+          const { data: current } = await supabase.from('chords').select('attachments').eq('id', id).single();
+          const existingAtts: any[] = Array.isArray(current?.attachments) ? current!.attachments : [];
+          replacedScoreUrls = existingAtts.filter(a => a?.type === 'score' && a?.url).map(a => a.url);
+          finalValues = { ...values, attachments: [...existingAtts.filter(a => a?.type !== 'score'), newScore] };
+        }
         const { error: updateError } = await supabase
           .from('chords')
-          .update(values)
+          .update(finalValues)
           .eq('id', id);
         if (updateError) {
           console.error(`Falha ao atualizar cifra existente ${id}:`, updateError);
+        } else if (replacedScoreUrls.length > 0) {
+          removeStorageFilesByUrl(replacedScoreUrls).catch(err =>
+            console.error('Falha ao apagar a partitura antiga do Storage:', err)
+          );
         }
       }
 
@@ -1138,11 +1233,14 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
         }
       }
 
+      const scoreNote = scoreByIdx.size > 0 || scoreFailures > 0
+        ? ` ${scoreByIdx.size} partitura(s) anexada(s)${scoreFailures > 0 ? `; ${scoreFailures} não pôde(ram) ser anexada(s) (veja o console)` : ''}.`
+        : '';
       setNotification({
         type: 'success',
-        message: toUpdate.length > 0
+        message: (toUpdate.length > 0
           ? `${toInsert.length} cifras novas salvas e ${toUpdate.length} cifras já existentes atualizadas!`
-          : `${toInsert.length} cifras importadas com sucesso!`
+          : `${toInsert.length} cifras importadas com sucesso!`) + scoreNote
       });
       setTimeout(() => {
         onImportComplete();
@@ -1259,6 +1357,25 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                     </p>
                     <p className="text-[9px] text-slate-400 font-normal leading-relaxed mt-1">
                       Ligado automaticamente quando o PDF tem texto selecionável (você pode desmarcar se preferir a IA mesmo assim). Separa Invitatório, Hino, cada Salmo, Cântico, Leitura, Responsório, Preces e Oração direto da camada de texto do PDF — nada de acorde/versículo é gerado por IA, então nada fica pela metade. Páginas escaneadas continuam usando IA normalmente.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 w-full max-w-xl">
+                <label className="flex items-start gap-4 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={detectScores}
+                    onChange={(e) => setDetectScores(e.target.checked)}
+                    className="mt-1 w-4 h-4 flex-shrink-0 accent-brand-orange"
+                  />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-600 leading-snug">
+                      Detectar partituras e anexar em PDF separado
+                    </p>
+                    <p className="text-[9px] text-slate-400 font-normal leading-relaxed mt-1">
+                      Procura páginas com pentagrama (2 ou mais). As páginas encontradas viram um PDF só de partitura, anexado à música da mesma página. Na revisão dá para remover o anexo de cada música. Deixa a leitura um pouco mais lenta.
                     </p>
                   </div>
                 </label>
@@ -1415,6 +1532,27 @@ NÃO use blocos de código Markdown. Retorne apenas o JSON bruto.`;
                           Marque para <u>substituir a existente</u> em vez de salvar como uma nova cifra duplicada.
                         </span>
                       </label>
+                    )}
+
+                    {(song.scorePages?.length || 0) > 0 && (
+                      <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-100">
+                        <FileMusic className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                        <span className="flex-1 text-[11px] font-bold text-indigo-700 leading-snug">
+                          Partitura: pág. {formatPageRanges(song.scorePages!)} — será anexada em PDF
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newSongs = [...extractedSongs];
+                            newSongs[idx] = { ...newSongs[idx], scorePages: [] };
+                            setExtractedSongs(newSongs);
+                          }}
+                          className="p-1 rounded-lg text-indigo-400 hover:text-red-500 hover:bg-white transition-colors"
+                          title="Não anexar a partitura desta música"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     )}
 
                     <div className="bg-slate-50 rounded-xl p-3 mb-3 flex-1">
