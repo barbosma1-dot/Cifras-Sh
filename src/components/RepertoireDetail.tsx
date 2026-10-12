@@ -768,7 +768,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                     <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Data e Hora</label>
                     <input 
                       type="datetime-local"
-                      value={editForm.date ? format(new Date(editForm.date), "yyyy-MM-dd'T'HH:mm") : ''}
+                      value={editForm.date && !isNaN(new Date(editForm.date).getTime()) ? format(new Date(editForm.date), "yyyy-MM-dd'T'HH:mm") : ''}
                       onChange={(e) => setEditForm(prev => ({ ...prev, date: e.target.value }))}
                       className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl"
                     />

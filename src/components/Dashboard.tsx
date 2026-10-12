@@ -27,7 +27,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { LogoMenuButton } from '../kit';
 
-const LOGO = '/brand/logo-mark-blue.png';
+const LOGO = '/brand/logo-mark-round.png';
 const LAST_VIEW_KEY = 'cifrash:lastView';
 
 interface DashboardProps {
@@ -611,11 +611,11 @@ export default function Dashboard({
           >
             {!isCollapsed && (
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-1.5 shadow-sm">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full">
                   <img
                     src={LOGO}
                     alt="Cifra SH"
-                    className="h-full w-full object-contain"
+                    className="h-full w-full object-cover"
                   />
                 </div>
 

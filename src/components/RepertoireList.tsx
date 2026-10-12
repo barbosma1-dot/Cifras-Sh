@@ -603,6 +603,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
         </div>
       )}
 
+      {repertoireToDelete && (
       <Modal
         open={!!repertoireToDelete}
         onClose={() => { if (!deletingRepertoire) setRepertoireToDelete(null); }}
@@ -621,6 +622,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
               Tem certeza que deseja excluir "{repertoireToDelete.name}"? Esta ação é permanente — as cifras em si não são apagadas, só este repertório e a lista de músicas dele.
             </p>
       </Modal>
+      )}
     </div>
   );
 }

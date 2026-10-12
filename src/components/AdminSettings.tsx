@@ -698,6 +698,7 @@ export default function AdminSettings({ profile }: { profile: UserProfile | null
       </div>
 
       {/* Confirmação de Exclusão */}
+      {confirmingDelete && (
       <Modal
         open={!!confirmingDelete}
         onClose={() => { if (!actionLoading) setConfirmingDelete(null); }}
@@ -720,6 +721,7 @@ export default function AdminSettings({ profile }: { profile: UserProfile | null
               Tem certeza que deseja excluir <strong>{confirmingDelete.name}</strong>? Esta ação não pode ser desfeita.
             </p>
       </Modal>
+      )}
 
       {/* Notificação Flutuante */}
       {notification && (
