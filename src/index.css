@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./kit/shalom-kit.css";
 
 @theme {
   /* Paleta "Cifras Shalom" — extraída direto da logo (barbosma1@gmail.com,
@@ -87,3 +88,7 @@
     scrollbar-width: none;
   }
 }
+
+/* Identidade do app para o kit de padronização (cores próprias de cada app) */
+:root { --sh-primary: #043BA0; --sh-on-primary: #ffffff; }
+:root[data-theme="dark"] { --sh-primary: #4A71BA; --sh-on-primary: #ffffff; }
