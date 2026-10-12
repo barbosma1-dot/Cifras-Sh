@@ -4,6 +4,7 @@ import { supabase, fetchAllRows } from '../lib/supabase';
 import { UserProfile, ChordBook, Chord, Mission } from '../types';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import ChordEditor from './ChordEditor';
+import { Modal, ModalActions } from '../kit';
 import { saveChordBookOffline, removeOfflineChordBook, isChordBookOffline, listOfflineChordBooks } from '../lib/offlineDb';
 
 interface ChordBooksListProps {
@@ -456,11 +457,12 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
         </div>
       </div>
 
-      {isJoinModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h3 className="text-2xl font-bold text-slate-800 mb-6">Entrar em Caderno</h3>
-            <div className="space-y-4">
+      <Modal
+        open={isJoinModalOpen}
+        onClose={() => setIsJoinModalOpen(false)}
+        title="Entrar em Caderno"
+        footer={<ModalActions onCancel={() => setIsJoinModalOpen(false)} onConfirm={handleJoinByCode} confirmLabel="Entrar" loading={joining} />}
+      >
               <input 
                 type="text"
                 placeholder="Código de Acesso (Ex: ABCD12)"
@@ -468,31 +470,20 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
                 onChange={(e) => setJoinCode(e.target.value)}
                 className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-brand-blue/20 outline-none uppercase font-mono text-center text-xl tracking-widest"
               />
-              <div className="flex gap-3">
-                <button onClick={() => setIsJoinModalOpen(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl">Cancelar</button>
-                <button 
-                  onClick={handleJoinByCode} 
-                  disabled={joining}
-                  className="flex-1 py-4 bg-brand-blue text-white font-bold rounded-2xl flex items-center justify-center gap-2"
-                >
-                  {joining ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Entrar'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
-      {(isCreating || editingBook) && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="p-3 bg-brand-orange/10 text-brand-orange rounded-2xl">
-                <BookText className="w-6 h-6" />
-              </div>
-              <h3 className="text-2xl font-bold text-slate-800">{editingBook ? 'Editar Caderno' : 'Novo Caderno'}</h3>
-            </div>
-            
+      <Modal
+        open={isCreating || !!editingBook}
+        onClose={() => { setIsCreating(false); setEditingBook(null); }}
+        title={editingBook ? 'Editar Caderno' : 'Novo Caderno'}
+        footer={
+          <ModalActions
+            onCancel={() => { setIsCreating(false); setEditingBook(null); }}
+            onConfirm={editingBook ? handleUpdateBook : handleCreateBook}
+            confirmLabel={editingBook ? 'Salvar' : 'Criar Agora'}
+          />
+        }
+      >
             <div className="space-y-5">
               <div>
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Nome do Caderno</label>
@@ -547,27 +538,8 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
                 </button>
               </div>
 
-              <div className="flex gap-3 pt-2">
-                <button 
-                  onClick={() => {
-                    setIsCreating(false);
-                    setEditingBook(null);
-                  }}
-                  className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={editingBook ? handleUpdateBook : handleCreateBook}
-                  className="flex-1 py-4 bg-brand-blue text-white font-bold rounded-2xl shadow-lg shadow-brand-blue/20 hover:bg-blue-700 transition-colors"
-                >
-                  {editingBook ? 'Salvar' : 'Criar Agora'}
-                </button>
-              </div>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {loading ? (
         <div className="flex justify-center p-20"><Loader2 className="animate-spin text-brand-blue" /></div>
@@ -692,11 +664,13 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
       )}
 
       {/* Modais de Adição de Cifra */}
-      {isAddModalOpen && targetBookForAdd && !isSelectingExisting && !isEditorOpen && (
-        <div className="fixed inset-0 z-[150] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[32px] p-8 max-w-md w-full shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200 text-center">
-            <h3 className="text-2xl font-black text-slate-800 mb-2">Adicionar a {targetBookForAdd.name}</h3>
-            <p className="text-slate-500 text-sm mb-8">Escolha como deseja adicionar uma cifra a este caderno.</p>
+      <Modal
+        open={isAddModalOpen && !!targetBookForAdd && !isSelectingExisting && !isEditorOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        title={`Adicionar a ${targetBookForAdd?.name ?? ''}`}
+        footer={<button type="button" className="sh-btn sh-btn-secondary" onClick={() => setIsAddModalOpen(false)}>Cancelar</button>}
+      >
+            <p className="text-slate-500 text-sm mb-6">Escolha como deseja adicionar uma cifra a este caderno.</p>
             
             <div className="grid grid-cols-1 gap-4">
               <button 
@@ -728,22 +702,14 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
                 </div>
               </button>
             </div>
+      </Modal>
 
-            <button 
-              onClick={() => setIsAddModalOpen(false)}
-              className="w-full mt-6 py-4 text-slate-400 font-bold uppercase text-[10px] tracking-widest hover:text-slate-600"
-            >
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {isSelectingExisting && targetBookForAdd && (
-        <div className="fixed inset-0 z-[160] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[32px] p-8 max-w-lg w-full h-[600px] flex flex-col shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
-            <h3 className="text-2xl font-black text-slate-800 mb-6 truncate max-w-full">Adicionar a {targetBookForAdd.name}</h3>
-            
+      <Modal
+        open={isSelectingExisting && !!targetBookForAdd}
+        onClose={() => setIsSelectingExisting(false)}
+        title={`Adicionar a ${targetBookForAdd?.name ?? ''}`}
+        footer={<button type="button" className="sh-btn sh-btn-secondary" onClick={() => setIsSelectingExisting(false)}>Voltar</button>}
+      >
             <div className="relative mb-4">
               <Search className="absolute left-4 top-3 w-4 h-4 text-slate-300" />
               <input 
@@ -755,7 +721,7 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+            <div className="space-y-2">
               {allAvailableChords
                 .filter(c => 
                   c.title.toLowerCase().includes(searchChord.toLowerCase()) || 
@@ -783,17 +749,7 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
               )}
             </div>
 
-            <div className="pt-6 mt-6 border-t border-slate-100 flex gap-3">
-              <button 
-                onClick={() => setIsSelectingExisting(false)}
-                className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl"
-              >
-                Voltar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {isEditorOpen && targetBookForAdd && (
         <ChordEditor 

@@ -30,6 +30,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { Chord, UserProfile } from '../types';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
+import { Modal, ModalActions } from '../kit';
 import PDFImporter from './PDFImporter';
 import { exportChordsToPDF } from '../lib/pdfExport';
 import { removeStorageFilesByUrl } from '../lib/storageCleanup';
@@ -162,18 +163,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
     setActiveBookId(initialBookId || null);
   }, [initialBookId]);
 
-  useEffect(() => {
-    function handleClickOutsideCategory(event: MouseEvent) {
-      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(event.target as Node)) {
-        setIsCategoryDropdownOpen(false);
-      }
-      if (recentDropdownRef.current && !recentDropdownRef.current.contains(event.target as Node)) {
-        setIsRecentDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutsideCategory);
-    return () => document.removeEventListener('mousedown', handleClickOutsideCategory);
-  }, []);
+  // Os seletores de categoria/adicionadas agora são <Modal> (fecham com Esc ou clique fora).
 
   useEffect(() => {
     fetchChords();
@@ -960,22 +950,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               <Filter className="w-4 h-4" />
             </button>
 
-            {isCategoryDropdownOpen && (
-              // `fixed` + fundo (backdrop) em vez de `absolute` ancorado no botão:
-              // um painel `absolute` dentro do fluxo normal da página ficava
-              // ilegível no celular — sem fundo garantidamente opaco, o texto
-              // dos itens da lista por trás aparecia por baixo/ao lado dele, e
-              // como o campo de busca tinha `autoFocus`, o teclado abrindo
-              // deslocava a página e desalinhava o painel (ver print do bug).
-              // `fixed inset-0` cobre a tela inteira, então nada some atrás.
-              <div
-                className="fixed inset-0 z-[160] bg-slate-900/40 flex items-start justify-center p-4 pt-20"
-                onClick={() => { setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
-              >
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="w-full max-w-xs bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden"
-                >
+            <Modal
+              open={isCategoryDropdownOpen}
+              onClose={() => { setIsCategoryDropdownOpen(false); setCategorySearchTerm(''); }}
+              title="Categoria"
+            >
                   <div className="relative p-3 border-b border-slate-100">
                     <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
                     <input
@@ -1010,9 +989,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                       <p className="px-4 py-3 text-xs text-slate-400 italic">Nenhuma categoria encontrada</p>
                     )}
                   </div>
-                </div>
-              </div>
-            )}
+            </Modal>
           </div>
 
           <div className="relative" ref={recentDropdownRef}>
@@ -1030,18 +1007,11 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               <Clock className="w-4 h-4" />
             </button>
 
-            {isRecentDropdownOpen && (
-              // Mesmo motivo do painel de Categorias acima: `fixed` + fundo
-              // em vez de `absolute` ancorado no botão, pra nunca ficar
-              // ilegível com conteúdo da lista aparecendo por trás/ao lado.
-              <div
-                className="fixed inset-0 z-[160] bg-slate-900/40 flex items-start justify-center p-4 pt-20"
-                onClick={() => setIsRecentDropdownOpen(false)}
-              >
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="w-full max-w-xs bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden"
-                >
+            <Modal
+              open={isRecentDropdownOpen}
+              onClose={() => setIsRecentDropdownOpen(false)}
+              title="Adicionadas"
+            >
                   {(Object.keys(RECENT_FILTER_LABELS) as Array<typeof recentFilter>).map(key => (
                     <button
                       key={key}
@@ -1052,9 +1022,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                       {RECENT_FILTER_LABELS[key]}
                     </button>
                   ))}
-                </div>
-              </div>
-            )}
+            </Modal>
           </div>
         </div>
       </div>
@@ -1217,11 +1185,13 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
         />
       )}
 
-      {isAddChordModalOpen && (
-        <div className="fixed inset-0 z-[150] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[32px] p-8 max-w-md w-full shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
-            <h3 className="text-2xl font-black text-slate-800 mb-2">Adicionar Cifra</h3>
-            <p className="text-slate-500 text-sm mb-8">Escolha como deseja adicionar uma cifra a este caderno.</p>
+      <Modal
+        open={isAddChordModalOpen && !isSelectingExisting}
+        onClose={() => setIsAddChordModalOpen(false)}
+        title="Adicionar Cifra"
+        footer={<button type="button" className="sh-btn sh-btn-secondary" onClick={() => setIsAddChordModalOpen(false)}>Voltar</button>}
+      >
+            <p className="text-slate-500 text-sm mb-6">Escolha como deseja adicionar uma cifra a este caderno.</p>
             
             <div className="grid grid-cols-1 gap-4">
               <button 
@@ -1274,31 +1244,35 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               </button>
             </div>
 
-            <button 
-              onClick={() => setIsAddChordModalOpen(false)}
-              className="w-full mt-6 py-4 text-slate-400 font-bold uppercase text-[10px] tracking-widest hover:text-slate-600"
-            >
-              Voltar
-            </button>
-          </div>
-        </div>
-      )}
+      </Modal>
 
-      {isAddChordModalOpen && isSelectingExisting && (
-        <div className="fixed inset-0 z-[160] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[32px] p-8 max-w-lg w-full h-[600px] flex flex-col shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-2xl font-black text-slate-800">Selecionar Cifras</h3>
-              {allAvailableChords.length > 0 && (
+      <Modal
+        open={isAddChordModalOpen && isSelectingExisting}
+        onClose={() => setIsSelectingExisting(false)}
+        title="Selecionar Cifras"
+        footer={
+          <ModalActions
+            onCancel={() => setIsSelectingExisting(false)}
+            onConfirm={addSelectedChordsToBook}
+            confirmLabel={addingExistingLoading
+              ? 'Adicionando...'
+              : `Adicionar${selectedExistingIds.size > 0 ? ` (${selectedExistingIds.size})` : ''}`}
+            disabled={selectedExistingIds.size === 0}
+            loading={addingExistingLoading}
+          />
+        }
+      >
+            {allAvailableChords.length > 0 && (
+              <div className="flex justify-end mb-3">
                 <button
+                  type="button"
                   onClick={toggleSelectAllExisting}
                   className="text-xs font-black uppercase tracking-wide text-brand-orange hover:text-orange-700 transition-colors"
                 >
                   {selectedExistingIds.size === allAvailableChords.length ? 'Desmarcar todas' : 'Selecionar todas'}
                 </button>
-              )}
-            </div>
-            
+              </div>
+            )}
             <div className="relative mb-4">
               <Search className="absolute left-4 top-3 w-4 h-4 text-slate-300" />
               <input 
@@ -1310,7 +1284,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+            <div className="space-y-2">
               {allAvailableChords
                 .filter(c => {
                   const val = existingSearchTerm.toLowerCase();
@@ -1345,68 +1319,34 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
               )}
             </div>
 
-            <div className="pt-6 mt-6 border-t border-slate-100 flex gap-3">
-              <button 
-                onClick={() => setIsSelectingExisting(false)}
-                className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={addSelectedChordsToBook}
-                disabled={selectedExistingIds.size === 0 || addingExistingLoading}
-                className="flex-1 py-4 bg-brand-orange text-white font-bold rounded-2xl flex items-center justify-center gap-2 disabled:opacity-40 transition-all"
-              >
-                {addingExistingLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                {addingExistingLoading
-                  ? 'Adicionando...'
-                  : `Adicionar${selectedExistingIds.size > 0 ? ` (${selectedExistingIds.size})` : ''}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
-      {chordToDelete && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-red-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
-              <Trash2 className="w-8 h-8 text-red-500" />
-            </div>
-            <h3 className="text-xl font-black text-slate-800 mb-2">Excluir Cifra?</h3>
-            <p className="text-slate-500 text-sm leading-relaxed mb-8">
+      <Modal
+        open={!!chordToDelete}
+        onClose={() => { if (!deleteConfirming) setChordToDelete(null); }}
+        title="Excluir Cifra?"
+        footer={
+          <ModalActions
+            onCancel={() => setChordToDelete(null)}
+            onConfirm={() => { if (chordToDelete) deleteChord(chordToDelete); }}
+            confirmLabel={deleteConfirming ? 'Excluindo...' : 'Sim, Excluir'}
+            danger
+            loading={deleteConfirming}
+          />
+        }
+      >
+            <p className="text-slate-500 text-sm leading-relaxed">
               Esta ação é permanente e removerá a cifra de todos os cadernos e repertórios onde ela estiver.
             </p>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setChordToDelete(null)}
-                disabled={deleteConfirming}
-                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={() => deleteChord(chordToDelete)}
-                disabled={deleteConfirming}
-                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {deleteConfirming && <Loader2 className="w-4 h-4 animate-spin" />}
-                {deleteConfirming ? 'Excluindo...' : 'Sim, Excluir'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
-      {isDuplicatesModalOpen && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
-                <Copy className="w-5 h-5 text-amber-500" /> Cifras Duplicadas
-              </h3>
-              <button onClick={() => setIsDuplicatesModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
-            </div>
+      <Modal
+        open={isDuplicatesModalOpen}
+        onClose={() => setIsDuplicatesModalOpen(false)}
+        title="Cifras Duplicadas"
+        size="lg"
+        footer={<button type="button" className="sh-btn sh-btn-secondary" onClick={() => setIsDuplicatesModalOpen(false)}>Fechar</button>}
+      >
             <p className="text-xs text-slate-400 mb-5">
               Agrupadas por nome E letra parecidos (não só o título) — reduz o risco de sugerir excluir músicas diferentes que só coincidem no nome. Revise e exclua as repetidas — a exclusão é permanente.
             </p>
@@ -1470,9 +1410,7 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }
