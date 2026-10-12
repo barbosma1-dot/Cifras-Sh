@@ -13,6 +13,7 @@ import SplashScreen from './components/SplashScreen';
 import { WifiOff } from 'lucide-react';
 import { Repertoire } from './types';
 import { withTimeout } from './lib/withTimeout';
+import { getGoogleData, isPlaceholderName } from './googleProfile';
 import SharedChordView, { getSharedChordId } from './components/SharedChordView';
 
 // Tempo máximo de espera por chamadas de rede no arranque do app. Sem isso,
@@ -165,6 +166,11 @@ export default function App() {
 
   async function fetchProfile(uid: string, user?: any) {
     try {
+      let googleUser = user;
+      if (!googleUser) {
+        try { googleUser = (await supabase.auth.getUser()).data?.user; } catch { /* sem dados do Google */ }
+      }
+      const google = getGoogleData(googleUser);
       let { data, error: fetchError } = await withTimeout(
         supabase
           .from('user_profiles')
@@ -180,7 +186,8 @@ export default function App() {
         const newProfile = {
           id: uid,
           email: user?.email || '',
-          display_name: user?.email?.split('@')[0] || 'Novo Usuário',
+          display_name: google.name || user?.email?.split('@')[0] || 'Novo Usuário',
+          ...(google.photo ? { photo_url: google.photo } : {}),
           role: user?.email === 'barbosma1@gmail.com' ? 'admin' : 'member',
           created_at: new Date().toISOString()
         };
@@ -204,6 +211,20 @@ export default function App() {
       }
 
       let profileData = data as UserProfile;
+
+      // Login Google: preenche SOMENTE o que estiver vazio (nunca sobrescreve nome/foto já definidos)
+      if (google.hasGoogle && data) {
+        const row: any = data;
+        const patch: Record<string, string> = {};
+        if (google.photo && !String(row.photo_url || row.photoURL || '').trim()) patch.photo_url = google.photo;
+        if (google.name && isPlaceholderName(row.display_name, row.email)) patch.display_name = google.name;
+        if (Object.keys(patch).length) {
+          const { error: gErr } = await supabase.from('user_profiles').update(patch).eq('id', uid);
+          if (!gErr) {
+            profileData = { ...(profileData as any), ...patch, ...(patch.photo_url ? { photoURL: patch.photo_url } : {}), ...(patch.display_name ? { displayName: patch.display_name } : {}) } as UserProfile;
+          }
+        }
+      }
 
       // Auto-promote barbosma1 to admin and DEMOTE any unauthorized admins
       if (profileData.email === 'barbosma1@gmail.com') {
