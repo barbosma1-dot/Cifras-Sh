@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
+import { Modal, ModalActions } from '../kit';
 import {
   buildExcerpt,
   canManageAnnotation,
@@ -682,24 +683,8 @@ function CommentsPanel({
   const shown = filter ? items.filter(i => filter.includes(i.a.id)) : items;
 
   return (
-    <div className="fixed inset-0 z-[175] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Comentários da cifra"
-        className="bg-white text-slate-800 w-full sm:max-w-md max-h-[85vh] flex flex-col rounded-t-3xl sm:rounded-3xl shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-3">
-          <h3 className="text-lg font-black flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-brand-orange" /> Comentários
-          </h3>
-          <button onClick={onClose} aria-label="Fechar" className="p-2 -mr-2 rounded-full text-slate-400 hover:bg-slate-100">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="px-5 pb-3">
+    <Modal open onClose={onClose} title="Comentários">
+        <div className="pb-3">
           <button
             onClick={onNew}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-brand-orange text-white font-bold text-sm active:opacity-80"
@@ -721,7 +706,7 @@ function CommentsPanel({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-3">
+        <div className="space-y-3">
           {loading && items.length === 0 ? (
             <div className="flex justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-brand-blue" />
@@ -799,8 +784,7 @@ function CommentsPanel({
             })
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -883,21 +867,12 @@ function CommentForm({
   };
 
   return (
-    <div className="fixed inset-0 z-[185] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={editing ? 'Editar comentário' : 'Novo comentário'}
-        className="bg-white text-slate-800 w-full sm:max-w-md max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-lg font-black">{editing ? 'Editar comentário' : 'Novo comentário'}</h3>
-          <button onClick={onClose} aria-label="Fechar" className="p-2 -mr-2 rounded-full text-slate-400 hover:bg-slate-100">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
+    <Modal
+      open
+      onClose={onClose}
+      title={editing ? 'Editar comentário' : 'Novo comentário'}
+      footer={<ModalActions onCancel={onClose} onConfirm={save} confirmLabel="Salvar" disabled={!canSave} loading={saving} />}
+    >
         {shown ? (
           <p className="mt-3 text-xs italic text-slate-500 border-l-2 border-brand-orange pl-2 line-clamp-4">{shown}</p>
         ) : (
@@ -926,21 +901,6 @@ function CommentForm({
         <ScopePicker ctx={ctx} scope={scope} onScope={setScope} missionId={missionId} onMission={setMissionId} />
 
         {error && <p className="mt-3 text-xs text-red-700 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
-
-        <div className="mt-5 grid grid-cols-2 gap-2">
-          <button onClick={onClose} className="py-3 rounded-xl bg-slate-100 text-slate-600 font-bold text-sm">
-            Cancelar
-          </button>
-          <button
-            onClick={save}
-            disabled={!canSave}
-            className="py-3 rounded-xl bg-brand-orange text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2"
-          >
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            Salvar
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

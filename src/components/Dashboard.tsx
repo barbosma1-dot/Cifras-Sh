@@ -25,6 +25,7 @@ import ImportBatchesList from './ImportBatchesList';
 import { useBackButton } from '../hooks/useBackButton';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { LogoMenuButton } from '../kit';
 
 const LOGO = '/brand/logo-mark-blue.png';
 const LAST_VIEW_KEY = 'cifrash:lastView';
@@ -821,31 +822,21 @@ export default function Dashboard({
         <header className="relative z-30 flex h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-3 shadow-sm sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
             {/*
-             * Botão do menu no celular
+             * A logo é o botão do menu: no celular abre/fecha a gaveta;
+             * no computador recolhe/expande a barra lateral.
              */}
-            <button
-              type="button"
-              aria-label="Abrir menu"
-              onClick={() =>
-                setIsSidebarOpen(
-                  value => !value
-                )
-              }
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-700 transition hover:bg-slate-100 md:hidden"
-            >
-              <Menu size={28} />
-            </button>
-
-            {/*
-             * Logo com fundo branco
-             */}
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-100 bg-white p-1 shadow-sm">
-              <img
-                src={LOGO}
-                alt="Cifra SH"
-                className="h-full w-full object-contain"
-              />
-            </div>
+            <LogoMenuButton
+              src={LOGO}
+              alt="Cifra SH"
+              expanded={isSidebarOpen}
+              onClick={() => {
+                if (window.matchMedia('(min-width: 768px)').matches) {
+                  setIsCollapsed(value => !value);
+                } else {
+                  setIsSidebarOpen(value => !value);
+                }
+              }}
+            />
 
             {/*
              * Título da tela atual

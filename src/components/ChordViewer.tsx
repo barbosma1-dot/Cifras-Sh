@@ -41,6 +41,7 @@ import LiturgyViewer from './LiturgyViewer';
 import ChordShapeModal from './ChordShapeModal';
 import { useChordComments, wrapLine, type LineDecor } from './ChordComments';
 import { renderLyric } from './LyricSpans';
+import { Modal } from '../kit';
 
 // Ícone da "logo" do Spotify (círculo + três ondas), desenhado como SVG
 // próprio — a mesma ideia de usar um ícone de marca pra indicar visualmente
@@ -2210,16 +2211,12 @@ export default function ChordViewer({
       {/* Modal "Adicionar ao Caderno" — `showBookSelector` já buscava os
           cadernos (fetchUserBooks) e `handleAddToBook` já salvava, mas não
           havia nenhuma tela que os usasse. */}
-      {!readOnly && showBookSelector && (
-        <div
-          className="fixed inset-0 z-[170] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setShowBookSelector(false)}
-        >
-          <div
-            className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="font-black text-slate-800 mb-4">Adicionar ao Caderno</h3>
+      <Modal
+        open={!readOnly && showBookSelector}
+        onClose={() => setShowBookSelector(false)}
+        title="Adicionar ao Caderno"
+        footer={<button type="button" className="sh-btn sh-btn-secondary" onClick={() => setShowBookSelector(false)}>Fechar</button>}
+      >
             {loadingBooks ? (
               <div className="flex justify-center py-8">
                 <Loader2 className="w-6 h-6 animate-spin text-brand-blue" />
@@ -2245,15 +2242,7 @@ export default function ChordViewer({
                 ))}
               </div>
             )}
-            <button
-              onClick={() => setShowBookSelector(false)}
-              className="w-full mt-4 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors"
-            >
-              Fechar
-            </button>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {comments.ui}
 
