@@ -1,3 +1,4 @@
+import { GoogleLogin } from '../kit';
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import {
@@ -334,6 +335,15 @@ export default function Login() {
           </button>
 
         </form>
+        <div className="mt-6 space-y-3">
+          <div className="flex items-center gap-3 text-xs text-slate-400">
+            <span className="h-px flex-1 bg-slate-200" />
+            ou
+            <span className="h-px flex-1 bg-slate-200" />
+          </div>
+          <GoogleLogin supabase={supabase as any} onError={setError} />
+          <p className="text-center text-xs text-slate-500">Use o mesmo e-mail do seu cadastro.</p>
+        </div>
 
         {/* ACTIONS */}
         <div className="mt-6 flex flex-col items-center gap-2">

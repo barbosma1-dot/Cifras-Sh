@@ -1,3 +1,4 @@
+import { ThemeToggle } from '../kit';
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { UserProfile } from '../types';
@@ -186,6 +187,12 @@ export default function ProfileView({ profile, setProfile }: ProfileViewProps) {
                      onChange={e => setForm({...form, whatsapp: e.target.value})}
                   />
                 </div>
+              </div>
+
+              <div className="space-y-6">
+                <h3 className="font-bold text-lg text-slate-800 border-b border-slate-100 pb-2">Aparência</h3>
+                <p className="text-sm text-slate-500">Noturno liga o modo escuro sozinho das 18h às 6h.</p>
+                <ThemeToggle />
               </div>
 
               <div className="space-y-6">
