@@ -1,4 +1,5 @@
 import { ThemeToggle } from '../kit';
+import { getGoogleData } from '../googleProfile';
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { UserProfile } from '../types';
@@ -28,6 +29,42 @@ export default function ProfileView({ profile, setProfile }: ProfileViewProps) {
     newPassword: '',
     photoURL: profile?.photoURL || (profile as any)?.photo_url || '',
   });
+
+  const [google, setGoogle] = useState({ hasGoogle: false, name: '', photo: '' });
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setGoogle(getGoogleData(data?.user))).catch(() => {});
+  }, []);
+
+  const handleUseGoogle = async () => {
+    if (!profile) return;
+    setLoading(true);
+    try {
+      const patch: Record<string, string> = {};
+      if (google.name) patch.display_name = google.name;
+      if (google.photo) patch.photo_url = google.photo;
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq('id', profile.id || (profile as any).uid);
+      if (error) throw error;
+      setProfile({
+        ...profile,
+        ...(google.name ? { displayName: google.name, display_name: google.name } : {}),
+        ...(google.photo ? { photoURL: google.photo, photo_url: google.photo } : {}),
+      } as any);
+      setForm(prev => ({
+        ...prev,
+        displayName: google.name || prev.displayName,
+        photoURL: google.photo || prev.photoURL,
+      }));
+      setNotification({ message: 'Nome e foto atualizados com os da sua conta Google.', type: 'success' });
+    } catch (err) {
+      console.error(err);
+      setNotification({ message: 'Não foi possível usar os dados do Google agora.', type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,7 +167,7 @@ export default function ProfileView({ profile, setProfile }: ProfileViewProps) {
               <div className="relative group">
                 <div className="w-24 h-24 rounded-3xl bg-brand-orange border-4 border-white overflow-hidden shadow-lg flex items-center justify-center">
                    {profile?.photoURL ? (
-                     <img src={profile.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+                     <img src={profile.photoURL} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                    ) : (
                      <User className="w-12 h-12 text-white" />
                    )}
@@ -188,6 +225,12 @@ export default function ProfileView({ profile, setProfile }: ProfileViewProps) {
                   />
                 </div>
               </div>
+
+              {google.hasGoogle && (google.name || google.photo) && (
+                <button type="button" onClick={handleUseGoogle} disabled={loading} className="sh-btn sh-btn-secondary sh-btn-block">
+                  Usar nome e foto da minha conta Google
+                </button>
+              )}
 
               <div className="space-y-6">
                 <h3 className="font-bold text-lg text-slate-800 border-b border-slate-100 pb-2">Aparência</h3>
