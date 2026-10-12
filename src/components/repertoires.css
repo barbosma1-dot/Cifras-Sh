@@ -1,0 +1,55 @@
+/* ==========================================================================
+   Contraste reforçado do modo escuro — só nas telas de Repertórios (.sh-rep).
+   Não mexe no kit compartilhado nem em outras abas.
+   Causa principal do cinza lavado na "Escala da Missão": classes com
+   transparência (ex.: bg-slate-50/50) não eram reescritas pelo modo escuro e
+   ficavam como um cinza claro com texto claro por cima.
+   ========================================================================== */
+:root[data-theme="dark"] .sh-rep {
+  --rep-card: #17171b;
+  --rep-chip: #26262d;
+  --rep-line: #34343d;
+  --rep-text: #f4f4f5;
+  --rep-text-2: #d4d4db;
+  --rep-text-3: #b4b4bf;
+}
+
+/* fundos translúcidos que ficavam cinza-claro */
+:root[data-theme="dark"] .sh-rep [class*="bg-slate-50/"],
+:root[data-theme="dark"] .sh-rep [class*="bg-slate-100/"] { background-color: var(--rep-chip); }
+
+/* fundos claros → superfícies escuras com degrau visível */
+:root[data-theme="dark"] .sh-rep [class~="bg-white"] { background-color: var(--rep-card); }
+:root[data-theme="dark"] .sh-rep [class~="bg-slate-50"],
+:root[data-theme="dark"] .sh-rep [class~="bg-slate-100"] { background-color: var(--rep-chip); }
+:root[data-theme="dark"] .sh-rep [class~="hover:bg-slate-50"]:hover { background-color: var(--rep-chip); }
+
+/* bordas e divisórias visíveis */
+:root[data-theme="dark"] .sh-rep [class~="border-slate-50"],
+:root[data-theme="dark"] .sh-rep [class~="border-slate-100"],
+:root[data-theme="dark"] .sh-rep [class~="border-slate-200"] { border-color: var(--rep-line); }
+:root[data-theme="dark"] .sh-rep [class~="divide-slate-50"] > :not(:last-child),
+:root[data-theme="dark"] .sh-rep [class~="divide-slate-100"] > :not(:last-child) { border-color: var(--rep-line); }
+
+/* textos: cinzas claros com contraste de leitura (≥ 7:1 nos principais) */
+:root[data-theme="dark"] .sh-rep [class~="text-slate-800"],
+:root[data-theme="dark"] .sh-rep [class~="text-slate-700"] { color: var(--rep-text); }
+:root[data-theme="dark"] .sh-rep [class~="text-slate-600"],
+:root[data-theme="dark"] .sh-rep [class~="text-slate-500"] { color: var(--rep-text-2); }
+:root[data-theme="dark"] .sh-rep [class~="text-slate-400"] { color: var(--rep-text-3); }
+:root[data-theme="dark"] .sh-rep [class~="text-slate-300"] { color: #9b9ba7; }
+
+/* botões de ícone (lápis, lixeira, olho) mais visíveis */
+:root[data-theme="dark"] .sh-rep button [class~="text-slate-300"],
+:root[data-theme="dark"] .sh-rep button[class~="text-slate-300"] { color: #a6a6b2; }
+
+/* selects/inputs dentro das telas de repertório */
+:root[data-theme="dark"] .sh-rep select,
+:root[data-theme="dark"] .sh-rep input { background-color: var(--rep-chip); border-color: var(--rep-line); color: var(--rep-text); }
+
+/* faixa de capa: gradiente para o texto/botões sobre a imagem */
+.sh-rep-cover { position: relative; }
+.sh-rep-cover::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.35), rgb(0 0 0 / 0) 55%);
+}

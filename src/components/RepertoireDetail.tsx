@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ChangeEvent, type CSSProperties } from 'react';
 import { 
   ArrowLeft, 
   Search, 
@@ -32,7 +32,9 @@ import {
   CheckCircle,
   Trash,
   WifiOff,
-  Youtube
+  Youtube,
+  ImagePlus,
+  X
 } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
 
@@ -65,6 +67,8 @@ import {
   OfflineRepertoireItem,
 } from '../lib/offlineDb';
 import { withTimeout } from '../lib/withTimeout';
+import { compressCoverImage, uploadRepertoireCover, removeRepertoireCover } from '../lib/repertoireCover';
+import './repertoires.css';
 
 interface RepertoireDetailProps {
   repertoire: Repertoire;
@@ -327,26 +331,99 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
     { label: 'Roxo', value: 'purple', class: 'bg-violet-600' },
   ];
 
-  const handleUpdateBaseInfo = async () => {
+  // Imagem de cabeçalho (só aparece na tela deste repertório)
+  const [pendingCover, setPendingCover] = useState<{ blob: Blob; preview: string } | null>(null);
+  const [removeCover, setRemoveCover] = useState(false);
+  const [savingBase, setSavingBase] = useState(false);
+  const [coverFailed, setCoverFailed] = useState(false);
+  const coverPreviewSrc = pendingCover
+    ? pendingCover.preview
+    : removeCover
+      ? null
+      : (repertoire.cover_url || null);
+
+  const handlePickCover = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
     try {
+      const blob = await compressCoverImage(file);
+      setPendingCover(prev => {
+        if (prev) URL.revokeObjectURL(prev.preview);
+        return { blob, preview: URL.createObjectURL(blob) };
+      });
+      setRemoveCover(false);
+    } catch (err: any) {
+      setNotification({ message: err?.message || 'Imagem inválida.', type: 'error' });
+    }
+  };
+
+  const handleClearCover = () => {
+    setPendingCover(prev => {
+      if (prev) URL.revokeObjectURL(prev.preview);
+      return null;
+    });
+    setRemoveCover(true);
+  };
+
+  const closeEditBaseInfo = () => {
+    if (savingBase) return;
+    setPendingCover(prev => {
+      if (prev) URL.revokeObjectURL(prev.preview);
+      return null;
+    });
+    setRemoveCover(false);
+    setIsEditingBaseInfo(false);
+  };
+
+  const handleUpdateBaseInfo = async () => {
+    if (savingBase) return;
+    setSavingBase(true);
+    let uploadedUrl: string | null = null;
+    try {
+      const payload: Record<string, any> = {
+        name: editForm.name,
+        type: editForm.type,
+        date: editForm.date,
+        color: editForm.color,
+        youtube_playlist_url: editForm.youtubePlaylistUrl.trim() || null,
+        spotify_playlist_url: editForm.spotifyPlaylistUrl.trim() || null
+      };
+
+      // Só mexe em cover_url quando a imagem mudou (assim salvar o resto
+      // continua funcionando mesmo antes de rodar a migração da coluna).
+      if (pendingCover) {
+        uploadedUrl = await uploadRepertoireCover(repertoire.id, pendingCover.blob);
+        payload.cover_url = uploadedUrl;
+      } else if (removeCover && repertoire.cover_url) {
+        payload.cover_url = null;
+      }
+
       const { error } = await supabase
         .from('repertoires')
-        .update({
-          name: editForm.name,
-          type: editForm.type,
-          date: editForm.date,
-          color: editForm.color,
-          youtube_playlist_url: editForm.youtubePlaylistUrl.trim() || null,
-          spotify_playlist_url: editForm.spotifyPlaylistUrl.trim() || null
-        })
+        .update(payload)
         .eq('id', repertoire.id);
-      
-      if (error) throw error;
+
+      if (error) {
+        if (uploadedUrl) await removeRepertoireCover(uploadedUrl);
+        if (/cover_url/i.test(error.message || '')) {
+          throw new Error('a coluna da imagem ainda não existe no banco. Rode o arquivo MIGRACAO-cover-url.sql no Supabase.');
+        }
+        throw error;
+      }
+
+      // Troca/remoção deu certo: apaga o arquivo antigo do Storage.
+      if ((pendingCover || removeCover) && repertoire.cover_url) {
+        await removeRepertoireCover(repertoire.cover_url);
+      }
+
       setNotification({ message: 'Informações atualizadas com sucesso!', type: 'success' });
       setIsEditingBaseInfo(false);
       setTimeout(() => window.location.reload(), 1500);
     } catch (err: any) {
-      setNotification({ message: 'Erro ao atualizar: ' + err.message, type: 'error' });
+      setNotification({ message: 'Erro ao atualizar: ' + (err?.message || 'tente novamente'), type: 'error' });
+    } finally {
+      setSavingBase(false);
     }
   };
 
@@ -667,57 +744,81 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
       return a.title.localeCompare(b.title, 'pt-BR');
     });
 
+  const repDate = new Date(repertoire.date);
+  const dateLabel = isNaN(repDate.getTime())
+    ? ''
+    : format(repDate, "dd 'de' MMMM 'às' HH:mm", { locale: ptBR });
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={onBack}
-            className="p-3 bg-slate-50 text-slate-500 rounded-2xl hover:bg-slate-100 transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-brand-blue">{repertoire.name}</h1>
-              <span className="text-[10px] font-bold px-2 py-1 bg-brand-orange/10 text-brand-orange rounded uppercase">
+    <div className="space-y-6 sh-rep">
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+        {repertoire.cover_url && !coverFailed && (
+          <div className="sh-rep-cover w-full aspect-[16/7] sm:aspect-[16/5] bg-slate-100">
+            <img
+              src={repertoire.cover_url}
+              alt=""
+              className="w-full h-full object-cover"
+              onError={() => setCoverFailed(true)}
+            />
+          </div>
+        )}
+        <div className="p-4 sm:p-6">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              onClick={onBack}
+              className="p-3 bg-slate-50 text-slate-500 rounded-2xl hover:bg-slate-100 transition-colors"
+              title="Voltar"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          <div className="flex items-center gap-2">
+            {isSavedOffline ? (
+              <button
+                onClick={handleRemoveOffline}
+                className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 group"
+                title="Salvo offline — clique para remover"
+              >
+                <CheckCircle className="w-5 h-5 group-hover:hidden" />
+                <Trash className="w-5 h-5 hidden group-hover:block" />
+              </button>
+            ) : (
+              <button
+                onClick={handleDownloadOffline}
+                disabled={savingOffline || items.length === 0}
+                className="p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all disabled:opacity-40"
+                title="Baixar para uso offline"
+              >
+                {savingOffline ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+              </button>
+            )}
+            {!isGuest && (
+              <button 
+                onClick={() => setIsEditingBaseInfo(true)}
+                className="p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all"
+                title="Editar informações"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            )}
+            </div>
+          </div>
+
+          <div className="mt-4 min-w-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
+              <span className="text-[11px] font-bold px-2.5 py-1 bg-brand-orange/10 text-brand-orange rounded uppercase tracking-wide">
                 {repertoire.type}
               </span>
+              {dateLabel && (
+                <span className="text-sm text-slate-500 font-medium">{dateLabel}</span>
+              )}
             </div>
-            <p className="text-sm text-slate-400 font-medium">
-              {format(new Date(repertoire.date), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
-            </p>
+            <h1
+              className="text-2xl sm:text-3xl font-bold text-brand-blue leading-tight break-words"
+              style={{ textWrap: 'balance' } as CSSProperties}
+            >
+              {repertoire.name}
+            </h1>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {isSavedOffline ? (
-            <button
-              onClick={handleRemoveOffline}
-              className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 group"
-              title="Salvo offline — clique para remover"
-            >
-              <CheckCircle className="w-5 h-5 group-hover:hidden" />
-              <Trash className="w-5 h-5 hidden group-hover:block" />
-            </button>
-          ) : (
-            <button
-              onClick={handleDownloadOffline}
-              disabled={savingOffline || items.length === 0}
-              className="p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all disabled:opacity-40"
-              title="Baixar para uso offline"
-            >
-              {savingOffline ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-            </button>
-          )}
-          {!isGuest && (
-            <button 
-              onClick={() => setIsEditingBaseInfo(true)}
-              className="p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all"
-              title="Editar informações"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
-          )}
         </div>
       </div>
 
@@ -732,9 +833,9 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
       <Modal
         open={isEditingBaseInfo}
-        onClose={() => setIsEditingBaseInfo(false)}
+        onClose={closeEditBaseInfo}
         title="Editar Repertório"
-        footer={<ModalActions onCancel={() => setIsEditingBaseInfo(false)} onConfirm={handleUpdateBaseInfo} confirmLabel="Salvar Alterações" />}
+        footer={<ModalActions onCancel={closeEditBaseInfo} onConfirm={handleUpdateBaseInfo} confirmLabel="Salvar Alterações" loading={savingBase} />}
       >
               <div className="space-y-4">
                 <div>
@@ -785,6 +886,30 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                       />
                     ))}
                   </div>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
+                    <ImagePlus className="w-3.5 h-3.5" /> Imagem de cabeçalho
+                  </p>
+                  {coverPreviewSrc && (
+                    <div className="relative rounded-xl overflow-hidden border border-slate-100 mb-2">
+                      <img src={coverPreviewSrc} alt="" className="w-full aspect-[16/7] object-cover" />
+                      <button
+                        type="button"
+                        onClick={handleClearCover}
+                        className="absolute top-2 right-2 p-2 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+                        title="Remover imagem"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                  <label className="flex items-center justify-center gap-2 w-full p-3 rounded-xl border-2 border-dashed border-slate-200 text-sm font-bold text-slate-500 cursor-pointer hover:bg-slate-50 transition-colors">
+                    <ImagePlus className="w-4 h-4" />
+                    {coverPreviewSrc ? 'Trocar imagem' : 'Escolher imagem'}
+                    <input type="file" accept="image/*" className="hidden" onChange={handlePickCover} />
+                  </label>
+                  <p className="text-[11px] text-slate-400 mt-1.5">Aparece só no topo deste repertório. A imagem é reduzida automaticamente.</p>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
@@ -960,7 +1085,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                 return (
                   <div key={section} className="group">
                     <div className="flex justify-between items-center mb-1 px-0.5">
-                       <h3 className="text-[13px] font-black text-brand-blue uppercase tracking-wider">{section}</h3>
+                       <h3 className="text-sm font-black text-brand-blue uppercase tracking-wider leading-tight">{section}</h3>
                        <div className="flex items-center gap-1.5">
                          {/* Atalho para o texto das Orações Eucarísticas direto na
                              seção "Or Eucaristica" (visível também para convidados,
@@ -979,7 +1104,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                          {!isGuest && (
                            <button
                              onClick={() => openAddingMode(section)}
-                             className="flex items-center gap-1 px-2 py-1 bg-brand-blue/5 text-brand-blue rounded-lg text-[10px] font-bold uppercase hover:bg-brand-blue hover:text-white transition-all"
+                             className="flex items-center gap-1 px-2.5 py-1.5 bg-brand-blue/10 text-brand-blue rounded-lg text-[11px] font-bold uppercase hover:bg-brand-blue hover:text-white transition-all"
                            >
                              <Plus className="w-3 h-3" />
                              Adicionar
@@ -1000,25 +1125,25 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                          <div 
                             key={item.item_id} 
                             onClick={() => hasContent && setSelectedChord(item)}
-                            className={`p-1.5 px-2.5 flex items-center gap-2 group/item transition-all ${
+                            className={`py-2.5 px-3 flex items-center gap-3 group/item transition-all ${
                               hasContent ? 'hover:bg-slate-50 cursor-pointer' : 'cursor-default opacity-60'
                             }`}
                           >
-                            <div className="w-4 h-4 flex items-center justify-center bg-slate-50 text-slate-300 rounded-sm text-[8px] font-bold">
+                            <div className="w-5 h-5 shrink-0 flex items-center justify-center bg-slate-100 text-slate-500 rounded text-[10px] font-bold">
                                {idx + 1}
                             </div>
-                            <div className="flex-1 overflow-hidden">
+                            <div className="flex-1 min-w-0">
                                 {hasContent ? (
                                   <>
-                                    <p className="font-bold text-slate-700 text-[14px] leading-none group-hover/item:text-brand-blue transition-colors truncate">{item.title}</p>
-                                    <p className="text-[7px] text-slate-400 font-medium uppercase truncate leading-none mt-0.5">{item.artist}</p>
+                                    <p className="font-bold text-slate-800 text-[15px] leading-tight group-hover/item:text-brand-blue transition-colors truncate">{item.title}</p>
+                                    <p className="text-[10px] text-slate-500 font-medium uppercase truncate leading-none mt-1">{item.artist}</p>
                                   </>
                                 ) : (
                                   <p className="text-[11px] italic text-slate-400 leading-none">Música ainda não definida</p>
                                 )}
                              </div>
                             <div className="flex items-center gap-1.5 transition-opacity opacity-100">
-                               {hasContent && <Eye className="w-3 h-3 text-slate-300" />}
+                               {hasContent && <Eye className="w-4 h-4 text-slate-400" />}
                                {isGuest ? (
                                  <span className="px-2 py-1 bg-slate-100 text-slate-500 rounded-md text-[11px] font-black">
                                     {item.display_key || item.original_key}
@@ -1050,10 +1175,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                      e.stopPropagation();
                                      openEditMode(item);
                                    }}
-                                   className="p-1 text-slate-300 hover:text-brand-blue rounded transition-all"
+                                   className="p-1.5 text-slate-400 hover:text-brand-blue rounded transition-all"
                                    title="Trocar música"
                                  >
-                                   <Pencil className="w-2.5 h-2.5" />
+                                   <Pencil className="w-3.5 h-3.5" />
                                  </button>
                                )}
                                {!isGuest && (
@@ -1062,10 +1187,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                      e.stopPropagation();
                                      removeItem(item.item_id);
                                    }}
-                                   className="p-1 text-slate-300 hover:text-red-500 rounded transition-all"
+                                   className="p-1.5 text-slate-400 hover:text-red-500 rounded transition-all"
                                    title="Excluir música"
                                  >
-                                   <Trash2 className="w-2.5 h-2.5" />
+                                   <Trash2 className="w-3.5 h-3.5" />
                                  </button>
                                )}
                             </div>
@@ -1079,7 +1204,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
               
               {!isGuest && (
                 <div className="pt-4 border-t border-slate-50">
-                  <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest mb-2">Adicionar Música a uma Seção</p>
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2">Adicionar Música a uma Seção</p>
                   <div className="flex flex-wrap gap-2">
                     {sections.map(section => {
                       const sectionItems = items.filter(i => i.section === section);
@@ -1167,7 +1292,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
                 {(repertoire.youtube_playlist_url || repertoire.spotify_playlist_url) && (
                   <div className="pt-4 border-t border-slate-50 space-y-2">
-                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Playlists</p>
+                    <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide mb-2">Playlists</p>
                     {repertoire.youtube_playlist_url && (
                       <a
                         href={repertoire.youtube_playlist_url}
@@ -1201,7 +1326,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
                 {(repertoire.type === 'Missa' || repertoire.type === 'Laudes') && (
                   <div className="pt-4 border-t border-slate-50 space-y-2">
-                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Recursos Litúrgicos</p>
+                    <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide mb-2">Recursos Litúrgicos</p>
                     {repertoire.type === 'Missa' && (
                       <>
                         <button
@@ -1244,7 +1369,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
                 {!isGuest && (
                   <div className="pt-4 border-t border-slate-50">
-                    <label className="block text-[10px] text-slate-400 font-bold uppercase mb-2">Responsável</label>
+                    <label className="block text-[11px] text-slate-500 font-bold uppercase tracking-wide mb-2">Responsável</label>
                     <select 
                       value={currentResponsibleId || 'none'}
                       onChange={(e) => handleAssignResponsible(e.target.value)}
@@ -1260,7 +1385,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                 )}
                 {!isGuest && (
                   <div className="pt-4 border-t border-slate-50">
-                    <label className="block text-[10px] text-slate-400 font-bold uppercase mb-3">Minha Escala</label>
+                    <label className="block text-[11px] text-slate-500 font-bold uppercase tracking-wide mb-3">Minha Escala</label>
                     <div className="flex gap-2">
                        {[
                          { id: 'confirmed', icon: CheckCircle2, label: 'Vou', color: 'bg-emerald-50 text-emerald-600 border-emerald-100 hover:bg-emerald-100' },
@@ -1273,10 +1398,10 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                            <button
                              key={status.id}
                              onClick={() => handleUpdateAttendance(profile.id, status.id as AttendanceStatus)}
-                             className={`flex-1 flex flex-col items-center gap-1 p-2 rounded-xl border transition-all ${isActive ? status.color.replace('bg-emerald-50', 'bg-emerald-500').replace('text-emerald-600', 'text-white').replace('bg-rose-50', 'bg-rose-500').replace('text-rose-600', 'text-white').replace('bg-amber-50', 'bg-amber-500').replace('text-amber-600', 'text-white') : 'bg-white text-slate-400 border-slate-100 hover:bg-slate-50'}`}
+                             className={`flex-1 flex flex-col items-center gap-1 p-2 rounded-xl border transition-all ${isActive ? status.color.replace('bg-emerald-50', 'bg-emerald-500').replace('text-emerald-600', 'text-white').replace('bg-rose-50', 'bg-rose-500').replace('text-rose-600', 'text-white').replace('bg-amber-50', 'bg-amber-500').replace('text-amber-600', 'text-white') : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
                            >
                              <status.icon className="w-4 h-4" />
-                             <span className="text-[9px] font-bold">{status.label}</span>
+                             <span className="text-[11px] font-bold">{status.label}</span>
                            </button>
                          );
                        })}
@@ -1298,7 +1423,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
                 <div className="pt-4 border-t border-slate-50">
                   <div className="flex justify-between items-center mb-3">
-                    <label className="block text-[10px] text-slate-400 font-bold uppercase">Escala da Missão</label>
+                    <label className="block text-[11px] text-slate-500 font-bold uppercase tracking-wide">Escala da Missão</label>
                     <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 rounded-full">
                       {attendances.filter(a => a.status === 'confirmed').length} Confirmados
                     </span>
@@ -1307,14 +1432,14 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                     {missionMembers.map(member => {
                       const att = attendances.find(a => a.user_id === member.id);
                       return (
-                        <div key={member.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-50/50 border border-slate-50 group hover:border-slate-100 transition-all">
+                        <div key={member.id} className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100 group transition-all">
                            <div className="flex items-center gap-2 overflow-hidden">
                               <div className="w-6 h-6 rounded-full bg-brand-orange/10 text-brand-orange flex items-center justify-center shrink-0">
                                 <span className="text-[10px] font-black">{member.display_name?.charAt(0).toUpperCase()}</span>
                               </div>
                               <div className="overflow-hidden">
-                                <p className="text-[10px] font-bold text-slate-700 truncate">{member.display_name}</p>
-                                <p className="text-[9px] text-slate-400 truncate tracking-tight">{att?.role || 'Visitante'}</p>
+                                <p className="text-xs font-bold text-slate-800 truncate">{member.display_name}</p>
+                                <p className="text-[11px] text-slate-500 truncate tracking-tight">{att?.role || 'Visitante'}</p>
                               </div>
                            </div>
                            <div className="flex items-center gap-1.5 shrink-0">
@@ -1322,7 +1447,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                 <select 
                                   value={att?.status || 'none'}
                                   onChange={(e) => handleUpdateAttendance(member.id, e.target.value as AttendanceStatus)}
-                                  className={`p-1 bg-white border border-slate-100 rounded text-[9px] font-bold focus:outline-none ${att?.status === 'confirmed' ? 'text-emerald-600' : att?.status === 'declined' ? 'text-rose-600' : 'text-slate-400'}`}
+                                  className={`p-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-bold focus:outline-none ${att?.status === 'confirmed' ? 'text-emerald-600' : att?.status === 'declined' ? 'text-rose-600' : 'text-slate-500'}`}
                                 >
                                    <option value="none">-</option>
                                    <option value="confirmed">Sim</option>
@@ -1339,7 +1464,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                                 <select 
                                   value={att?.role || ''}
                                   onChange={(e) => handleUpdateAttendance(member.id, 'confirmed', e.target.value)}
-                                  className="w-16 p-1 bg-white border border-slate-100 rounded text-[9px] font-bold focus:outline-none"
+                                  className="w-20 p-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-bold focus:outline-none"
                                 >
                                    <option value="">Função</option>
                                    {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
@@ -1353,15 +1478,15 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                 </div>
 
                 <div className="pt-4 border-t border-slate-50">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Resumo</p>
+                  <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wide mb-2">Resumo</p>
                   <div className="grid grid-cols-2 gap-2">
                      <div className="bg-slate-50 p-3 rounded-xl text-center">
                         <p className="text-lg font-black text-brand-blue">{items.length}</p>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase">Músicas</p>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase">Músicas</p>
                      </div>
                      <div className="bg-slate-50 p-3 rounded-xl text-center">
                         <p className="text-lg font-black text-brand-orange">{sections.length}</p>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase">Seções</p>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase">Seções</p>
                      </div>
                   </div>
                 </div>

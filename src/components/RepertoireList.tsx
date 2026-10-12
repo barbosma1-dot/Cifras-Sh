@@ -20,6 +20,7 @@ import { supabase } from '../lib/supabase';
 import { UserProfile, Repertoire, Mission } from '../types';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import './repertoires.css';
 import RepertoireDetail from './RepertoireDetail';
 import { Modal, ModalActions } from '../kit';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
@@ -311,7 +312,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 sh-rep">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
         <div>
           <h1 className="text-2xl font-display font-bold text-brand-blue">Meus Repertórios</h1>
@@ -441,17 +442,17 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
                 
                 return (
                   <div key={item.id} className="bg-white p-3 rounded-2xl border border-slate-100 hover:border-brand-blue/30 transition-all flex items-center justify-between group shadow-sm">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center border shadow-sm
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className={`w-11 h-11 shrink-0 rounded-xl flex flex-col items-center justify-center border shadow-sm
                         ${bgColor} ${isLight ? 'text-slate-500' : 'text-white'}`}>
-                        <span className={`text-[8px] font-black uppercase ${isLight ? 'text-brand-blue' : 'text-white/80'}`}>{format(new Date(item.date), 'MMM', { locale: ptBR })}</span>
-                        <span className="text-sm font-black">{format(new Date(item.date), 'dd')}</span>
+                        <span className={`text-[9px] font-black uppercase leading-none ${isLight ? 'text-brand-blue' : 'text-white/90'}`}>{format(new Date(item.date), 'MMM', { locale: ptBR })}</span>
+                        <span className="text-sm font-black leading-tight">{format(new Date(item.date), 'dd')}</span>
                       </div>
-                      <div>
-                        <h3 className="font-bold text-sm text-slate-800 leading-tight">{item.name}</h3>
-                        <div className="flex items-center gap-3 text-[10px] text-slate-500 mt-0.5">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-bold text-[15px] text-slate-800 leading-snug break-words">{item.name}</h3>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 mt-1">
                           <span className="flex items-center gap-1"><Clock className="w-2.5 h-2.5" /> {format(new Date(item.date), 'HH:mm')}</span>
-                          <span className="flex items-center gap-1 font-bold uppercase tracking-wider text-[8px]"><Filter className="w-2.5 h-2.5" /> {item.type}</span>
+                          <span className="flex items-center gap-1 font-bold uppercase tracking-wider text-[10px]"><Filter className="w-2.5 h-2.5" /> {item.type}</span>
                           <span className="flex items-center gap-1"><Share2 className="w-2.5 h-2.5" /> {(item.chord_ids || []).length}</span>
                           {offlineIds.has(item.id) && (
                             <span className="flex items-center gap-1 text-emerald-500" title="Disponível offline">
@@ -461,7 +462,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
                       <button
                         onClick={() => setRepertoireToDelete(item)}
                         className="p-2 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"
