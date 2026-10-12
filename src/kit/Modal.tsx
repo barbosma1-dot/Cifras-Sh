@@ -1,6 +1,9 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2 } from 'lucide-react';
+
+/** Pilha de janelas abertas: o Esc fecha só a de cima. */
+const openStack: symbol[] = [];
 
 type ModalProps = {
   open: boolean;
@@ -14,17 +17,27 @@ type ModalProps = {
 
 /** Painel que sobe da base no celular e fica centralizado no computador. */
 export function Modal({ open, onClose, title, children, footer, size = 'md' }: ModalProps) {
+  const id = useRef(Symbol('modal'));
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const me = id.current;
+    openStack.push(me);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && openStack[openStack.length - 1] === me) onCloseRef.current();
+    };
     document.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
+      const i = openStack.indexOf(me);
+      if (i >= 0) openStack.splice(i, 1);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(

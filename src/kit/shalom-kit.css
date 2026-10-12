@@ -128,7 +128,7 @@
 
 /* ---------- modais (painel na base no celular, centralizado no desktop) ---------- */
 .sh-overlay {
-  position: fixed; inset: 0; z-index: 60;
+  position: fixed; inset: 0; z-index: 190;
   display: flex; align-items: flex-end; justify-content: center;
   background: rgb(0 0 0 / 0.55); backdrop-filter: blur(2px);
   animation: sh-fade .15s ease-out;
@@ -500,3 +500,58 @@
 .sh-theme-seg.sh-ondark button[aria-pressed="true"] { background: rgb(255 255 255 / 0.18); color: #fff; box-shadow: none; }
 .sh-btn.sh-ondark { color: rgb(255 255 255 / 0.7); }
 .sh-btn.sh-ondark:hover:not([disabled]) { background: rgb(255 255 255 / 0.12); color: #fff; }
+
+/* ===== MODO ESCURO: CONTRASTE DAS CORES DE MARCA (padrão Shalom) =====
+   Azul-marinho e laranja escuros somem sobre fundo escuro. Aqui só o TEXTO e os
+   contornos ficam claros; fundos sólidos de marca (botões) não mudam. */
+:root[data-theme="dark"] {
+  --sh-brand-text: #9bbcff;
+  --sh-brand-text-soft: #b7cdf7;
+  --sh-accent-text: #ff9262;
+}
+:root[data-theme="dark"] [class~="text-brand-blue"],
+:root[data-theme="dark"] [class*="text-brand-blue/"],
+:root[data-theme="dark"] [class~="hover:text-brand-blue"]:hover,
+:root[data-theme="dark"] .chord-line { color: var(--sh-brand-text); }
+:root[data-theme="dark"] [class~="text-brand-blue-light"] { color: var(--sh-brand-text-soft); }
+:root[data-theme="dark"] [class~="text-brand-orange"],
+:root[data-theme="dark"] [class*="text-brand-orange/"],
+:root[data-theme="dark"] [class~="hover:text-brand-orange"]:hover { color: var(--sh-accent-text); }
+:root[data-theme="dark"] [class~="border-brand-blue"] { border-color: var(--sh-brand-text); }
+/* Famílias azuis genéricas do Tailwind (apps que não usam brand-*) */
+:root[data-theme="dark"] [class~="text-blue-500"],
+:root[data-theme="dark"] [class~="text-blue-600"],
+:root[data-theme="dark"] [class~="text-blue-700"],
+:root[data-theme="dark"] [class~="text-blue-800"],
+:root[data-theme="dark"] [class~="text-blue-900"],
+:root[data-theme="dark"] [class~="text-indigo-500"],
+:root[data-theme="dark"] [class~="text-indigo-600"],
+:root[data-theme="dark"] [class~="text-indigo-700"],
+:root[data-theme="dark"] [class~="text-indigo-800"],
+:root[data-theme="dark"] [class~="text-indigo-900"],
+:root[data-theme="dark"] [class~="text-sky-600"],
+:root[data-theme="dark"] [class~="text-sky-700"],
+:root[data-theme="dark"] [class~="text-sky-800"] { color: var(--sh-brand-text); }
+:root[data-theme="dark"] [class~="bg-blue-50"],
+:root[data-theme="dark"] [class~="bg-indigo-50"],
+:root[data-theme="dark"] [class~="bg-sky-50"] { background-color: color-mix(in srgb, #3b6fd8 14%, var(--sh-surface)); }
+:root[data-theme="dark"] [class~="bg-blue-100"],
+:root[data-theme="dark"] [class~="bg-indigo-100"],
+:root[data-theme="dark"] [class~="bg-sky-100"] { background-color: color-mix(in srgb, #3b6fd8 24%, var(--sh-surface)); }
+:root[data-theme="dark"] [class~="border-blue-100"],
+:root[data-theme="dark"] [class~="border-blue-200"],
+:root[data-theme="dark"] [class~="border-indigo-100"],
+:root[data-theme="dark"] [class~="border-indigo-200"] { border-color: color-mix(in srgb, #3b6fd8 40%, var(--sh-border)); }
+
+/* ===== LOGO = BOTÃO DE MENU (padrão Shalom) ===== */
+.sh-logo-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: var(--sh-touch); height: var(--sh-touch); padding: 4px;
+  border-radius: var(--sh-radius-control);
+  background: var(--sh-surface); border: 1px solid var(--sh-border);
+  box-shadow: var(--sh-shadow-card); cursor: pointer;
+  -webkit-tap-highlight-color: transparent; transition: transform 0.1s, background 0.15s;
+}
+.sh-logo-btn:hover { background: var(--sh-surface-2); }
+.sh-logo-btn:active { transform: scale(0.95); }
+.sh-logo-btn img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
