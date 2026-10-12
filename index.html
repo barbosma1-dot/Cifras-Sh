@@ -2,6 +2,16 @@
 <html lang="pt-BR">
 
   <head>
+    <script>
+      /* aplica o tema salvo antes de desenhar a tela (evita piscar branco) */
+      (function () {
+        try {
+          var m = localStorage.getItem('sh-theme') || 'auto', h = new Date().getHours();
+          var dark = m === 'escuro' || (m === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches) || (m === 'noturno' && (h >= 18 || h < 6));
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        } catch (e) {}
+      })();
+    </script>
 
     <meta charset="UTF-8" />
 
