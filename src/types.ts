@@ -77,6 +77,8 @@ export interface Repertoire {
   spotify_playlist_url?: string | null;
   // Imagem de cabeçalho — aparece só na aba do próprio repertório.
   cover_url?: string | null;
+  // Foco vertical da imagem (0 = topo, 100 = base). Padrão 50.
+  cover_position?: number | null;
 }
 
 export interface UserNotification {
