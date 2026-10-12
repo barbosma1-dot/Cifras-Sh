@@ -52,6 +52,7 @@ import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import ChordViewer from './ChordViewer';
 import ChordEditor from './ChordEditor';
+import { Modal, ModalActions } from '../kit';
 import LiturgyViewer from './LiturgyViewer';
 import LiturgyTextViewer, { fetchAndSaveLiturgy, loadSavedLiturgy } from './LiturgyTextViewer';
 import { exportChordsToPDF } from '../lib/pdfExport';
@@ -729,20 +730,12 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
         </div>
       )}
 
-      <AnimatePresence>
-        {isEditingBaseInfo && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4 text-left"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl"
-            >
-              <h3 className="text-2xl font-bold text-slate-800 mb-6">Editar Repertório</h3>
+      <Modal
+        open={isEditingBaseInfo}
+        onClose={() => setIsEditingBaseInfo(false)}
+        title="Editar Repertório"
+        footer={<ModalActions onCancel={() => setIsEditingBaseInfo(false)} onConfirm={handleUpdateBaseInfo} confirmLabel="Salvar Alterações" />}
+      >
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Nome do Evento</label>
@@ -818,14 +811,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
                   />
                 </div>
               </div>
-              <div className="flex gap-3 mt-8">
-                <button onClick={() => setIsEditingBaseInfo(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-xl">Cancelar</button>
-                <button onClick={handleUpdateBaseInfo} className="flex-1 py-4 bg-brand-blue text-white font-bold rounded-xl shadow-lg shadow-brand-blue/20">Salvar Alterações</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </Modal>
 
       {isAddingMode && (
         <div className="bg-brand-blue text-white p-4 rounded-2xl flex items-center justify-between animate-in slide-in-from-top-4 duration-300">
@@ -1423,36 +1409,24 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
         <LiturgyTextViewer onClose={() => setIsLiturgyTextOpen(false)} date={repertoireDateKey} />
       )}
 
-      {isDeleteConfirmOpen && (
-        <div className="fixed inset-0 z-[160] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-red-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
-              <Trash2 className="w-8 h-8 text-red-500" />
-            </div>
-            <h3 className="text-xl font-black text-slate-800 mb-2">Excluir Repertório?</h3>
-            <p className="text-slate-500 text-sm leading-relaxed mb-8">
+      <Modal
+        open={isDeleteConfirmOpen}
+        onClose={() => { if (!deletingRepertoire) setIsDeleteConfirmOpen(false); }}
+        title="Excluir Repertório?"
+        footer={
+          <ModalActions
+            onCancel={() => setIsDeleteConfirmOpen(false)}
+            onConfirm={handleDeleteRepertoire}
+            confirmLabel={deletingRepertoire ? 'Excluindo...' : 'Sim, Excluir'}
+            danger
+            loading={deletingRepertoire}
+          />
+        }
+      >
+            <p className="text-slate-500 text-sm leading-relaxed">
               Tem certeza que deseja excluir "{repertoire.name}"? Esta ação é permanente — as cifras em si não são apagadas, só este repertório e a lista de músicas dele.
             </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setIsDeleteConfirmOpen(false)}
-                disabled={deletingRepertoire}
-                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleDeleteRepertoire}
-                disabled={deletingRepertoire}
-                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {deletingRepertoire && <Loader2 className="w-4 h-4 animate-spin" />}
-                {deletingRepertoire ? 'Excluindo...' : 'Sim, Excluir'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Notificações */}
       {notification && (

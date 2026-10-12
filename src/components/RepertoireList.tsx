@@ -21,6 +21,7 @@ import { UserProfile, Repertoire, Mission } from '../types';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import RepertoireDetail from './RepertoireDetail';
+import { Modal, ModalActions } from '../kit';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { listOfflineRepertoires, removeOfflineRepertoire } from '../lib/offlineDb';
 import { withTimeout } from '../lib/withTimeout';
@@ -351,16 +352,12 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
       )}
 
       {/* Modal de Novo Repertório */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl animate-in fade-in zoom-in duration-200">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-brand-blue">Novo Repertório</h2>
-              <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            
+      <Modal
+        open={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title="Novo Repertório"
+        footer={<ModalActions onCancel={() => setIsModalOpen(false)} onConfirm={handleCreate} confirmLabel="Criar Repertório" disabled={missions.length === 0} />}
+      >
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Nome do Repertório</label>
@@ -430,25 +427,7 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
                   </div>
                 </div>
               </div>
-
-              <div className="flex gap-3 mt-8">
-               <button 
-                 onClick={() => setIsModalOpen(false)}
-                 className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200"
-               >
-                 Cancelar
-               </button>
-               <button 
-                 onClick={handleCreate}
-                 disabled={missions.length === 0}
-                 className="flex-1 py-4 bg-brand-blue text-white font-bold rounded-xl hover:bg-blue-700 shadow-lg disabled:opacity-50"
-               >
-                 Criar Repertório
-               </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className={viewMode === 'list' ? 'lg:col-span-8 space-y-4' : 'lg:col-span-12'}>
@@ -624,36 +603,24 @@ export default function RepertoireList({ profile, initialMissionId, initialReper
         </div>
       )}
 
-      {repertoireToDelete && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-red-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
-              <Trash2 className="w-8 h-8 text-red-500" />
-            </div>
-            <h3 className="text-xl font-black text-slate-800 mb-2">Excluir Repertório?</h3>
-            <p className="text-slate-500 text-sm leading-relaxed mb-8">
+      <Modal
+        open={!!repertoireToDelete}
+        onClose={() => { if (!deletingRepertoire) setRepertoireToDelete(null); }}
+        title="Excluir Repertório?"
+        footer={
+          <ModalActions
+            onCancel={() => setRepertoireToDelete(null)}
+            onConfirm={() => { if (repertoireToDelete) deleteRepertoire(repertoireToDelete); }}
+            confirmLabel={deletingRepertoire ? 'Excluindo...' : 'Sim, Excluir'}
+            danger
+            loading={deletingRepertoire}
+          />
+        }
+      >
+            <p className="text-slate-500 text-sm leading-relaxed">
               Tem certeza que deseja excluir "{repertoireToDelete.name}"? Esta ação é permanente — as cifras em si não são apagadas, só este repertório e a lista de músicas dele.
             </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setRepertoireToDelete(null)}
-                disabled={deletingRepertoire}
-                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => deleteRepertoire(repertoireToDelete)}
-                disabled={deletingRepertoire}
-                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {deletingRepertoire && <Loader2 className="w-4 h-4 animate-spin" />}
-                {deletingRepertoire ? 'Excluindo...' : 'Sim, Excluir'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }
