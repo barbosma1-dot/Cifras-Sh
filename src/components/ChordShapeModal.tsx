@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { Modal } from '../kit';
 import { useBackButton } from '../hooks/useBackButton';
 import { getChordShape, type Instrument } from '../lib/chordShapes';
 import ChordDiagram from './ChordDiagram';
@@ -66,35 +66,12 @@ export default function ChordShapeModal({ chordLabel, onClose }: ChordShapeModal
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[180] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Shape do acorde ${chordLabel}`}
-    >
-      <div
-        className="bg-white text-slate-800 w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-3xl font-black text-brand-orange leading-none truncate">{chordLabel}</h3>
-            {result.notes.length > 0 && (
-              <p className="mt-1.5 text-xs font-bold text-slate-400 uppercase tracking-wide">
-                Notas: {result.notes.join(' · ')}
-              </p>
-            )}
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Fechar"
-            className="p-2 -mr-1 -mt-1 rounded-full text-slate-400 hover:bg-slate-100"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
+    <Modal open onClose={onClose} title={`Acorde ${chordLabel}`}>
+        {result.notes.length > 0 && (
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">
+            Notas: {result.notes.join(' · ')}
+          </p>
+        )}
         <div className="mt-4 grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl" role="tablist" aria-label="Instrumento">
           {INSTRUMENTS.map(i => (
             <button
@@ -135,7 +112,6 @@ export default function ChordShapeModal({ chordLabel, onClose }: ChordShapeModal
         {result.shape && result.warning && (
           <p className="mt-3 text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2">{result.warning}</p>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

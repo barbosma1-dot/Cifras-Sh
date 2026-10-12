@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { UserProfile, Mission } from '../types';
+import { Modal, ModalActions } from '../kit';
 import { Settings, Users, Shield, Trash2, Plus, Loader2, Search, Edit, UserPlus, ArrowRight, Cpu, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 
 interface AiProviderStatus {
@@ -463,11 +464,12 @@ export default function AdminSettings({ profile }: { profile: UserProfile | null
       </div>
 
       {/* Modal de Nova Missão */}
-      {showMissionModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
-            <h2 className="text-xl font-bold text-brand-blue mb-6">Criar Nova Missão</h2>
-            
+      <Modal
+        open={showMissionModal}
+        onClose={() => setShowMissionModal(false)}
+        title="Criar Nova Missão"
+        footer={<ModalActions onCancel={() => setShowMissionModal(false)} onConfirm={handleCreateMission} confirmLabel="Criar Missão" />}
+      >
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Nome da Missão</label>
@@ -497,30 +499,15 @@ export default function AdminSettings({ profile }: { profile: UserProfile | null
               </div>
             </div>
 
-            <div className="flex gap-3 mt-8">
-              <button 
-                onClick={() => setShowMissionModal(false)}
-                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={handleCreateMission}
-                className="flex-1 py-3 bg-brand-blue text-white font-bold rounded-xl hover:bg-blue-700 shadow-md"
-              >
-                Criar Missão
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Modal de Editar Missão */}
-      {editingMission && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
-            <h2 className="text-xl font-bold text-brand-blue mb-6">Editar Missão</h2>
-            
+      <Modal
+        open={!!editingMission}
+        onClose={() => setEditingMission(null)}
+        title="Editar Missão"
+        footer={<ModalActions onCancel={() => setEditingMission(null)} onConfirm={handleUpdateMission} confirmLabel="Salvar Alterações" />}
+      >
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Novo Nome da Missão</label>
@@ -534,23 +521,7 @@ export default function AdminSettings({ profile }: { profile: UserProfile | null
               </div>
             </div>
 
-            <div className="flex gap-3 mt-8">
-               <button 
-                 onClick={() => setEditingMission(null)}
-                 className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200"
-               >
-                 Cancelar
-               </button>
-               <button 
-                 onClick={handleUpdateMission}
-                 className="flex-1 py-3 bg-brand-blue text-white font-bold rounded-xl hover:bg-blue-700 shadow-md"
-               >
-                 Salvar Alterações
-               </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Gestão de Associações */}
       <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
@@ -727,39 +698,28 @@ export default function AdminSettings({ profile }: { profile: UserProfile | null
       </div>
 
       {/* Confirmação de Exclusão */}
-      {confirmingDelete && (
-        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-red-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
-              <Trash2 className="w-8 h-8 text-red-500" />
-            </div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Excluir {confirmingDelete.type === 'user' ? 'Usuário' : 'Missão'}?</h3>
-            <p className="text-slate-500 text-sm leading-relaxed mb-8">
+      <Modal
+        open={!!confirmingDelete}
+        onClose={() => { if (!actionLoading) setConfirmingDelete(null); }}
+        title={`Excluir ${confirmingDelete?.type === 'user' ? 'Usuário' : 'Missão'}?`}
+        footer={
+          <ModalActions
+            onCancel={() => setConfirmingDelete(null)}
+            onConfirm={() => {
+              if (!confirmingDelete) return;
+              if (confirmingDelete.type === 'user') deleteUser(confirmingDelete.id, confirmingDelete.name);
+              else deleteMission(confirmingDelete.id, confirmingDelete.name);
+            }}
+            confirmLabel={actionLoading ? 'Excluindo...' : 'Sim, Excluir'}
+            danger
+            loading={actionLoading}
+          />
+        }
+      >
+            <p className="text-slate-500 text-sm leading-relaxed">
               Tem certeza que deseja excluir <strong>{confirmingDelete.name}</strong>? Esta ação não pode ser desfeita.
             </p>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setConfirmingDelete(null)}
-                disabled={actionLoading}
-                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={() => {
-                  if (confirmingDelete.type === 'user') deleteUser(confirmingDelete.id, confirmingDelete.name);
-                  else deleteMission(confirmingDelete.id, confirmingDelete.name);
-                }}
-                disabled={actionLoading}
-                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-red-500/20"
-              >
-                {actionLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                {actionLoading ? 'Excluindo...' : 'Sim, Excluir'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Notificação Flutuante */}
       {notification && (
