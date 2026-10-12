@@ -1,4 +1,4 @@
-import { useState, useEffect, type ChangeEvent, type CSSProperties } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { 
   ArrowLeft, 
   Search, 
@@ -34,6 +34,7 @@ import {
   WifiOff,
   Youtube,
   ImagePlus,
+  Move,
   X
 } from 'lucide-react';
 import { supabase, fetchAllRows } from '../lib/supabase';
@@ -342,6 +343,77 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
       ? null
       : (repertoire.cover_url || null);
 
+  // Foco da imagem (estilo Notion): arrastar para cima/baixo e salvar.
+  const heroRef = useRef<HTMLDivElement>(null);
+  const coverImgRef = useRef<HTMLImageElement>(null);
+  const dragRef = useRef<{ y: number; pos: number } | null>(null);
+  const posBeforeRef = useRef<number>(repertoire.cover_position ?? 50);
+  const [coverPos, setCoverPos] = useState<number>(repertoire.cover_position ?? 50);
+  const [repositioning, setRepositioning] = useState(false);
+  const [savingPos, setSavingPos] = useState(false);
+
+  const verticalOverflow = () => {
+    const img = coverImgRef.current;
+    const box = heroRef.current;
+    if (!img || !box || !img.naturalWidth || !img.naturalHeight) return 0;
+    const W = box.clientWidth;
+    const H = box.clientHeight;
+    const scale = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+    return Math.max(0, img.naturalHeight * scale - H);
+  };
+
+  const startReposition = () => {
+    posBeforeRef.current = coverPos;
+    setRepositioning(true);
+  };
+
+  const cancelReposition = () => {
+    setCoverPos(posBeforeRef.current);
+    setRepositioning(false);
+  };
+
+  const onDragStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = { y: e.clientY, pos: coverPos };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onDragMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const overflow = verticalOverflow();
+    if (overflow < 1) return;
+    const next = d.pos - ((e.clientY - d.y) / overflow) * 100;
+    setCoverPos(Math.max(0, Math.min(100, next)));
+  };
+
+  const onDragEnd = () => {
+    dragRef.current = null;
+  };
+
+  const handleSavePosition = async () => {
+    if (savingPos) return;
+    setSavingPos(true);
+    try {
+      const { error } = await supabase
+        .from('repertoires')
+        .update({ cover_position: Math.round(coverPos) })
+        .eq('id', repertoire.id);
+      if (error) {
+        if (/cover_position/i.test(error.message || '')) {
+          throw new Error('rode o arquivo MIGRACAO-cover-url.sql no Supabase (cria a coluna do foco).');
+        }
+        throw error;
+      }
+      setCoverPos(Math.round(coverPos));
+      setRepositioning(false);
+      setNotification({ message: 'Foco da imagem salvo.', type: 'success' });
+    } catch (err: any) {
+      setNotification({ message: 'Erro ao salvar o foco: ' + (err?.message || 'tente novamente'), type: 'error' });
+    } finally {
+      setSavingPos(false);
+    }
+  };
+
   const handlePickCover = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -395,6 +467,7 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
       if (pendingCover) {
         uploadedUrl = await uploadRepertoireCover(repertoire.id, pendingCover.blob);
         payload.cover_url = uploadedUrl;
+        if ('cover_position' in repertoire) payload.cover_position = 50;
       } else if (removeCover && repertoire.cover_url) {
         payload.cover_url = null;
       }
@@ -406,8 +479,8 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
 
       if (error) {
         if (uploadedUrl) await removeRepertoireCover(uploadedUrl);
-        if (/cover_url/i.test(error.message || '')) {
-          throw new Error('a coluna da imagem ainda não existe no banco. Rode o arquivo MIGRACAO-cover-url.sql no Supabase.');
+        if (/cover_(url|position)/i.test(error.message || '')) {
+          throw new Error('as colunas da imagem ainda não existem no banco. Rode o arquivo MIGRACAO-cover-url.sql no Supabase.');
         }
         throw error;
       }
@@ -749,77 +822,147 @@ export default function RepertoireDetail({ repertoire, profile, onBack }: Repert
     ? ''
     : format(repDate, "dd 'de' MMMM 'às' HH:mm", { locale: ptBR });
 
+  // Com imagem: o cabeçalho vira um "banner" — imagem de fundo + véu escuro
+  // (garante contraste de título e botões mesmo com imagem clara) e botões
+  // translúcidos com ícones brancos.
+  const hasCover = !!repertoire.cover_url && !coverFailed;
+  const canAdjustCover = hasCover && !isGuest;
+  const heroBtn = 'p-3 rounded-xl bg-black/55 backdrop-blur-sm text-white border border-white/30 shadow-sm hover:bg-black/75 transition-all disabled:opacity-40';
+  const plainBtn = 'p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all disabled:opacity-40';
+  const iconBtn = hasCover ? heroBtn : plainBtn;
+  const scrim = repositioning
+    ? 'linear-gradient(to bottom, rgba(0,0,0,.22), rgba(0,0,0,.22))'
+    : 'linear-gradient(to bottom, rgba(0,0,0,.66) 0%, rgba(0,0,0,.5) 35%, rgba(0,0,0,.78) 62%, rgba(0,0,0,.93) 100%)';
+  const textShadow = '0 2px 10px rgba(0,0,0,.65)';
+
   return (
     <div className="space-y-6 sh-rep">
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-        {repertoire.cover_url && !coverFailed && (
-          <div className="sh-rep-cover w-full aspect-[16/7] sm:aspect-[16/5] bg-slate-100">
+      <div
+        ref={heroRef}
+        className={`relative overflow-hidden rounded-3xl shadow-sm border ${hasCover ? 'border-transparent bg-slate-900' : 'bg-white border-slate-100'}`}
+      >
+        {hasCover && (
+          <>
             <img
-              src={repertoire.cover_url}
+              ref={coverImgRef}
+              src={repertoire.cover_url || ''}
               alt=""
-              className="w-full h-full object-cover"
+              draggable={false}
               onError={() => setCoverFailed(true)}
+              className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
+              style={{ objectPosition: `50% ${coverPos}%` }}
             />
-          </div>
+            <div className="absolute inset-0 pointer-events-none" style={{ background: scrim }} />
+          </>
         )}
-        <div className="p-4 sm:p-6">
+
+        <div className={`relative p-4 sm:p-6 ${hasCover ? 'min-h-[300px] sm:min-h-[340px] flex flex-col justify-between gap-10' : ''}`}>
           <div className="flex items-center justify-between gap-3">
             <button
               onClick={onBack}
-              className="p-3 bg-slate-50 text-slate-500 rounded-2xl hover:bg-slate-100 transition-colors"
+              className={hasCover ? heroBtn : 'p-3 bg-slate-50 text-slate-500 rounded-2xl hover:bg-slate-100 transition-colors'}
               title="Voltar"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-          <div className="flex items-center gap-2">
-            {isSavedOffline ? (
-              <button
-                onClick={handleRemoveOffline}
-                className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 group"
-                title="Salvo offline — clique para remover"
-              >
-                <CheckCircle className="w-5 h-5 group-hover:hidden" />
-                <Trash className="w-5 h-5 hidden group-hover:block" />
-              </button>
-            ) : (
-              <button
-                onClick={handleDownloadOffline}
-                disabled={savingOffline || items.length === 0}
-                className="p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all disabled:opacity-40"
-                title="Baixar para uso offline"
-              >
-                {savingOffline ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-              </button>
-            )}
-            {!isGuest && (
-              <button 
-                onClick={() => setIsEditingBaseInfo(true)}
-                className="p-3 bg-white text-slate-400 hover:text-brand-blue rounded-xl border border-slate-100 shadow-sm transition-all"
-                title="Editar informações"
-              >
-                <Settings className="w-5 h-5" />
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {canAdjustCover && (
+                <button
+                  onClick={startReposition}
+                  className={iconBtn}
+                  title="Ajustar o foco da imagem"
+                >
+                  <Move className="w-5 h-5" />
+                </button>
+              )}
+              {isSavedOffline ? (
+                <button
+                  onClick={handleRemoveOffline}
+                  className={hasCover
+                    ? 'p-3 rounded-xl bg-emerald-600/85 backdrop-blur-sm text-white border border-white/30 shadow-sm transition-all hover:bg-red-600 group'
+                    : 'p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 group'}
+                  title="Salvo offline — clique para remover"
+                >
+                  <CheckCircle className="w-5 h-5 group-hover:hidden" />
+                  <Trash className="w-5 h-5 hidden group-hover:block" />
+                </button>
+              ) : (
+                <button
+                  onClick={handleDownloadOffline}
+                  disabled={savingOffline || items.length === 0}
+                  className={iconBtn}
+                  title="Baixar para uso offline"
+                >
+                  {savingOffline ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                </button>
+              )}
+              {!isGuest && (
+                <button
+                  onClick={() => setIsEditingBaseInfo(true)}
+                  className={iconBtn}
+                  title="Editar informações"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="mt-4 min-w-0">
+          <div className={`min-w-0 ${hasCover ? '' : 'mt-4'}`}>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
-              <span className="text-[11px] font-bold px-2.5 py-1 bg-brand-orange/10 text-brand-orange rounded uppercase tracking-wide">
+              <span
+                className={`text-[11px] font-bold px-2.5 py-1 rounded uppercase tracking-wide ${hasCover ? 'bg-white/20 text-white border border-white/30 backdrop-blur-sm' : 'bg-brand-orange/10 text-brand-orange'}`}
+              >
                 {repertoire.type}
               </span>
               {dateLabel && (
-                <span className="text-sm text-slate-500 font-medium">{dateLabel}</span>
+                <span
+                  className={`text-sm font-semibold ${hasCover ? 'text-white' : 'text-slate-500 font-medium'}`}
+                  style={hasCover ? { textShadow } : undefined}
+                >
+                  {dateLabel}
+                </span>
               )}
             </div>
             <h1
-              className="text-2xl sm:text-3xl font-bold text-brand-blue leading-tight break-words"
-              style={{ textWrap: 'balance' } as CSSProperties}
+              className={`text-2xl sm:text-3xl font-bold leading-tight break-words ${hasCover ? 'text-white' : 'text-brand-blue'}`}
+              style={{ textWrap: 'balance', ...(hasCover ? { textShadow } : {}) } as CSSProperties}
             >
               {repertoire.name}
             </h1>
           </div>
         </div>
+
+        {repositioning && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col items-center justify-between p-4 cursor-grab active:cursor-grabbing touch-none select-none"
+            onPointerDown={onDragStart}
+            onPointerMove={onDragMove}
+            onPointerUp={onDragEnd}
+            onPointerCancel={onDragEnd}
+          >
+            <span className="px-4 py-2 rounded-full bg-black/70 text-white text-sm font-bold flex items-center gap-2 pointer-events-none">
+              <Move className="w-4 h-4" /> Arraste para ajustar o foco
+            </span>
+            <div className="flex gap-2" onPointerDown={(e) => e.stopPropagation()}>
+              <button
+                onClick={cancelReposition}
+                disabled={savingPos}
+                className="px-5 py-3 rounded-xl bg-black/70 text-white font-bold text-sm border border-white/30"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSavePosition}
+                disabled={savingPos}
+                className="px-5 py-3 rounded-xl bg-white text-slate-900 font-bold text-sm flex items-center gap-2 disabled:opacity-60"
+              >
+                {savingPos && <Loader2 className="w-4 h-4 animate-spin" />}
+                Salvar foco
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {(!isOnline || usingOfflineData) && (
