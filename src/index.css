@@ -92,3 +92,7 @@
 /* Identidade do app para o kit de padronização (cores próprias de cada app) */
 :root { --sh-primary: #043BA0; --sh-on-primary: #ffffff; }
 :root[data-theme="dark"] { --sh-primary: #4A71BA; --sh-on-primary: #ffffff; }
+
+/* Divisão de voz: rótulo "TENOR:" etc. Escuro sobre fundo claro; no tema escuro usa o tom pastel da voz. */
+.voice-label { color: var(--voice-ink); }
+:root[data-theme="dark"] .voice-label { color: var(--voice-hl); }
