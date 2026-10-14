@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Mic, Target, Eye, EyeOff } from 'lucide-react';
+import { X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Mic, Target, Eye, EyeOff, Filter } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
 import { Modal, ModalActions } from '../kit';
 import {
@@ -69,7 +69,7 @@ export function VoiceChips({
   comments
 }: {
   /** Botão de mostrar/ocultar os comentários na cifra (só aparece se houver comentários). */
-  comments?: { count: number; shown: boolean; onToggle: () => void };
+  comments?: { count: number; shown: boolean; onToggle: () => void; onFilter?: () => void; filtered?: boolean };
   present: VoiceId[];
   hidden: Set<VoiceId>;
   focusMode: boolean;
@@ -94,6 +94,19 @@ export function VoiceChips({
           }`}
         >
           {comments.shown ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Notas {comments.count}
+        </button>
+      )}
+
+      {comments?.onFilter && (
+        <button
+          onClick={comments.onFilter}
+          title="Escolher quais comentários ver (por título)"
+          aria-label="Filtrar comentários por título"
+          className={`shrink-0 flex items-center rounded-full p-1.5 ${
+            comments.filtered ? 'bg-brand-orange text-white' : 'bg-slate-100 text-slate-600'
+          }`}
+        >
+          <Filter className="w-3.5 h-3.5" />
         </button>
       )}
 

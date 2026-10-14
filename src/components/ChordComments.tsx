@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Eye, EyeOff, Check } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
 import { Modal, ModalActions } from '../kit';
 import {
@@ -211,6 +211,124 @@ function saveHiddenVoices(set: Set<VoiceId>) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Filtro de comentários por título (T2)
+// ---------------------------------------------------------------------------
+
+const TITLE_FILTER_PREFIX = 'chord_comment_titles_off:';
+
+/** Chave normalizada do título: sem acentos, minúsculas, espaços das pontas/duplicados removidos. "" = sem título. */
+export function normTitle(t: string | null | undefined): string {
+  return (t || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export interface TitleOption {
+  key: string;
+  label: string;
+  count: number;
+}
+
+/** Guardamos só os títulos DESMARCADOS por cifra: o padrão é "todos selecionados" e títulos novos entram marcados. */
+function loadTitlesOff(chordId: string): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TITLE_FILTER_PREFIX + chordId) || '[]');
+    return new Set((Array.isArray(raw) ? raw : []).filter((x: unknown) => typeof x === 'string') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveTitlesOff(chordId: string, set: Set<string>) {
+  try {
+    if (set.size === 0) localStorage.removeItem(TITLE_FILTER_PREFIX + chordId);
+    else localStorage.setItem(TITLE_FILTER_PREFIX + chordId, JSON.stringify([...set]));
+  } catch {
+    /* ignora */
+  }
+}
+
+/** Chips de títulos (selecionado = comentário aparece no texto) + "Todos" / "Nenhum". */
+function TitleFilterChips({
+  titles,
+  off,
+  onToggle,
+  onAll,
+  onNone
+}: {
+  titles: TitleOption[];
+  off: Set<string>;
+  onToggle: (key: string) => void;
+  onAll: () => void;
+  onNone: () => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <button
+          type="button"
+          onClick={onAll}
+          className="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-bold text-slate-700 active:opacity-70"
+        >
+          Todos
+        </button>
+        <button
+          type="button"
+          onClick={onNone}
+          className="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-bold text-slate-700 active:opacity-70"
+        >
+          Nenhum
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {titles.map(t => {
+          const on = !off.has(t.key);
+          return (
+            <button
+              key={t.key || '__sem_titulo__'}
+              type="button"
+              role="checkbox"
+              aria-checked={on}
+              onClick={() => onToggle(t.key)}
+              className={`max-w-full inline-flex items-center gap-1 rounded-full border-2 px-2.5 py-1 text-xs font-bold ${
+                on ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-400 line-through'
+              }`}
+            >
+              {on && <Check className="w-3 h-3 shrink-0" />}
+              <span className="truncate">{t.label}</span>
+              <span className="opacity-60">{t.count}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Acesso rápido (ícone de filtro no rodapé). */
+function TitleFilterModal(props: {
+  titles: TitleOption[];
+  off: Set<string>;
+  onToggle: (key: string) => void;
+  onAll: () => void;
+  onNone: () => void;
+  onClose: () => void;
+}) {
+  useBackButton(true, props.onClose);
+  return (
+    <Modal open onClose={props.onClose} title="Quais comentários ver">
+      <p className="text-xs text-slate-500 pb-3">
+        Toque nos títulos para mostrar ou esconder os comentários no texto. Os comentários escondidos continuam salvos.
+      </p>
+      <TitleFilterChips titles={props.titles} off={props.off} onToggle={props.onToggle} onAll={props.onAll} onNone={props.onNone} />
+    </Modal>
+  );
+}
+
 export function useChordComments({ chordId, content, enabled, onStartSelect, notify }: UseChordCommentsOptions) {
   const [ctx, setCtx] = useState<AnnotationContext | null>(null);
   const [list, setList] = useState<ChordAnnotation[]>([]);
@@ -226,6 +344,9 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   const [commentsShown, setCommentsShown] = useState<boolean>(loadCommentsShown);
   const [collapsedNotes, setCollapsedNotes] = useState<Set<string>>(loadCollapsedNotes);
   const [form, setForm] = useState<FormState>(null);
+  // T2 — filtro por título (guarda os desmarcados, por cifra)
+  const [titlesOff, setTitlesOff] = useState<Set<string>>(() => loadTitlesOff(chordId));
+  const [titleFilterOpen, setTitleFilterOpen] = useState(false);
 
   // T5b — divisão de voz
   const [voiceList, setVoiceList] = useState<ChordAnnotation[]>([]);
@@ -276,6 +397,8 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     setSylA(null);
     setSylB(null);
     setForm(null);
+    setTitleFilterOpen(false);
+    setTitlesOff(loadTitlesOff(chordId));
     if (!enabled || !chordId) return;
 
     let cancelled = false;
@@ -379,6 +502,59 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   // Comentários vivos (trecho encontrado) — para sublinhado, notas e contagem.
   const liveComments = useMemo(() => resolved.filter(r => r.anchor.status !== 'lost'), [resolved]);
 
+  // Títulos distintos (todas as anotações da cifra, inclusive as de trecho perdido).
+  const titleOptions = useMemo<TitleOption[]>(() => {
+    const map = new Map<string, TitleOption>();
+    for (const a of list) {
+      const key = normTitle(a.title);
+      const cur = map.get(key);
+      if (cur) cur.count += 1;
+      else map.set(key, { key, label: key === '' ? 'Sem título' : (a.title || '').trim(), count: 1 });
+    }
+    return [...map.values()].sort((x, y) => x.label.localeCompare(y.label, 'pt-BR'));
+  }, [list]);
+
+  const updateTitlesOff = useCallback(
+    (updater: (prev: Set<string>) => Set<string>) => {
+      setTitlesOff(prev => {
+        const next = updater(prev);
+        saveTitlesOff(chordId, next);
+        return next;
+      });
+    },
+    [chordId]
+  );
+  const toggleTitle = useCallback(
+    (key: string) =>
+      updateTitlesOff(prev => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    [updateTitlesOff]
+  );
+  const showAllTitles = useCallback(() => updateTitlesOff(() => new Set()), [updateTitlesOff]);
+  const showNoTitles = useCallback(
+    () => updateTitlesOff(() => new Set(titleOptions.map(t => t.key))),
+    [updateTitlesOff, titleOptions]
+  );
+  // Ao salvar/editar um comentário, o título dele volta a ficar visível (senão ele "sumiria" logo após criar).
+  const ensureTitleOn = useCallback(
+    (title: string) => {
+      const key = normTitle(title);
+      setTitlesOff(prev => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        saveTitlesOff(chordId, next);
+        return next;
+      });
+    },
+    [chordId]
+  );
+  const filteredOut = titleOptions.some(t => titlesOff.has(t.key));
+
   const hideNote = useCallback((id: string) => {
     setCollapsedNotes(prev => {
       const next = new Set<string>(prev);
@@ -412,6 +588,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     const notes = new Map<number, NoteView[]>();
     if (commentsShown) {
       for (const { a, anchor } of liveComments) {
+        if (titlesOff.has(normTitle(a.title))) continue;
         for (const sp of spansOnLines(a.payload, anchor.start, anchor.end)) {
           commentSpans.set(sp.line, [...(commentSpans.get(sp.line) || []), { id: a.id, scope: a.scope, from: sp.from, to: sp.to }]);
         }
@@ -450,7 +627,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
       voices: voiceView.marks,
       dim: voiceView.dim
     };
-  }, [enabled, ctx, liveComments, commentsShown, collapsedNotes, selectMode, sylA, sylB, voiceView, hideNote, showNote]);
+  }, [enabled, ctx, liveComments, commentsShown, collapsedNotes, titlesOff, selectMode, sylA, sylB, voiceView, hideNote, showNote]);
 
   const cancelSelect = useCallback(() => {
     setSelectMode(false);
@@ -501,6 +678,11 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         <CommentsPanel
           ctx={ctx!}
           items={resolved}
+          titles={titleOptions}
+          titlesOff={titlesOff}
+          onToggleTitle={toggleTitle}
+          onAllTitles={showAllTitles}
+          onNoTitles={showNoTitles}
           filter={panelFilter}
           fromCache={fromCache}
           loading={loading}
@@ -566,7 +748,13 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         <VoiceChips
           comments={
             liveComments.length > 0
-              ? { count: liveComments.length, shown: commentsShown, onToggle: toggleCommentsShown }
+              ? {
+                  count: liveComments.length,
+                  shown: commentsShown,
+                  onToggle: toggleCommentsShown,
+                  onFilter: () => setTitleFilterOpen(true),
+                  filtered: filteredOut
+                }
               : undefined
           }
           present={voiceView.present}
@@ -576,6 +764,17 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
           onToggle={toggleVoice}
           onFocusMode={toggleFocusMode}
           onPickFocus={setFocusVoice}
+        />
+      )}
+
+      {titleFilterOpen && (
+        <TitleFilterModal
+          titles={titleOptions}
+          off={titlesOff}
+          onToggle={toggleTitle}
+          onAll={showAllTitles}
+          onNone={showNoTitles}
+          onClose={() => setTitleFilterOpen(false)}
         />
       )}
 
@@ -591,6 +790,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
           onClose={() => setForm(null)}
           onSaved={(saved, isNew) => {
             commit(prev => (isNew ? [...prev, saved] : prev.map(x => (x.id === saved.id ? saved : x))));
+            ensureTitleOn(saved.title);
             setForm(null);
             notify(isNew ? 'Comentário salvo.' : 'Comentário atualizado.', 'success');
           }}
@@ -654,6 +854,11 @@ function SelectionBar({ stage, onCancel, onConfirm }: { stage: 0 | 1 | 2; onCanc
 function CommentsPanel({
   ctx,
   items,
+  titles,
+  titlesOff,
+  onToggleTitle,
+  onAllTitles,
+  onNoTitles,
   filter,
   fromCache,
   loading,
@@ -666,6 +871,11 @@ function CommentsPanel({
 }: {
   ctx: AnnotationContext;
   items: { a: ChordAnnotation; anchor: ResolvedAnchor }[];
+  titles: TitleOption[];
+  titlesOff: Set<string>;
+  onToggleTitle: (key: string) => void;
+  onAllTitles: () => void;
+  onNoTitles: () => void;
   filter: string[] | null;
   fromCache: boolean;
   loading: boolean;
@@ -706,6 +916,13 @@ function CommentsPanel({
           </div>
         )}
 
+        {!filter && titles.length > 0 && (
+          <div className="pb-3">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-400 mb-1.5">Mostrar no texto</p>
+            <TitleFilterChips titles={titles} off={titlesOff} onToggle={onToggleTitle} onAll={onAllTitles} onNone={onNoTitles} />
+          </div>
+        )}
+
         <div className="space-y-3">
           {loading && items.length === 0 ? (
             <div className="flex justify-center py-8">
@@ -716,8 +933,10 @@ function CommentsPanel({
           ) : (
             shown.map(({ a, anchor }) => {
               const manage = canManageAnnotation(a, ctx);
+              const titleKey = normTitle(a.title);
+              const hiddenByTitle = titlesOff.has(titleKey);
               return (
-                <div key={a.id} className="rounded-2xl border border-slate-200 p-3">
+                <div key={a.id} className={`rounded-2xl border border-slate-200 p-3 ${hiddenByTitle ? 'opacity-50' : ''}`}>
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-bold text-slate-800 break-words min-w-0">{a.title}</p>
                     <ScopeChip a={a} ctx={ctx} />
@@ -738,7 +957,15 @@ function CommentsPanel({
                   )}
 
                   <div className="mt-2 flex items-center gap-1 flex-wrap">
-                    {anchor.status !== 'lost' && (
+                    {hiddenByTitle && (
+                      <button
+                        onClick={() => onToggleTitle(titleKey)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 text-xs font-bold text-white active:opacity-70"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> Mostrar no texto
+                      </button>
+                    )}
+                    {anchor.status !== 'lost' && !hiddenByTitle && (
                       <button
                         onClick={() => onGo(anchor.start)}
                         className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-bold text-slate-600 active:opacity-70"
