@@ -898,7 +898,14 @@ export default function ChordViewer({
   // Botão "Oração Eucarística": só aparece em cifras cujo título indica
   // Oração Eucarística. Reaproveita o LiturgyViewer já usado no repertório.
   const [showEucharisticPrayer, setShowEucharisticPrayer] = useState(false);
-  const isEucharisticPrayer = /or(a|â)(ç|c)(ã|a)o\s+eucar|^\s*or\.?\s+eucar/i.test(chord.title || '');
+  // Detecta pelo título OU por qualquer tag (category, separadas por vírgula),
+  // ignorando acentos/maiúsculas: "Oração Eucarística", "Orações Eucarísticas",
+  // "Or. Eucaristica", "ORAÇÃO EUCARISTICA"...
+  const isEucharisticPrayer = [chord.title || '', ...(chord.category || '').split(',')].some(t =>
+    /(^|\s)(oracao|oracoes|or\.?)\s+eucar/.test(
+      t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+    )
+  );
 
   const [
     semitones,
