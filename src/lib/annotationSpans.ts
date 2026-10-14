@@ -39,6 +39,8 @@ export interface VoiceSpanOnLine extends SpanOnLine {
 
 export interface CommentSpanOnLine extends SpanOnLine {
   scope: 'user' | 'mission';
+  /** Cor (hex) do sublinhado ondulado: vem da cor do comentário (título ou escolha manual). */
+  color: string;
 }
 
 /** Tudo que o desenho da letra precisa saber (ver LyricSpans.tsx). */
