@@ -1644,8 +1644,6 @@ export default function ChordViewer({
                                 <Mic className="w-5 h-5" />,
                                 comments.openVoices
                               )}
-                            {isEucharisticPrayer &&
-                              item('Oração Eucarística', <BookText className="w-5 h-5" />, () => setShowEucharisticPrayer(true))}
                             {item('Ocultar menus', <Maximize2 className="w-5 h-5" />, () => setImmersive(true))}
                             {!readOnly &&
                               item('Adicionar ao caderno', <PlusSquare className="w-5 h-5" />, () => setShowBookSelector(!showBookSelector), showBookSelector)}
@@ -2071,6 +2069,22 @@ export default function ChordViewer({
           ${comments.voiceChipsVisible ? 'pb-40' : 'pb-24'}
         `}
       >
+        {/* Botão "Oração Eucarística": fica no corpo da cifra (acima da letra),
+            por isso continua visível com "Ocultar menus" ativo. Não entra no
+            PDF (pdfExport não usa este componente). */}
+        {isEucharisticPrayer && (
+          <div className="max-w-4xl mx-auto mb-4">
+            <button
+              type="button"
+              onClick={() => setShowEucharisticPrayer(true)}
+              className="w-full flex items-center justify-center gap-2 bg-brand-orange hover:bg-brand-orange/90 active:scale-[0.99] text-white font-bold rounded-2xl px-5 py-3 shadow-lg transition-all"
+            >
+              <BookText className="w-5 h-5" />
+              Oração Eucarística
+            </button>
+          </div>
+        )}
+
         <div
           className={
             columns
