@@ -96,3 +96,10 @@
 /* Divisão de voz: rótulo "TENOR:" etc. Escuro sobre fundo claro; no tema escuro usa o tom pastel da voz. */
 .voice-label { color: var(--voice-ink); }
 :root[data-theme="dark"] .voice-label { color: var(--voice-hl); }
+
+/* Pré-refrão e Ponte: letra em itálico; acordes continuam retos para
+   manter o alinhamento e a legibilidade (ver sectionMarkers.ts). */
+.section-italic .chord-line,
+.section-italic .chord-line button {
+  font-style: normal;
+}
