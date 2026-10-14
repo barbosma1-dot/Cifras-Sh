@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Mic, Target, Eye, EyeOff, Filter } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
 import { Modal, ModalActions } from '../kit';
@@ -15,6 +15,7 @@ import {
 } from '../lib/chordAnnotations';
 import {
   VOICES,
+  VOICE_HL_TEXT,
   VOICE_TEXT_MAX,
   buildVoicePayload,
   readVoicePayload,
@@ -44,9 +45,13 @@ export function VoiceAltLyrics({ marks }: { marks: VoiceMark[] }) {
       {alts.map(m => {
         const v = voiceDef(m.voice);
         return (
-          <p key={m.id} className="text-[0.8em] leading-snug whitespace-pre-line font-semibold" style={{ color: v.ink }}>
+          <p
+            key={m.id}
+            className="voice-label text-[0.8em] leading-snug whitespace-pre-line font-semibold"
+            style={{ '--voice-ink': v.ink, '--voice-hl': v.hl } as CSSProperties}
+          >
             <span className="text-[0.7em] font-black uppercase tracking-wide mr-1">{v.label}:</span>
-            <span style={{ background: v.hl, borderRadius: 3, padding: '0 2px' }}>{m.text}</span>
+            <span style={{ background: v.hl, color: VOICE_HL_TEXT, borderRadius: 3, padding: '0 2px' }}>{m.text}</span>
           </p>
         );
       })}
@@ -66,8 +71,11 @@ export function VoiceChips({
   onToggle,
   onFocusMode,
   onPickFocus,
+  onHide,
   comments
 }: {
+  /** Esconde a barra inteira (não apaga as divisões; o marca-texto segue o estado de cada voz). */
+  onHide?: () => void;
   /** Botão de mostrar/ocultar os comentários na cifra (só aparece se houver comentários). */
   comments?: { count: number; shown: boolean; onToggle: () => void; onFilter?: () => void; filtered?: boolean };
   present: VoiceId[];
@@ -142,7 +150,32 @@ export function VoiceChips({
           </button>
         );
       })}
+
+      {onHide && (
+        <button
+          onClick={onHide}
+          title="Ocultar esta barra"
+          aria-label="Ocultar a barra de vozes"
+          className="shrink-0 ml-auto flex items-center rounded-full p-1.5 bg-slate-100 text-slate-500 active:opacity-70"
+        >
+          <EyeOff className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
+  );
+}
+
+/** Botão pequeno e discreto para reabrir a barra quando ela está oculta. */
+export function VoiceBarReopen({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Mostrar a barra de vozes e comentários"
+      aria-label="Mostrar a barra de vozes e comentários"
+      className="fixed right-3 bottom-[4.75rem] z-[62] flex items-center justify-center w-8 h-8 rounded-full bg-white/80 border border-slate-200 text-slate-500 shadow backdrop-blur opacity-70 active:opacity-100"
+    >
+      <Mic className="w-4 h-4" />
+    </button>
   );
 }
 
@@ -159,10 +192,15 @@ export function VoicePanel({
   onNew,
   onGo,
   onEdit,
-  onDelete
+  onDelete,
+  barVisible,
+  onToggleBar
 }: {
   ctx: AnnotationContext;
   items: { a: ChordAnnotation; anchor: ResolvedAnchor }[];
+  /** Barra de chips de voz visível no rodapé? */
+  barVisible: boolean;
+  onToggleBar: () => void;
   fromCache: boolean;
   loading: boolean;
   onClose: () => void;
@@ -183,6 +221,14 @@ export function VoicePanel({
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-brand-orange text-white font-bold text-sm active:opacity-80"
           >
             <Plus className="w-4 h-4" /> Nova divisão
+          </button>
+          <button
+            onClick={onToggleBar}
+            aria-pressed={barVisible}
+            className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm active:opacity-80"
+          >
+            {barVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {barVisible ? 'Ocultar barra de vozes' : 'Mostrar barra de vozes'}
           </button>
           {fromCache && (
             <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2">

@@ -20,7 +20,7 @@ import {
 } from '../lib/chordAnnotations';
 import { VOICES, readVoicePayload, type VoiceId, type VoiceMark } from '../lib/voiceDivision';
 import { ScopeChip, ScopePicker } from './AnnotationParts';
-import { VoiceAltLyrics, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } from './ChordVoices';
+import { VoiceAltLyrics, VoiceBarReopen, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } from './ChordVoices';
 import {
   isInSelection,
   lastLineOf,
@@ -176,6 +176,16 @@ function loadHiddenVoices(): Set<VoiceId> {
 }
 
 const COMMENTS_SHOWN_KEY = 'chord_comments_shown';
+/** T3 — preferência GLOBAL (vale para todas as cifras): '1' = barra de vozes oculta. */
+const VOICE_BAR_HIDDEN_KEY = 'chord_voice_bar_hidden';
+
+function loadVoiceBarHidden(): boolean {
+  try {
+    return localStorage.getItem(VOICE_BAR_HIDDEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 const COMMENTS_COLLAPSED_KEY = 'chord_comments_collapsed';
 
 function loadCommentsShown(): boolean {
@@ -355,6 +365,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   const [voiceForm, setVoiceForm] = useState<VoiceFormState | null>(null);
   const [selectPurpose, setSelectPurpose] = useState<'comment' | 'voice'>('comment');
   const [hiddenVoices, setHiddenVoices] = useState<Set<VoiceId>>(loadHiddenVoices);
+  const [voiceBarHidden, setVoiceBarHiddenState] = useState<boolean>(loadVoiceBarHidden);
   const [focusMode, setFocusMode] = useState(false);
   const [focusVoice, setFocusVoice] = useState<VoiceId | null>(null);
 
@@ -479,6 +490,16 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     }
     return { present, spans, marks, dim, focusActive };
   }, [voiceResolved, hiddenVoices, focusMode, focusVoice, lines]);
+
+  const setVoiceBarHidden = useCallback((hidden: boolean) => {
+    setVoiceBarHiddenState(hidden);
+    try {
+      if (hidden) localStorage.setItem(VOICE_BAR_HIDDEN_KEY, '1');
+      else localStorage.removeItem(VOICE_BAR_HIDDEN_KEY);
+    } catch {
+      /* ignora */
+    }
+  }, []);
 
   const toggleVoice = (id: VoiceId) => {
     setHiddenVoices(prev => {
@@ -671,6 +692,8 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   };
 
   const available = enabled && !!ctx;
+  // Há algo para a barra mostrar (vozes e/ou comentários)?
+  const hasBar = voiceView.present.length > 0 || liveComments.length > 0;
 
   const ui: ReactNode = available ? (
     <>
@@ -710,6 +733,8 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         <VoicePanel
           ctx={ctx!}
           items={voiceResolved}
+          barVisible={!voiceBarHidden}
+          onToggleBar={() => setVoiceBarHidden(!voiceBarHidden)}
           fromCache={voiceFromCache}
           loading={loading}
           onClose={() => setVoicePanelOpen(false)}
@@ -744,8 +769,11 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
         />
       )}
 
-      {(voiceView.present.length > 0 || liveComments.length > 0) && !selectMode && (
+      {hasBar && !selectMode && voiceBarHidden && <VoiceBarReopen onClick={() => setVoiceBarHidden(false)} />}
+
+      {hasBar && !selectMode && !voiceBarHidden && (
         <VoiceChips
+          onHide={() => setVoiceBarHidden(true)}
           comments={
             liveComments.length > 0
               ? {
@@ -804,8 +832,12 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     count: list.length,
     voiceCount: voiceList.length,
     /** true quando a barra de chips de voz está na tela (o viewer abre espaço no rodapé). */
-    voiceChipsVisible: available && (voiceView.present.length > 0 || liveComments.length > 0) && !selectMode,
-    openVoices: () => setVoicePanelOpen(true),
+    voiceChipsVisible: available && hasBar && !selectMode && !voiceBarHidden,
+    // Abrir o painel pelo menu ⋮ também reexibe a barra.
+    openVoices: () => {
+      setVoiceBarHidden(false);
+      setVoicePanelOpen(true);
+    },
     selectMode,
     decor,
     ui,

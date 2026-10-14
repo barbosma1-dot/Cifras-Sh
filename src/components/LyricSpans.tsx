@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { splitWithSyllables } from '../lib/syllables';
-import { voiceDef } from '../lib/voiceDivision';
+import { VOICE_HL_TEXT, voiceDef } from '../lib/voiceDivision';
 import type { SylDecor } from '../lib/annotationSpans';
 
 /**
@@ -26,6 +26,8 @@ const hlStyle = (colors: string[]): CSSProperties => {
           .join(', ')})`;
   return {
     background,
+    // letra escura sobre o marca-texto claro: contraste bom no tema claro e no escuro
+    color: VOICE_HL_TEXT,
     borderRadius: 3,
     padding: '0 1px',
     margin: '0 -1px',
