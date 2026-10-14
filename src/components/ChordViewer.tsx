@@ -44,6 +44,7 @@ import ChordShapeModal from './ChordShapeModal';
 import { useChordComments, wrapLine, type LineDecor, type NoteView } from './ChordComments';
 import { renderLyric } from './LyricSpans';
 import { Modal } from '../kit';
+import { nextSection, SECTION_END_RE, type SectionKind } from '../lib/sectionMarkers';
 
 // Ícone da "logo" do Spotify (círculo + três ondas), desenhado como SVG
 // próprio — a mesma ideia de usar um ícone de marca pra indicar visualmente
@@ -278,10 +279,11 @@ function processContent(
   const lines =
     content.split('\n');
 
-  let insideChorus = false;
+  let currentSection: SectionKind | null = null;
 
   type LineInfo = {
-    isChorus: boolean;
+    /** Bloco em que a linha está: refrão (negrito), pré-refrão/ponte (itálico). */
+    section: SectionKind | null;
     skip: boolean;
     el: JSX.Element | null;
     /** true = linha só de acordes (a que fica logo acima da letra). */
@@ -306,7 +308,7 @@ function processContent(
 
       if (melodyOption) {
         lineInfos.push({
-          isChorus: false,
+          section: null,
           skip: false,
           el: (
             <div
@@ -360,39 +362,22 @@ function processContent(
           .trim()
           .toLowerCase();
 
-      const isChorusStart =
-        /^(refrão|refrao|coro|chorus)\b/.test(
+      const isSectionEnd =
+        SECTION_END_RE.test(
           strippedLower
         );
 
-      const isChorusEnd =
-        /^(fim|end)\b/.test(
-          strippedLower
+      currentSection =
+        nextSection(
+          currentSection,
+          strippedLower,
+          i > 0 &&
+            lines[i - 1].trim() === ''
         );
 
-      const isOtherSectionLabel =
-        /^(estrofe|verso|intro|solo|ponte|final|instrumental|vocalize|inst|passagem|dedilhado|ritmo)\b\s*:?\s*$/.test(
-          strippedLower
-        );
-
-      const isDoubleBlank =
-        strippedLower === '' &&
-        i > 0 &&
-        lines[i - 1].trim() === '';
-
-      if (isChorusStart) {
-        insideChorus = true;
-      } else if (
-        isChorusEnd ||
-        isOtherSectionLabel ||
-        isDoubleBlank
-      ) {
-        insideChorus = false;
-      }
-
-      if (isChorusEnd) {
+      if (isSectionEnd) {
         lineInfos.push({
-          isChorus: false,
+          section: null,
           skip: true,
           el: null
         });
@@ -400,8 +385,8 @@ function processContent(
         return;
       }
 
-      const isChorus =
-        insideChorus;
+      const section =
+        currentSection;
 
       const hasChordPro =
         line.includes('[') &&
@@ -410,7 +395,7 @@ function processContent(
       if (hasChordPro) {
         if (!showChords) {
           lineInfos.push({
-            isChorus,
+            section,
             skip: false,
             el: (
               <div
@@ -480,7 +465,7 @@ function processContent(
         }
 
         lineInfos.push({
-          isChorus,
+          section,
           skip: false,
           el: (
             <div
@@ -605,7 +590,7 @@ function processContent(
       if (isChordLine) {
         if (!showChords) {
           lineInfos.push({
-            isChorus,
+            section,
             skip: true,
             el: null
           });
@@ -622,7 +607,7 @@ function processContent(
           );
 
         lineInfos.push({
-          isChorus,
+          section,
           skip: false,
           isChordLine: true,
           el: (
@@ -662,7 +647,7 @@ function processContent(
       }
 
       lineInfos.push({
-        isChorus,
+        section,
         skip: false,
         el: (
           <div
@@ -727,13 +712,14 @@ function processContent(
       continue;
     }
 
-    if (info.isChorus) {
+    if (info.section) {
+      const kind = info.section;
       const group:
         JSX.Element[] = [];
 
       while (
         i < lineInfos.length &&
-        lineInfos[i].isChorus
+        lineInfos[i].section === kind
       ) {
         if (
           !lineInfos[i].skip &&
@@ -751,20 +737,20 @@ function processContent(
       if (
         group.length > 0
       ) {
+        // Refrão: negrito + barra laranja. Pré-refrão/ponte: itálico, sem
+        // negrito e com barra lateral fina e discreta (azul / cinza).
+        const cls =
+          kind === 'chorus'
+            ? 'font-bold border-l-4 border-brand-orange bg-orange-50/50 rounded-r-2xl pl-3 pr-3 py-3 my-3'
+            : kind === 'prechorus'
+              ? 'section-italic italic border-l-2 border-brand-blue/50 pl-3 pr-3 py-1 my-3'
+              : 'section-italic italic border-l-2 border-slate-400 pl-3 pr-3 py-1 my-3';
+
         elements.push(
           <div
-            key={`chorus-${groupIdx++}`}
-            className="
-              font-bold
-              border-l-4
-              border-brand-orange
-              bg-orange-50/50
-              rounded-r-2xl
-              pl-3
-              pr-3
-              py-3
-              my-3
-            "
+            key={`${kind}-${groupIdx++}`}
+            data-section={kind}
+            className={cls}
           >
             {group}
           </div>

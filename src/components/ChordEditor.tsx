@@ -10,6 +10,7 @@ import { supabaseUrl } from '../lib/supabase';
 import { useBackButton } from '../hooks/useBackButton';
 import PDFImporter from './PDFImporter';
 import { removeStorageFilesByUrl } from '../lib/storageCleanup';
+import { wrapWithSection, type SectionKind } from '../lib/sectionMarkers';
 
 // Upload resumível (protocolo TUS) para o Storage do Supabase.
 //
@@ -244,6 +245,32 @@ export default function ChordEditor({ chord, onClose, bookId, profile }: ChordEd
   // tocar — sem erro nenhum, só silêncio. Chamar .click() direto contorna isso.
   const audioInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+
+  // Envolve as linhas selecionadas (ou a linha do cursor) com "Rótulo:" ... "Fim".
+  const insertSection = (kind: SectionKind) => {
+    const el = contentRef.current;
+    const start = el ? el.selectionStart : form.content.length;
+    const end = el ? el.selectionEnd : form.content.length;
+    const r = wrapWithSection(form.content, start, end, kind);
+    setForm(prev => ({ ...prev, content: r.text }));
+    requestAnimationFrame(() => {
+      const t = contentRef.current;
+      if (!t) return;
+      t.focus();
+      t.setSelectionRange(r.selStart, r.selEnd);
+    });
+  };
+
+  // Atalhos: Ctrl/Cmd + Alt + R (Refrão), P (Pré-refrão), B (Ponte).
+  const handleContentKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!(e.ctrlKey || e.metaKey) || !e.altKey) return;
+    const kind: SectionKind | null =
+      e.code === 'KeyR' ? 'chorus' : e.code === 'KeyP' ? 'prechorus' : e.code === 'KeyB' ? 'bridge' : null;
+    if (!kind) return;
+    e.preventDefault();
+    insertSection(kind);
+  };
 
   // Chave que muda a cada uso — força o React a desmontar e criar um <input>
   // NOVO a cada seleção, em vez de reaproveitar o mesmo elemento DOM. Em
@@ -342,7 +369,7 @@ Sua missão é (1) identificar título, artista e tom da música, se estiverem e
    Exemplo de SAÍDA ERRADA (proibido — barras "|" fora de colchete):
      [D] | [%] | [D/C] | [%] | [D/F#] - [G] - [A] | [G/B] | [A] |
 3. LIMPEZA: Remova linhas de tablaturas puras (que usam ---, |---, etc.), números de página e anotações manuais que não fazem parte da cifra.
-4. ESTRUTURA: Marque o início do refrão com uma linha contendo apenas "Refrão:" e feche o bloco com uma linha contendo apenas "Fim" logo após a última linha do refrão. NÃO use {soc}/{eoc} nem tags como [REFRÃO] — o app só reconhece o padrão "Refrão:" / "Fim". Para outras seções, use rótulos simples em linha própria, como "Intro", "Estrofe", "Ponte", "Solo".
+4. ESTRUTURA: Marque o início do refrão com uma linha contendo apenas "Refrão:" e feche o bloco com uma linha contendo apenas "Fim" logo após a última linha do refrão. NÃO use {soc}/{eoc} nem tags como [REFRÃO] — o app só reconhece o padrão "Refrão:" / "Fim". Do mesmo modo, se a cifra tiver PRÉ-REFRÃO ou PONTE CANTADA (com letra), marque o início com uma linha contendo apenas "Pré-refrão:" ou "Ponte:" e feche com uma linha "Fim" logo após a última linha do bloco (o app os exibe em itálico). NÃO coloque acordes na mesma linha do rótulo desses blocos; uma ponte puramente instrumental continua como linha única, ex.: "Ponte: C G Am". Para outras seções, use rótulos simples em linha própria, como "Intro", "Estrofe", "Solo".
 5. CIFRA SEM LETRA (GRADE DE ACORDES POR COMPASSO): Se a cifra inteira for apenas uma sequência de acordes por compasso, sem nenhuma letra (comum em cifras de banda/instrumental) — ex.: "D/F# | % | G | Gm |" ou "-a- F | C | Am | G |" — preserve fielmente cada linha de compasso tal como está, mas SEMPRE aplicando a REGRA DE COLCHETE da regra 2 acima. Preserve os rótulos de seção como estão (ex.: "-Intro-", "-a1-", "-chorus-", "-c bridge-", "-fim-").
 6. TÍTULO/ARTISTA/TOM: Se houver um título, nome de artista/autor/ministério, ou indicação de tom (Ex: "Tom: G") escritos no início do texto colado, separados da letra, extraia-os para os campos correspondentes. Se não houver essa informação explícita no texto, devolva string vazia — NÃO invente nem deduza a partir da letra.
 
@@ -410,6 +437,10 @@ ${form.content}`;
         if (!trimmed) return false;
         
         const lowercase = trimmed.toLowerCase();
+
+        // Rótulos de bloco (Refrão:/Pré-refrão:/Ponte: sozinhos na linha) nunca são
+        // linha de acordes — senão o formatador local engoliria o marcador.
+        if (/^(refr[aã]o|coro|chorus|pr[eé][-\s]?refr[aã]o|ponte)\s*:\s*$/i.test(lowercase)) return false;
         
         // Se começar com uma seção conhecida, é quase certamente uma linha instrumental/acordes
         const isKnownSection = /^(intro|solo|ponte|final|vocalize|inst|passagem|instrumental|dedilhado|ritmo):/i.test(lowercase);
@@ -1245,7 +1276,36 @@ ${form.content}`;
                   </button>
                 </div>
               </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Marcar trecho:</span>
+                <button
+                  type="button"
+                  onClick={() => insertSection('chorus')}
+                  title="Envolve as linhas selecionadas com Refrão: ... Fim (Ctrl+Alt+R)"
+                  className="text-[11px] px-3 py-1 rounded-lg font-black border border-brand-orange/40 text-brand-orange bg-orange-50 hover:bg-brand-orange hover:text-white transition-all"
+                >
+                  Refrão
+                </button>
+                <button
+                  type="button"
+                  onClick={() => insertSection('prechorus')}
+                  title="Envolve as linhas selecionadas com Pré-refrão: ... Fim, exibido em itálico (Ctrl+Alt+P)"
+                  className="text-[11px] px-3 py-1 rounded-lg font-black italic border border-brand-blue/40 text-brand-blue bg-blue-50 hover:bg-brand-blue hover:text-white transition-all"
+                >
+                  Pré-refrão
+                </button>
+                <button
+                  type="button"
+                  onClick={() => insertSection('bridge')}
+                  title="Envolve as linhas selecionadas com Ponte: ... Fim, exibido em itálico (Ctrl+Alt+B)"
+                  className="text-[11px] px-3 py-1 rounded-lg font-black italic border border-slate-300 text-slate-600 bg-slate-50 hover:bg-slate-600 hover:text-white transition-all"
+                >
+                  Ponte
+                </button>
+              </div>
               <textarea
+                ref={contentRef}
+                onKeyDown={handleContentKeyDown}
                 required
                 className="w-full h-[700px] px-4 py-4 border border-slate-200 rounded-2xl font-mono text-base leading-relaxed resize-none focus:ring-2 focus:ring-brand-orange/20 outline-none overflow-y-auto shadow-inner bg-slate-50/5"
                 placeholder="Cole aqui a cifra ou digite..."
