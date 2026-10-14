@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Eye, EyeOff, Check } from 'lucide-react';
+import { MessageSquare, X, Plus, Pencil, Trash2, Loader2, LocateFixed, AlertTriangle, Eye, EyeOff, Check, User, Users } from 'lucide-react';
 import { useBackButton } from '../hooks/useBackButton';
 import { Modal, ModalActions } from '../kit';
 import {
@@ -19,6 +19,15 @@ import {
   type ResolvedAnchor
 } from '../lib/chordAnnotations';
 import { VOICES, readVoicePayload, type VoiceId, type VoiceMark } from '../lib/voiceDivision';
+import {
+  COMMENT_COLORS,
+  buildTitleColors,
+  colorById,
+  normTitle,
+  readColorId,
+  titleColor,
+  type CommentColor
+} from '../lib/commentColors';
 import { ScopeChip, ScopePicker } from './AnnotationParts';
 import { VoiceAltLyrics, VoiceBarReopen, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } from './ChordVoices';
 import {
@@ -63,6 +72,8 @@ export interface NoteView {
   scope: 'user' | 'mission';
   /** true = o texto está recolhido (só o botão pequeno aparece). */
   collapsed: boolean;
+  /** Cor do cartão (id da paleta): manual (payload.color) ou a do título. */
+  colorId: string;
   /** Primeira linha do trecho comentado (o cartão aparece acima dela). */
   line: number;
   /** Posição na ordem de criação (para empilhar na ordem certa). */
@@ -84,12 +95,8 @@ export interface LineDecor {
   dim: Set<number> | null;
 }
 
-const NOTE_CLASS: Record<'user' | 'mission', string> = {
-  user: 'border-amber-400 bg-amber-50',
-  mission: 'border-brand-blue bg-sky-50'
-};
-
 function NoteCard({ n, d, dim }: { n: NoteView; d: LineDecor; dim: boolean }) {
+  const pal = colorById(n.colorId) || COMMENT_COLORS[0];
   if (n.collapsed) {
     return (
       <button
@@ -99,6 +106,7 @@ function NoteCard({ n, d, dim }: { n: NoteView; d: LineDecor; dim: boolean }) {
         aria-label={`Mostrar comentário: ${n.title}`}
         className={`mt-1 mb-1 mr-1 inline-flex max-w-full items-center gap-1 rounded-full bg-slate-800 text-white text-[10px] font-bold leading-none px-2 py-1.5 shadow active:opacity-70 ${dim ? 'opacity-30' : ''}`}
       >
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: pal.main }} />
         <MessageSquare className="w-3 h-3 shrink-0" />
         <span className="truncate">{n.title || 'Comentário'}</span>
         <Eye className="w-3 h-3 shrink-0 opacity-70" />
@@ -108,18 +116,29 @@ function NoteCard({ n, d, dim }: { n: NoteView; d: LineDecor; dim: boolean }) {
   return (
     <div
       data-note-id={n.id}
-      className={`mt-1 mb-2 rounded-xl border-l-4 px-2.5 py-1.5 text-[0.82em] leading-snug text-slate-800 ${NOTE_CLASS[n.scope]} ${dim ? 'opacity-30' : ''}`}
+      className={`mt-1 mb-2 rounded-xl border-l-4 px-2.5 py-1.5 text-[0.82em] leading-snug ${dim ? 'opacity-30' : ''}`}
+      style={{ borderLeftColor: pal.main, background: pal.bg, color: pal.ink }}
     >
       <div className="flex items-start gap-1.5">
         <div className="min-w-0 flex-1">
-          {n.title && <p className="font-black break-words">{n.title}</p>}
+          <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
+            {n.title && <p className="font-black break-words">{n.title}</p>}
+            {/* "Só eu" / "Missão" é só um selo: a cor vem do título */}
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[0.72em] font-bold uppercase tracking-wide bg-white/70"
+              style={{ borderColor: pal.main, color: pal.ink }}
+            >
+              {n.scope === 'mission' ? <Users className="w-3 h-3" /> : <User className="w-3 h-3" />}
+              {n.scope === 'mission' ? 'Missão' : 'Só eu'}
+            </span>
+          </div>
           {n.body && <p className="whitespace-pre-wrap break-words">{n.body}</p>}
         </div>
         <button
           type="button"
           onClick={() => d.onNoteEdit(n.id)}
           aria-label="Abrir comentário no painel"
-          className="shrink-0 p-1 -mt-0.5 rounded-full text-slate-400 active:bg-black/10"
+          className="shrink-0 p-1 -mt-0.5 rounded-full opacity-60 active:bg-black/10"
         >
           <Pencil className="w-3.5 h-3.5" />
         </button>
@@ -127,7 +146,7 @@ function NoteCard({ n, d, dim }: { n: NoteView; d: LineDecor; dim: boolean }) {
           type="button"
           onClick={() => d.onNoteHide(n.id)}
           aria-label="Ocultar este comentário"
-          className="shrink-0 p-1 -mt-0.5 -mr-1 rounded-full text-slate-500 active:bg-black/10"
+          className="shrink-0 p-1 -mt-0.5 -mr-1 rounded-full opacity-60 active:bg-black/10"
         >
           <EyeOff className="w-3.5 h-3.5" />
         </button>
@@ -240,20 +259,12 @@ function saveHiddenVoices(set: Set<VoiceId>) {
 
 const TITLE_FILTER_PREFIX = 'chord_comment_titles_off:';
 
-/** Chave normalizada do título: sem acentos, minúsculas, espaços das pontas/duplicados removidos. "" = sem título. */
-export function normTitle(t: string | null | undefined): string {
-  return (t || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 export interface TitleOption {
   key: string;
   label: string;
   count: number;
+  /** Cor automática do título (id da paleta). */
+  colorId: string;
 }
 
 /** Guardamos só os títulos DESMARCADOS por cifra: o padrão é "todos selecionados" e títulos novos entram marcados. */
@@ -310,6 +321,7 @@ function TitleFilterChips({
       <div className="flex flex-wrap gap-1.5">
         {titles.map(t => {
           const on = !off.has(t.key);
+          const pal = colorById(t.colorId) || COMMENT_COLORS[0];
           return (
             <button
               key={t.key || '__sem_titulo__'}
@@ -317,10 +329,12 @@ function TitleFilterChips({
               role="checkbox"
               aria-checked={on}
               onClick={() => onToggle(t.key)}
-              className={`max-w-full inline-flex items-center gap-1 rounded-full border-2 px-2.5 py-1 text-xs font-bold ${
-                on ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-400 line-through'
+              className={`max-w-full inline-flex items-center gap-1.5 rounded-full border-2 px-2.5 py-1 text-xs font-bold ${
+                on ? '' : 'bg-white border-slate-300 text-slate-400 line-through'
               }`}
+              style={on ? { background: pal.bg, borderColor: pal.main, color: pal.ink } : undefined}
             >
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: pal.main, opacity: on ? 1 : 0.45 }} />
               {on && <Check className="w-3 h-3 shrink-0" />}
               <span className="truncate">{t.label}</span>
               <span className="opacity-60">{t.count}</span>
@@ -536,6 +550,15 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
   // Comentários vivos (trecho encontrado) — para sublinhado, notas e contagem.
   const liveComments = useMemo(() => resolved.filter(r => r.anchor.status !== 'lost'), [resolved]);
 
+  // T5 — cor por título (determinística; ver lib/commentColors.ts).
+  const titleColorMap = useMemo(() => buildTitleColors(list), [list]);
+  /** Cor do comentário: escolha manual (payload.color) ou a do título. */
+  const colorOf = useCallback(
+    (a: ChordAnnotation): CommentColor => colorById(readColorId(a.payload)) || titleColor(titleColorMap, a.title),
+    [titleColorMap]
+  );
+  const autoColorFor = useCallback((title: string): CommentColor => titleColor(titleColorMap, title), [titleColorMap]);
+
   // Títulos distintos (todas as anotações da cifra, inclusive as de trecho perdido).
   const titleOptions = useMemo<TitleOption[]>(() => {
     const map = new Map<string, TitleOption>();
@@ -543,10 +566,16 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
       const key = normTitle(a.title);
       const cur = map.get(key);
       if (cur) cur.count += 1;
-      else map.set(key, { key, label: key === '' ? 'Sem título' : (a.title || '').trim(), count: 1 });
+      else
+        map.set(key, {
+          key,
+          label: key === '' ? 'Sem título' : (a.title || '').trim(),
+          count: 1,
+          colorId: titleColor(titleColorMap, a.title).id
+        });
     }
     return [...map.values()].sort((x, y) => x.label.localeCompare(y.label, 'pt-BR'));
-  }, [list]);
+  }, [list, titleColorMap]);
 
   const updateTitlesOff = useCallback(
     (updater: (prev: Set<string>) => Set<string>) => {
@@ -628,7 +657,10 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
       for (const [order, { a, anchor }] of byCreation.entries()) {
         if (titlesOff.has(normTitle(a.title))) continue;
         for (const sp of spansOnLines(a.payload, anchor.start, anchor.end)) {
-          commentSpans.set(sp.line, [...(commentSpans.get(sp.line) || []), { id: a.id, scope: a.scope, from: sp.from, to: sp.to }]);
+          commentSpans.set(sp.line, [
+            ...(commentSpans.get(sp.line) || []),
+            { id: a.id, scope: a.scope, from: sp.from, to: sp.to, color: colorOf(a).main }
+          ]);
         }
         const first = firstLineOf(a.payload, anchor.start, anchor.end);
         notes.set(first, [
@@ -639,6 +671,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
             body: a.body || '',
             scope: a.scope,
             collapsed: collapsedNotes.has(a.id),
+            colorId: colorOf(a).id,
             line: first,
             order
           }
@@ -673,7 +706,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
       voices: voiceView.marks,
       dim: voiceView.dim
     };
-  }, [enabled, ctx, liveComments, commentsShown, collapsedNotes, titlesOff, selectMode, sylA, sylB, voiceView, hideNote, showNote]);
+  }, [enabled, ctx, liveComments, commentsShown, collapsedNotes, titlesOff, colorOf, selectMode, sylA, sylB, voiceView, hideNote, showNote]);
 
   const cancelSelect = useCallback(() => {
     setSelectMode(false);
@@ -729,6 +762,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
           ctx={ctx!}
           items={resolved}
           titles={titleOptions}
+          colorOf={colorOf}
           titlesOff={titlesOff}
           onToggleTitle={toggleTitle}
           onAllTitles={showAllTitles}
@@ -841,6 +875,7 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
           form={form}
           lines={lines}
           chordId={chordId}
+          autoColorFor={autoColorFor}
           anchor={form.mode === 'edit' ? anchorById.get(form.annotation.id) : undefined}
           onClose={() => setForm(null)}
           onSaved={(saved, isNew) => {
@@ -914,6 +949,7 @@ function CommentsPanel({
   ctx,
   items,
   titles,
+  colorOf,
   titlesOff,
   onToggleTitle,
   onAllTitles,
@@ -931,6 +967,7 @@ function CommentsPanel({
   ctx: AnnotationContext;
   items: { a: ChordAnnotation; anchor: ResolvedAnchor }[];
   titles: TitleOption[];
+  colorOf: (a: ChordAnnotation) => CommentColor;
   titlesOff: Set<string>;
   onToggleTitle: (key: string) => void;
   onAllTitles: () => void;
@@ -995,7 +1032,11 @@ function CommentsPanel({
               const titleKey = normTitle(a.title);
               const hiddenByTitle = titlesOff.has(titleKey);
               return (
-                <div key={a.id} className={`rounded-2xl border border-slate-200 p-3 ${hiddenByTitle ? 'opacity-50' : ''}`}>
+                <div
+                  key={a.id}
+                  className={`rounded-2xl border border-slate-200 border-l-[6px] p-3 ${hiddenByTitle ? 'opacity-50' : ''}`}
+                  style={{ borderLeftColor: colorOf(a).main }}
+                >
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-bold text-slate-800 break-words min-w-0">{a.title}</p>
                     <ScopeChip a={a} ctx={ctx} />
@@ -1083,6 +1124,7 @@ function CommentForm({
   form,
   lines,
   chordId,
+  autoColorFor,
   anchor,
   onClose,
   onSaved
@@ -1091,6 +1133,8 @@ function CommentForm({
   form: Exclude<FormState, null>;
   lines: string[];
   chordId: string;
+  /** Cor automática que o título digitado terá. */
+  autoColorFor: (title: string) => CommentColor;
   anchor?: ResolvedAnchor;
   onClose: () => void;
   onSaved: (saved: ChordAnnotation, isNew: boolean) => void;
@@ -1104,6 +1148,8 @@ function CommentForm({
   const [body, setBody] = useState(editing?.body || '');
   const [scope, setScope] = useState<AnnotationScope>(editing?.scope || 'user');
   const [missionId, setMissionId] = useState<string>(editing?.mission_id || writableMissions[0]?.id || '');
+  // null = automática (cor do título); senão id da paleta, guardado em payload.color
+  const [colorId, setColorId] = useState<string | null>(() => readColorId(editing?.payload));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -1122,7 +1168,10 @@ function CommentForm({
     try {
       const mission_id = scope === 'mission' ? missionId : null;
       if (editing) {
-        const saved = await updateAnnotation(editing.id, { title, body, scope, mission_id });
+        // payload inteiro é regravado: preserva spans/sel e só mexe em `color`
+        const { color: _old, ...rest } = (editing.payload || {}) as Record<string, unknown>;
+        const payload = colorId ? { ...rest, color: colorId } : rest;
+        const saved = await updateAnnotation(editing.id, { title, body, scope, mission_id, payload });
         onSaved(saved, false);
       } else {
         const saved = await createAnnotation(ctx.userId, {
@@ -1134,7 +1183,7 @@ function CommentForm({
           line_start: start,
           line_end: end,
           excerpt,
-          payload: form.mode === 'new' ? { spans: form.spans, sel: form.sel } : undefined
+          payload: form.mode === 'new' ? { spans: form.spans, sel: form.sel, ...(colorId ? { color: colorId } : {}) } : undefined
         });
         onSaved(saved, true);
       }
@@ -1183,6 +1232,40 @@ function CommentForm({
           placeholder="Detalhes para quem for tocar ou cantar"
           className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand-orange resize-none"
         />
+
+        <label className="block mt-4 text-xs font-black uppercase tracking-wide text-slate-400">Cor</label>
+        <div className="mt-1 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Cor do comentário">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={colorId === null}
+            onClick={() => setColorId(null)}
+            className={`flex items-center gap-1.5 rounded-full border-2 px-2.5 py-1 text-xs font-bold ${
+              colorId === null ? 'border-slate-800 text-slate-800' : 'border-slate-200 text-slate-500'
+            }`}
+          >
+            <span className="w-3.5 h-3.5 rounded-full" style={{ background: autoColorFor(title).main }} />
+            Automática
+          </button>
+          {COMMENT_COLORS.map(c => (
+            <button
+              key={c.id}
+              type="button"
+              role="radio"
+              aria-checked={colorId === c.id}
+              aria-label={c.label}
+              title={c.label}
+              onClick={() => setColorId(c.id)}
+              className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${
+                colorId === c.id ? 'border-slate-800' : 'border-transparent'
+              }`}
+              style={{ background: c.main }}
+            >
+              {colorId === c.id && <Check className="w-4 h-4 text-white" />}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-xs text-slate-400">Automática: o mesmo título sempre tem a mesma cor.</p>
 
         <ScopePicker ctx={ctx} scope={scope} onScope={setScope} missionId={missionId} onMission={setMissionId} />
 

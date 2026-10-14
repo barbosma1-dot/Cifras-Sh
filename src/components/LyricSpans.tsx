@@ -15,8 +15,6 @@ import type { SylDecor } from '../lib/annotationSpans';
  * Sem `syl` (ou sem nada a mostrar) devolve o texto puro, igual ao de antes.
  */
 
-const COMMENT_COLOR = { user: '#f59e0b', mission: '#2563eb' } as const;
-
 const hlStyle = (colors: string[]): CSSProperties => {
   const background =
     colors.length === 1
@@ -99,11 +97,10 @@ export function renderLyric(text: string, base: number, line: number, syl: SylDe
       Object.assign(style, hlStyle(ids.map(id => voiceDef(id).hl)));
     }
     if (cHere.length) {
-      const scope = cHere.some(m => m.scope === 'mission') ? 'mission' : 'user';
       Object.assign(style, {
         textDecorationLine: 'underline',
         textDecorationStyle: 'wavy',
-        textDecorationColor: COMMENT_COLOR[scope],
+        textDecorationColor: cHere[0].color,
         textDecorationThickness: '1.5px',
         textUnderlineOffset: '3px'
       } as CSSProperties);
