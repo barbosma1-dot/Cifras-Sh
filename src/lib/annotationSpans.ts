@@ -137,6 +137,13 @@ export function spansOnLines(payload: unknown, start: number, end: number): { li
   return spans.map(s => ({ line: start + s.dl, from: s.f, to: s.t }));
 }
 
+/** Primeira linha que a anotação realmente marca (acima dela aparece o cartão do comentário). */
+export function firstLineOf(payload: unknown, start: number, _end: number): number {
+  const spans = readSpans(payload);
+  if (!spans || spans.length === 0) return start;
+  return start + Math.min(...spans.map(s => s.dl));
+}
+
 /** Última linha que a anotação realmente marca (onde aparece a nota/letra da voz). */
 export function lastLineOf(payload: unknown, start: number, end: number): number {
   const spans = readSpans(payload);
