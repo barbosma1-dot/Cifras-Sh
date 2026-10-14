@@ -28,6 +28,13 @@ export const VOICES: VoiceDef[] = [
   { id: 'feminino', label: 'Feminino', color: '#ec4899', ink: '#be185d', hl: '#f9a8d4' } // rosa
 ];
 
+/**
+ * Cor do TEXTO sobre o marca-texto (`hl`). O marca-texto é sempre claro, então a letra
+ * fica quase preta tanto no tema claro quanto no escuro (no escuro a letra normal é
+ * branca e ficava ilegível sobre o pastel).
+ */
+export const VOICE_HL_TEXT = '#0b1220';
+
 const BY_ID = new Map(VOICES.map(v => [v.id, v]));
 
 export function voiceDef(id: VoiceId): VoiceDef {
