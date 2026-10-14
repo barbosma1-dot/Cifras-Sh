@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import { Chord } from '../types';
 import { format } from 'date-fns';
+import { nextSection, isItalicSection, type SectionKind } from './sectionMarkers';
 
 // --------------------------------------------------------------------------------
 // Geração de PDF 100% nativa (texto vetorial do jsPDF).
@@ -414,6 +415,10 @@ export const exportChordsToPDF = async (
 
     let idx = 0;
 
+    // Pré-refrão/Ponte (blocos "Rótulo:" ... "Fim") saem em itálico, como na tela.
+    let section: SectionKind | null = null;
+    let lyricStyle: 'normal' | 'italic' = 'normal';
+
     while (
       idx < lines.length
     ) {
@@ -424,6 +429,9 @@ export const exportChordsToPDF = async (
         rawLine.trim();
 
       if (!trimmed) {
+        section = nextSection(section, '', idx > 0 && lines[idx - 1].trim() === '');
+        lyricStyle = isItalicSection(section) ? 'italic' : 'normal';
+
         y += 2.2;
 
         if (
@@ -436,6 +444,13 @@ export const exportChordsToPDF = async (
 
         continue;
       }
+
+      section = nextSection(
+        section,
+        rawLine.replace(/\[.*?\]/g, '').trim().toLowerCase(),
+        idx > 0 && lines[idx - 1].trim() === ''
+      );
+      lyricStyle = isItalicSection(section) ? 'italic' : 'normal';
 
       const hasChordPro =
         rawLine.includes('[') &&
@@ -494,7 +509,7 @@ export const exportChordsToPDF = async (
 
             doc.setFont(
               'helvetica',
-              'normal'
+              lyricStyle
             );
 
             doc.setFontSize(
@@ -595,7 +610,7 @@ export const exportChordsToPDF = async (
 
           doc.setFont(
             'courier',
-            'normal'
+            lyricStyle
           );
 
           doc.setFontSize(
@@ -619,7 +634,7 @@ export const exportChordsToPDF = async (
 
           doc.setFont(
             'helvetica',
-            'normal'
+            lyricStyle
           );
 
           for (
@@ -694,7 +709,7 @@ export const exportChordsToPDF = async (
 
       doc.setFont(
         'helvetica',
-        'normal'
+        lyricStyle
       );
 
       doc.setFontSize(
