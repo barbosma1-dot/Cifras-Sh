@@ -29,7 +29,9 @@ import {
   Share2,
   MoreVertical,
   MessageSquare,
-  Mic
+  Mic,
+  ChevronsDown,
+  ChevronRight
 } from 'lucide-react';
 import { Chord, ChordBook } from '../types';
 import {
@@ -39,7 +41,7 @@ import {
 import { supabase } from '../lib/supabase';
 import LiturgyViewer from './LiturgyViewer';
 import ChordShapeModal from './ChordShapeModal';
-import { useChordComments, wrapLine, type LineDecor } from './ChordComments';
+import { useChordComments, wrapLine, type LineDecor, type NoteView } from './ChordComments';
 import { renderLyric } from './LyricSpans';
 import { Modal } from '../kit';
 
@@ -282,6 +284,8 @@ function processContent(
     isChorus: boolean;
     skip: boolean;
     el: JSX.Element | null;
+    /** true = linha só de acordes (a que fica logo acima da letra). */
+    isChordLine?: boolean;
   };
 
   const lineInfos:
@@ -620,6 +624,7 @@ function processContent(
         lineInfos.push({
           isChorus,
           skip: false,
+          isChordLine: true,
           el: (
             <div
               key={i}
@@ -682,8 +687,23 @@ function processContent(
 
   // Uma entrada em lineInfos por linha do conteúdo, então o índice == nº da linha.
   if (lineDecor) {
+    // Os comentários ficam ACIMA do trecho. Se a linha inicial é uma letra com linha
+    // de acordes logo acima (visível), o cartão sobe para antes dos acordes — nunca
+    // entre acorde e letra. Várias notas no mesmo ponto seguem a ordem de criação.
+    let decorForWrap: LineDecor = lineDecor;
+    if (lineDecor.notes.size > 0) {
+      const moved = new Map<number, NoteView[]>();
+      lineDecor.notes.forEach((arr, k) => {
+        const prev = lineInfos[k - 1];
+        const cur = lineInfos[k];
+        const target = prev && prev.isChordLine && prev.el && !(cur && cur.isChordLine) ? k - 1 : k;
+        moved.set(target, [...(moved.get(target) || []), ...arr]);
+      });
+      moved.forEach(arr => arr.sort((x, y) => x.order - y.order));
+      decorForWrap = { ...lineDecor, notes: moved };
+    }
     lineInfos.forEach((info, idx) => {
-      if (info.el) info.el = wrapLine(info.el, idx, lineDecor);
+      if (info.el) info.el = wrapLine(info.el, idx, decorForWrap);
     });
   }
 
@@ -1028,6 +1048,23 @@ export default function ChordViewer({
     onStartSelect: () => setAutoScrollOn(false),
     notify: (message, type) => setNotification({ message, type })
   });
+  // Controle dobrável: dobrado vira só um botão redondo (lembrado entre sessões).
+  const [autoScrollFolded, setAutoScrollFolded] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('chord_autoscroll_folded') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleAutoScrollFolded = () =>
+    setAutoScrollFolded(f => {
+      try {
+        localStorage.setItem('chord_autoscroll_folded', f ? '0' : '1');
+      } catch {
+        /* ignora */
+      }
+      return !f;
+    });
   const autoScrollLevelRef = useRef(autoScrollLevel);
   useEffect(() => {
     autoScrollLevelRef.current = autoScrollLevel;
@@ -2170,62 +2207,67 @@ export default function ChordViewer({
       </div>
 
       {/* Controle flutuante da auto rolagem: play/pausa + velocidade (1–10).
-          Fica visível também no modo imersivo (é quando mais se usa, com o
-          instrumento na mão). Abaixo do botão de fechar mídias (z-[70]). */}
-      <div
-        className="
-          fixed
-          bottom-4
-          left-1/2
-          -translate-x-1/2
-          z-[60]
-          flex
-          items-center
-          gap-1
-          p-1
-          rounded-full
-          bg-slate-900/85
-          text-white
-          shadow-lg
-          backdrop-blur
-        "
-        role="group"
-        aria-label="Rolagem automática"
-      >
+          Canto inferior direito, laranja com letras brancas, e DOBRÁVEL: dobrado
+          vira um botão redondo (pulsa enquanto está rolando). Fica visível
+          também no modo imersivo. Abaixo do botão de fechar mídias (z-[70]). */}
+      {autoScrollFolded ? (
         <button
-          onClick={() => setAutoScrollOn(on => !on)}
-          aria-label={autoScrollOn ? 'Pausar rolagem automática' : 'Iniciar rolagem automática'}
-          title={autoScrollOn ? 'Pausar rolagem' : 'Rolar automaticamente'}
-          className={`w-11 h-11 flex items-center justify-center rounded-full transition-colors ${
-            autoScrollOn ? 'bg-brand-orange text-white' : 'hover:bg-white/15'
+          type="button"
+          onClick={toggleAutoScrollFolded}
+          aria-label="Abrir controle de rolagem automática"
+          title="Rolagem automática"
+          className={`fixed bottom-4 right-3 z-[60] w-12 h-12 flex items-center justify-center rounded-full bg-brand-orange text-white shadow-lg active:opacity-80 ${
+            autoScrollOn ? 'ring-4 ring-brand-orange/40 animate-pulse' : ''
           }`}
         >
-          {autoScrollOn ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+          <ChevronsDown className="w-6 h-6" />
         </button>
-        <button
-          onClick={() => setAutoScrollLevel(l => Math.max(AUTO_SCROLL_MIN, l - 1))}
-          disabled={autoScrollLevel <= AUTO_SCROLL_MIN}
-          aria-label="Rolagem mais lenta"
-          className="w-9 h-11 flex items-center justify-center rounded-full text-lg font-bold hover:bg-white/15 disabled:opacity-30"
+      ) : (
+        <div
+          className="fixed bottom-4 right-3 z-[60] flex items-center gap-0.5 p-1 rounded-full bg-brand-orange text-white shadow-lg"
+          role="group"
+          aria-label="Rolagem automática"
         >
-          −
-        </button>
-        <span
-          className="min-w-[2.75rem] text-center text-[11px] font-mono leading-tight"
-          aria-live="polite"
-        >
-          <span className="block text-[9px] uppercase tracking-wide text-white/60">Veloc.</span>
-          {autoScrollLevel}/{AUTO_SCROLL_MAX}
-        </span>
-        <button
-          onClick={() => setAutoScrollLevel(l => Math.min(AUTO_SCROLL_MAX, l + 1))}
-          disabled={autoScrollLevel >= AUTO_SCROLL_MAX}
-          aria-label="Rolagem mais rápida"
-          className="w-9 h-11 flex items-center justify-center rounded-full text-lg font-bold hover:bg-white/15 disabled:opacity-30"
-        >
-          +
-        </button>
-      </div>
+          <button
+            onClick={() => setAutoScrollOn(on => !on)}
+            aria-label={autoScrollOn ? 'Pausar rolagem automática' : 'Iniciar rolagem automática'}
+            title={autoScrollOn ? 'Pausar rolagem' : 'Rolar automaticamente'}
+            className={`w-11 h-11 flex items-center justify-center rounded-full transition-colors ${
+              autoScrollOn ? 'bg-white text-brand-orange' : 'hover:bg-white/20'
+            }`}
+          >
+            {autoScrollOn ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+          </button>
+          <button
+            onClick={() => setAutoScrollLevel(l => Math.max(AUTO_SCROLL_MIN, l - 1))}
+            disabled={autoScrollLevel <= AUTO_SCROLL_MIN}
+            aria-label="Rolagem mais lenta"
+            className="w-8 h-11 flex items-center justify-center rounded-full text-lg font-bold hover:bg-white/20 disabled:opacity-40"
+          >
+            −
+          </button>
+          <span className="min-w-[2.5rem] text-center text-[11px] font-mono leading-tight" aria-live="polite">
+            <span className="block text-[9px] uppercase tracking-wide text-white/80">Veloc.</span>
+            {autoScrollLevel}/{AUTO_SCROLL_MAX}
+          </span>
+          <button
+            onClick={() => setAutoScrollLevel(l => Math.min(AUTO_SCROLL_MAX, l + 1))}
+            disabled={autoScrollLevel >= AUTO_SCROLL_MAX}
+            aria-label="Rolagem mais rápida"
+            className="w-8 h-11 flex items-center justify-center rounded-full text-lg font-bold hover:bg-white/20 disabled:opacity-40"
+          >
+            +
+          </button>
+          <button
+            onClick={toggleAutoScrollFolded}
+            aria-label="Dobrar controle de rolagem"
+            title="Dobrar"
+            className="w-8 h-11 flex items-center justify-center rounded-full hover:bg-white/20"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        </div>
+      )}
 
       {/* Demais painéis da versão original continuam funcionando normalmente. */}
 

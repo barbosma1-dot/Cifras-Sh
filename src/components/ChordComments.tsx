@@ -22,6 +22,7 @@ import { VOICES, readVoicePayload, type VoiceId, type VoiceMark } from '../lib/v
 import { ScopeChip, ScopePicker } from './AnnotationParts';
 import { VoiceAltLyrics, VoiceBarReopen, VoiceChips, VoiceForm, VoicePanel, type VoiceFormState } from './ChordVoices';
 import {
+  firstLineOf,
   isInSelection,
   lastLineOf,
   readSel,
@@ -62,13 +63,17 @@ export interface NoteView {
   scope: 'user' | 'mission';
   /** true = o texto está recolhido (só o botão pequeno aparece). */
   collapsed: boolean;
+  /** Primeira linha do trecho comentado (o cartão aparece acima dela). */
+  line: number;
+  /** Posição na ordem de criação (para empilhar na ordem certa). */
+  order: number;
 }
 
 export interface LineDecor {
   selectMode: boolean;
   /** Marca-texto, sublinhado e seleção sílaba por sílaba (ver LyricSpans.tsx). */
   syl: SylDecor;
-  /** Comentários a mostrar logo abaixo da linha em que terminam. */
+  /** Comentários a mostrar logo ACIMA da primeira linha do trecho (o viewer sobe o cartão acima da linha de acordes, se houver). */
   notes: Map<number, NoteView[]>;
   onNoteHide: (id: string) => void;
   onNoteShow: (id: string) => void;
@@ -84,14 +89,15 @@ const NOTE_CLASS: Record<'user' | 'mission', string> = {
   mission: 'border-brand-blue bg-sky-50'
 };
 
-function NoteCard({ n, d }: { n: NoteView; d: LineDecor }) {
+function NoteCard({ n, d, dim }: { n: NoteView; d: LineDecor; dim: boolean }) {
   if (n.collapsed) {
     return (
       <button
         type="button"
+        data-note-id={n.id}
         onClick={() => d.onNoteShow(n.id)}
         aria-label={`Mostrar comentário: ${n.title}`}
-        className="mt-1 mb-1 mr-1 inline-flex max-w-full items-center gap-1 rounded-full bg-slate-800 text-white text-[10px] font-bold leading-none px-2 py-1.5 shadow active:opacity-70"
+        className={`mt-1 mb-1 mr-1 inline-flex max-w-full items-center gap-1 rounded-full bg-slate-800 text-white text-[10px] font-bold leading-none px-2 py-1.5 shadow active:opacity-70 ${dim ? 'opacity-30' : ''}`}
       >
         <MessageSquare className="w-3 h-3 shrink-0" />
         <span className="truncate">{n.title || 'Comentário'}</span>
@@ -100,7 +106,10 @@ function NoteCard({ n, d }: { n: NoteView; d: LineDecor }) {
     );
   }
   return (
-    <div className={`mt-1 mb-2 rounded-xl border-l-4 px-2.5 py-1.5 text-[0.82em] leading-snug text-slate-800 ${NOTE_CLASS[n.scope]}`}>
+    <div
+      data-note-id={n.id}
+      className={`mt-1 mb-2 rounded-xl border-l-4 px-2.5 py-1.5 text-[0.82em] leading-snug text-slate-800 ${NOTE_CLASS[n.scope]} ${dim ? 'opacity-30' : ''}`}
+    >
       <div className="flex items-start gap-1.5">
         <div className="min-w-0 flex-1">
           {n.title && <p className="font-black break-words">{n.title}</p>}
@@ -135,11 +144,15 @@ export function wrapLine(el: ReactElement, idx: number, d: LineDecor): ReactElem
   const marked = d.syl.voice.has(idx) || d.syl.comment.has(idx);
   if (!notes && !voiceMarks && !dimmed && !marked) return el;
 
+  // Os cartões ficam ACIMA da linha. Cada um esmaece conforme a linha do trecho
+  // comentado (n.line), não conforme a linha de acordes em que o viewer o encaixou.
   return (
-    <div key={`ln-${idx}`} data-line={idx} className={dimmed ? 'relative opacity-30' : 'relative'}>
-      {el}
-      {voiceMarks && <VoiceAltLyrics marks={voiceMarks} />}
-      {notes && notes.map(n => <NoteCard key={n.id} n={n} d={d} />)}
+    <div key={`ln-${idx}`} data-line={idx} className="relative">
+      {notes && notes.map(n => <NoteCard key={n.id} n={n} d={d} dim={!!d.dim && d.dim.has(n.line) && !d.selectMode} />)}
+      <div className={dimmed ? 'opacity-30' : undefined}>
+        {el}
+        {voiceMarks && <VoiceAltLyrics marks={voiceMarks} />}
+      </div>
     </div>
   );
 }
@@ -608,15 +621,27 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     const commentSpans = new Map<number, CommentSpanOnLine[]>();
     const notes = new Map<number, NoteView[]>();
     if (commentsShown) {
-      for (const { a, anchor } of liveComments) {
+      // Ordem de criação (a lista vem do banco ordenada por linha).
+      const byCreation = [...liveComments].sort((x, y) =>
+        x.a.created_at < y.a.created_at ? -1 : x.a.created_at > y.a.created_at ? 1 : 0
+      );
+      for (const [order, { a, anchor }] of byCreation.entries()) {
         if (titlesOff.has(normTitle(a.title))) continue;
         for (const sp of spansOnLines(a.payload, anchor.start, anchor.end)) {
           commentSpans.set(sp.line, [...(commentSpans.get(sp.line) || []), { id: a.id, scope: a.scope, from: sp.from, to: sp.to }]);
         }
-        const last = lastLineOf(a.payload, anchor.start, anchor.end);
-        notes.set(last, [
-          ...(notes.get(last) || []),
-          { id: a.id, title: a.title || '', body: a.body || '', scope: a.scope, collapsed: collapsedNotes.has(a.id) }
+        const first = firstLineOf(a.payload, anchor.start, anchor.end);
+        notes.set(first, [
+          ...(notes.get(first) || []),
+          {
+            id: a.id,
+            title: a.title || '',
+            body: a.body || '',
+            scope: a.scope,
+            collapsed: collapsedNotes.has(a.id),
+            line: first,
+            order
+          }
         ]);
       }
     }
@@ -681,13 +706,15 @@ export function useChordComments({ chordId, content, enabled, onStartSelect, not
     setSylB(null);
   };
 
-  const goToLine = (line: number) => {
+  const goToLine = (line: number, noteId?: string) => {
     setPanelOpen(false);
     setVoicePanelOpen(false);
     setPanelFilter(null);
     // espera o painel sair da tela antes de rolar
     window.setTimeout(() => {
-      document.querySelector(`[data-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      // O cartão do comentário fica acima do trecho: rola até ele; sem cartão (oculto), rola até a linha.
+      const card = noteId ? document.querySelector(`[data-note-id="${noteId}"]`) : null;
+      (card || document.querySelector(`[data-line="${line}"]`))?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }, 80);
   };
 
@@ -914,7 +941,7 @@ function CommentsPanel({
   onClearFilter: () => void;
   onClose: () => void;
   onNew: () => void;
-  onGo: (line: number) => void;
+  onGo: (line: number, noteId?: string) => void;
   onEdit: (a: ChordAnnotation) => void;
   onDelete: (a: ChordAnnotation) => Promise<void>;
 }) {
@@ -999,7 +1026,7 @@ function CommentsPanel({
                     )}
                     {anchor.status !== 'lost' && !hiddenByTitle && (
                       <button
-                        onClick={() => onGo(anchor.start)}
+                        onClick={() => onGo(anchor.start, a.id)}
                         className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-bold text-slate-600 active:opacity-70"
                       >
                         <LocateFixed className="w-3.5 h-3.5" /> Ir ao trecho
