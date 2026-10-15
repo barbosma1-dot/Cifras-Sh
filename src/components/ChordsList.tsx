@@ -315,10 +315,18 @@ export default function ChordsList({ profile, initialBookId, triggerNewChord }: 
           throw new Error('offline');
         }
 
-        const { data: itemData, error: itemError } = await supabase
-          .from('chord_book_items')
-          .select('chord_id')
-          .eq('book_id', activeBookId);
+        // Paginado: o PostgREST devolve no máximo 1000 linhas por consulta. O caderno
+        // "Cantai a Deus" tem mais de 1500 vínculos, então sem paginar os ~500 mais
+        // recentes (ex.: Cordeiro/Santo "20 anos") sumiam do caderno. Ordenar por `id`
+        // mantém a paginação estável.
+        const { data: itemData, error: itemError } = await fetchAllRows<{ chord_id: string }>((from, to) =>
+          supabase
+            .from('chord_book_items')
+            .select('chord_id')
+            .eq('book_id', activeBookId)
+            .order('id')
+            .range(from, to)
+        );
         
         // Antes, esse erro (ex.: RLS bloqueando a leitura por falta de
         // permissão, ou uma falha de rede) caía só no catch lá embaixo, que

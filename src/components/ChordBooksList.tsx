@@ -60,10 +60,15 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
   }, [books]);
 
   async function fetchChordsForBook(bookId: string): Promise<Chord[]> {
-    const { data: itemData, error: itemError } = await supabase
-      .from('chord_book_items')
-      .select('chord_id')
-      .eq('book_id', bookId);
+    // Paginado: o PostgREST limita a 1000 linhas por consulta (ver ChordsList.fetchChords).
+    const { data: itemData, error: itemError } = await fetchAllRows<{ chord_id: string }>((from, to) =>
+      supabase
+        .from('chord_book_items')
+        .select('chord_id')
+        .eq('book_id', bookId)
+        .order('id')
+        .range(from, to)
+    );
     if (itemError) throw itemError;
     const chordIds = ((itemData as any[]) || []).map(i => i.chord_id).filter(Boolean);
     if (chordIds.length === 0) return [];
@@ -297,10 +302,14 @@ export default function ChordBooksList({ profile, onViewChords }: ChordBooksList
     setExportingBookId(book.id);
     try {
       // Fetch chords for this book
-      const { data: itemData } = await supabase
-        .from('chord_book_items')
-        .select('chord_id')
-        .eq('book_id', book.id);
+      const { data: itemData } = await fetchAllRows<{ chord_id: string }>((from, to) =>
+        supabase
+          .from('chord_book_items')
+          .select('chord_id')
+          .eq('book_id', book.id)
+          .order('id')
+          .range(from, to)
+      );
       
       const chordIds = (itemData as any[])?.map(i => i.chord_id) || [];
       if (chordIds.length === 0) {
