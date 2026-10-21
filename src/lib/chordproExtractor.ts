@@ -465,6 +465,74 @@ function hasTwoColumnLayout(
  *   4. mantém novamente, no final, qualquer linha de largura total (como a
  *      antífona de fechamento).
  */
+/**
+ * Procura o "corredor" vertical vazio entre duas colunas olhando só para a
+ * posição X das palavras — sem depender de as linhas das duas colunas
+ * estarem alinhadas na mesma altura (Y).
+ *
+ * Por que isso existe: em PDFs escaneados + OCR (ou qualquer PDF cujas
+ * colunas não compartilham a mesma linha de base), quase nenhuma linha da
+ * esquerda cai no mesmo Y de uma linha da direita. Aí `hasTwoColumnLayout`
+ * (que conta linhas com palavras dos dois lados) achava "poucas linhas
+ * pareadas" e tratava a página como coluna única — misturando a letra de
+ * uma coluna com os acordes da outra ("... E minha boca. [E] [B/D#]").
+ *
+ * Retorna o X do corredor, ou null se a página não for claramente de duas
+ * colunas (nesse caso o comportamento antigo continua valendo).
+ */
+function findColumnGutter(
+  words: PdfWord[],
+  pageWidth: number
+): number | null {
+  if (words.length < 40) return null;
+
+  const lo = Math.floor(pageWidth * 0.3);
+  const hi = Math.ceil(pageWidth * 0.7);
+  const cover = new Array<number>(hi - lo + 1).fill(0);
+
+  for (const w of words) {
+    const a = Math.max(lo, Math.floor(w.x0));
+    const b = Math.min(hi, Math.ceil(w.x1));
+    for (let x = a; x <= b; x++) cover[x - lo]++;
+  }
+
+  // Maior faixa contínua (>= 10pt) por onde NENHUMA palavra, ou quase
+  // nenhuma (títulos largos), passa.
+  const maxCrossing = Math.max(2, Math.floor(words.length * 0.02));
+  let bestStart = -1;
+  let bestLen = 0;
+  let curStart = -1;
+
+  for (let i = 0; i <= cover.length; i++) {
+    const free = i < cover.length && cover[i] <= maxCrossing;
+    if (free && curStart < 0) curStart = i;
+    if (!free && curStart >= 0) {
+      const len = i - curStart;
+      if (len > bestLen) {
+        bestLen = len;
+        bestStart = curStart;
+      }
+      curStart = -1;
+    }
+  }
+
+  if (bestLen < 10) return null;
+
+  const gutter = lo + bestStart + bestLen / 2;
+
+  const left = words.filter(w => (w.x0 + w.x1) / 2 < gutter);
+  const right = words.filter(w => (w.x0 + w.x1) / 2 >= gutter);
+
+  // Cada lado precisa ter conteúdo de verdade (várias linhas distintas).
+  const rowsOf = (ws: PdfWord[]) =>
+    new Set(ws.map(w => Math.round(w.y / 3))).size;
+
+  if (left.length < 15 || right.length < 15) return null;
+  if (rowsOf(left) < 8 || rowsOf(right) < 8) return null;
+
+  return gutter;
+}
+
 function orderTwoColumnPage(
   lines: PdfLine[],
   pageWidth: number
@@ -472,6 +540,35 @@ function orderTwoColumnPage(
   const cleaned = lines
     .filter(line => line.words.length > 0)
     .sort((a, b) => b.y - a.y);
+
+  // 1) Caminho robusto: corredor vertical vazio entre as colunas.
+  const gutterX = findColumnGutter(
+    cleaned.flatMap(line => line.words),
+    pageWidth
+  );
+
+  if (gutterX != null) {
+    const leftWords: PdfWord[] = [];
+    const rightWords: PdfWord[] = [];
+
+    for (const line of cleaned) {
+      for (const word of line.words) {
+        if ((word.x0 + word.x1) / 2 < gutterX) {
+          leftWords.push(word);
+        } else {
+          rightWords.push(word);
+        }
+      }
+    }
+
+    // Coluna esquerda inteira, depois a direita.
+    return [
+      ...groupWordsByYOnly(leftWords),
+      ...groupWordsByYOnly(rightWords)
+    ];
+  }
+
+  // 2) Caminho antigo (colunas alinhadas linha a linha).
 
   if (!hasTwoColumnLayout(cleaned, pageWidth)) {
     return cleaned;
@@ -2079,6 +2176,48 @@ export function segmentLiturgyOfHoursPage(
       isPsalmType;
   };
 
+  const TP_RE = /^T\.?\s*P\.?\s*[:.]?(\s|$)/i;
+
+  const isTpLine = (l: PdfLine): boolean =>
+    !isChordLine(l) &&
+    TP_RE.test(l.words.map(w => w.text).join(' ').trim());
+
+  /**
+   * Junta uma linha "Ant."/"T.P." com as linhas de continuação logo
+   * abaixo: não-cifradas, recuadas em relação ao rótulo, próximas na
+   * vertical e que não sejam título, outra antífona, T.P. ou número de
+   * página.
+   */
+  const collectWrapped = (
+    startIdx: number
+  ): { lines: string[]; lastIdx: number } => {
+    const first = orderedLines[startIdx];
+    const lines = [formatMixedTextLine(first.words)];
+    const baseX = first.words[0].x0;
+    let lastIdx = startIdx;
+
+    while (lastIdx + 1 < orderedLines.length) {
+      const prev = orderedLines[lastIdx];
+      const cand = orderedLines[lastIdx + 1];
+
+      if (isChordLine(cand)) break;
+      if (isPrintedPageNumber(cand, pageWidth)) break;
+      if (Math.abs(prev.y - cand.y) > 20) break;
+      if (cand.words[0].x0 < baseX + 12) break;
+
+      const text = cand.words.map(w => w.text).join(' ').trim();
+
+      if (isAnyHeadingLine(stripOrdinalPrefix(text))) break;
+      if (TP_RE.test(text)) break;
+      if (/^[-=]\s/.test(text)) break;
+
+      lines.push(formatMixedTextLine(cand.words));
+      lastIdx++;
+    }
+
+    return { lines, lastIdx };
+  };
+
   for (
     let i = 0;
     i < orderedLines.length;
@@ -2381,76 +2520,88 @@ export function segmentLiturgyOfHoursPage(
       continue;
     }
 
+    if (!chordLine && isTpLine(line)) {
+      const tp = collectWrapped(i);
+      i = tp.lastIdx;
+
+      const tpInHino =
+        !!current && /^Hino\b/i.test(current.title);
+
+      if (!current || tpInHino) {
+        if (tpInHino) closeCurrent();
+        pendingAntiphonLines.push(...tp.lines);
+      } else {
+        current.contentLines.push(...tp.lines);
+      }
+
+      continue;
+    }
+
     if (
       !chordLine &&
       HEADING_RE.antifona.test(
         plainText
       )
     ) {
-      const formattedAntiphon =
-        formatMixedTextLine(
-          line.words
-        );
-
       /*
-       * Uma antífona encontrada ANTES da primeira linha realmente
-       * cifrada é a antífona de abertura.
-       *
-       * IMPORTANTE: linhas simples que aparecem entre o título do
-       * salmo/cântico e a antífona (epígrafe, legenda, referência
-       * bíblica, indicação editorial etc.) NÃO iniciam o corpo.
-       * Portanto, bodyStarted só pode ser true depois que encontramos
-       * uma linha de acorde/conteúdo musical real.
-       *
-       * Se já existe corpo cifrado, esta é a antífona de fechamento.
-       * Ela permanece dentro da mesma seção. Se houver T.P. logo em
-       * seguida, ele também pertence ao fechamento e deve ser preservado.
+       * Antífonas e T.P. impressas em mais de uma linha (a 2ª linha vem
+       * recuada, alinhada com o texto): "Ant. 1 Despertem a harpa e a lira,
+       * eu irei acordar a" + "aurora." Antes só a 1ª linha era guardada e
+       * a continuação (e o T.P. seguinte) se perdia.
        */
+      const antBlock = collectWrapped(i);
+      i = antBlock.lastIdx;
+
+      const tpAfterAnt = (): string[] => {
+        const nx = orderedLines[i + 1];
+
+        if (nx && isTpLine(nx)) {
+          const tp = collectWrapped(i + 1);
+          i = tp.lastIdx;
+          return tp.lines;
+        }
+
+        return [];
+      };
+
+      // Depois de um HINO, a antífona é a de ABERTURA do salmo seguinte
+      // (não a de fechamento do hino).
+      const currentIsHino =
+        !!current && /^Hino\b/i.test(current.title);
+
       if (
         currentIsPsalmType &&
         bodyStarted &&
-        current
+        current &&
+        !currentIsHino
       ) {
+        // Antífona de fechamento (+ T.P. logo em seguida).
         current.contentLines.push(
-          formattedAntiphon
+          ...antBlock.lines,
+          ...tpAfterAnt()
         );
-
-        const nextPlainText =
-          next && !isChordLine(next)
-            ? next.words
-                .map(w => w.text)
-                .join(' ')
-                .trim()
-            : '';
-
-        if (
-          nextPlainText &&
-          /^T\.?\s*P\.?\s*[:.]?/i.test(
-            nextPlainText
-          )
-        ) {
-          current.contentLines.push(
-            formatMixedTextLine(
-              next!.words
-            )
-          );
-          i++;
-        }
 
         closeCurrent();
       } else if (
         currentIsPsalmType &&
-        current
+        current &&
+        !currentIsHino
       ) {
         // Antífona de abertura: fica no início do próprio salmo/cântico.
         current.contentLines.push(
-          formattedAntiphon
+          ...antBlock.lines,
+          ...tpAfterAnt()
         );
       } else {
-        // A antífona pode aparecer antes do título por causa da ordenação
-        // da página; nesse caso, aguarda o próximo salmo/cântico.
+        // A antífona vem antes do título (ordem da página, ou logo
+        // depois do Hino): aguarda o próximo salmo/cântico.
+        if (currentIsHino) {
+          closeCurrent();
+        }
+
         pendingAntiphonLines.push(
-          formattedAntiphon
+          ...antBlock.lines,
+          ...tpAfterAnt()
         );
       }
 
